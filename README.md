@@ -10,6 +10,38 @@ An automated pipeline to monitor a directory for new video files, extract audio,
 -   **Apple Silicon Optimized**: Leverages the M-series Neural Engine via Metal Performance Shaders (MPS) for fast transcription.
 -   **Persistent Service**: Runs as a background `launchd` service on macOS, ensuring it's always on.
 
+## Run a single file (standalone test)
+
+Use this to test the pipeline on one video without modifying any code.
+
+```bash
+# 1) Activate your virtual environment (if not already)
+source venv/bin/activate
+
+# 2) Run a one-off Python snippet. Update the video path below.
+python - <<'PY'
+import sys, os
+sys.path.insert(0, "src")
+from audio_processor import extract_audio
+from transcriber import Transcriber
+from file_manager import save_transcription
+
+video = "/absolute/path/to/your/video.mp4"  # <-- change this
+
+wav_path, duration = extract_audio(video)
+t = Transcriber()
+result = t.transcribe(wav_path)
+out_path = save_transcription(video, result)
+try:
+    os.remove(wav_path)
+except Exception:
+    pass
+print(f"Saved transcript to: {out_path}")
+PY
+
+# The JSON transcript will be written to ./transcripts by default
+```
+
 ---
 
 ## Deployment Guide (for Mac mini)
