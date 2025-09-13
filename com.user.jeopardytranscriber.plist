@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.jeopardytranscriber</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Replace with your venv python absolute path on the target machine -->
+        <string>/Users/your_username/Projects/jeopardy-transcriber/venv/bin/python</string>
+        <!-- Replace with your absolute path to main.py on the target machine -->
+        <string>/Users/your_username/Projects/jeopardy-transcriber/src/main.py</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Ensure the service has a stable working directory -->
+    <key>WorkingDirectory</key>
+    <string>/Users/your_username/Projects/jeopardy-transcriber</string>
+
+    <!-- Environment for Python to find project modules -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>/Users/your_username/Projects/jeopardy-transcriber/src</string>
+    </dict>
+
+    <!-- Standard out/err can be useful before logging initializes -->
+    <key>StandardOutPath</key>
+    <string>/Users/your_username/Projects/jeopardy-transcriber/logs/launchd_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/your_username/Projects/jeopardy-transcriber/logs/launchd_stderr.log</string>
+</dict>
+</plist>
+
+

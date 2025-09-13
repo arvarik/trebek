@@ -1,0 +1,10 @@
+# System & Monitoring
+watchdog
+
+# Audio Processing
+ffmpeg-python
+
+# ML/Transcription - using a high-performance variant
+faster-whisper
+
+
