@@ -112,12 +112,12 @@ TRANSCRIPTS_DIR = "/Users/your_username/Projects/jeopardy-transcriber/transcript
 LOGS_DIR = "/Users/your_username/Projects/jeopardy-transcriber/logs"
 
 # ⬇️ Configure whisper.cpp locations and tuning
-from config import WhisperCppConfig
+from config import WhisperCppConfig, WHISPER_CPP_MODEL_DIR, WHISPER_CPP_MODEL_NAME
 
 # Example (you can also pass this at runtime as shown in the single-run snippet):
 WHISPER_CPP = WhisperCppConfig(
     binary_path="/Users/arvarik/Documents/github/whisper.cpp/build/bin/whisper-cli",
-    model_path="/Users/arvarik/Documents/github/whisper.cpp/models/ggml-medium.en.bin",
+    model_path=os.path.join(WHISPER_CPP_MODEL_DIR, WHISPER_CPP_MODEL_NAME),
     threads=8,
     language="en",
 )

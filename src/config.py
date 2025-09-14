@@ -27,6 +27,13 @@ PROJECT_ROOT: str = _project_root()
 RECORDINGS_DIR: str = "/Volumes/Arvind SSD/Media/TV Shows/Jeopardy (1984)"
 TRANSCRIPTS_DIR: str = os.path.join(PROJECT_ROOT, "transcripts")
 LOGS_DIR: str = os.path.join(PROJECT_ROOT, "logs")
+"""Central whisper.cpp model location and name.
+
+Update these two constants to change the model globally.
+"""
+WHISPER_CPP_MODEL_DIR: str = "/Users/arvarik/Documents/github/whisper.cpp/models"
+WHISPER_CPP_MODEL_NAME: str = "ggml-large-v3.bin"
+
 
 
 def ensure_directories_exist() -> None:
@@ -45,9 +52,8 @@ class WhisperCppConfig:
 
     # Path to whisper.cpp binary (e.g., "/Users/you/Projects/whisper.cpp/main" or build output)
     binary_path: str = "/Users/arvarik/Documents/github/whisper.cpp/build/bin/whisper-cli"
-    # Path to the GGML/GGUF model file. Default to medium.en for better memory/performance balance.
-    # Example filenames: ggml-medium.en.bin, ggml-medium.bin, ggml-large-v3-q5_0.bin (quantized)
-    model_path: str = "/Users/arvarik/Documents/github/whisper.cpp/models/ggml-medium.en.bin"
+    # Path to the GGML/GGUF model file (built from central constants above)
+    model_path: str = os.path.join(WHISPER_CPP_MODEL_DIR, WHISPER_CPP_MODEL_NAME)
 
     # Optional runtime settings
     language: str = "en"  # ISO 639-1 code; set "auto" to autodetect

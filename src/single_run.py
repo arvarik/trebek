@@ -17,7 +17,7 @@ if os.path.join(PROJECT_ROOT, "src") not in sys.path:
 
 from audio_processor import extract_audio
 from transcriber import Transcriber
-from config import WhisperCppConfig
+from config import WhisperCppConfig, WHISPER_CPP_MODEL_DIR, WHISPER_CPP_MODEL_NAME
 import config
 from file_manager import save_transcription
 
@@ -65,7 +65,7 @@ def main() -> None:
     video_path = "/Volumes/Arvind SSD/Media/TV Shows/Jeopardy (1984)/Season 41/Jeopardy (1984) - S41E230 - Jeopardy .ts"
     cpp = WhisperCppConfig(
         binary_path="/Users/arvarik/Documents/github/whisper.cpp/build/bin/whisper-cli",
-        model_path="/Users/arvarik/Documents/github/whisper.cpp/models/ggml-medium.en.bin",
+        model_path=os.path.join(WHISPER_CPP_MODEL_DIR, WHISPER_CPP_MODEL_NAME),
         threads=max(1, os.cpu_count() or 4),
         language="en",
         print_progress=True,
