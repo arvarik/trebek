@@ -62,7 +62,7 @@ def main() -> None:
     _setup_logging()
 
     # Customize these variables for your run
-    video_path = "/Volumes/Arvind SSD/Media/TV Shows/Jeopardy (1984)/Season 41/Jeopardy (1984) - S41E230 - Jeopardy .ts"
+    video_path = "/Volumes/Arvind SSD/Media/TV Shows/Jeopardy (1984)/Season 41/Jeopardy (1984) - S41E229 - Jeopardy .ts"
     cpp = WhisperCppConfig(
         binary_path="/Users/arvarik/Documents/github/whisper.cpp/build/bin/whisper-cli",
         model_path=os.path.join(WHISPER_CPP_MODEL_DIR, WHISPER_CPP_MODEL_NAME),

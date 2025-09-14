@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
+import re
 from typing import Any, Dict
 
 import config
@@ -21,10 +22,23 @@ def save_transcription(
     """
     os.makedirs(config.TRANSCRIPTS_DIR, exist_ok=True)
 
-    source_name = os.path.splitext(os.path.basename(source_video_path))[0]
-    # Use microseconds to avoid collisions; fall back to numeric suffix if needed
+    basename = os.path.basename(source_video_path)
+    name_wo_ext = os.path.splitext(basename)[0]
+
+    # Extract season/episode from filename (assumes presence of S#E#)
+    season: int | None = None
+    episode: int | None = None
+    m = re.search(r"[sS]\s*(\d+)\s*[eE]\s*(\d+)", name_wo_ext)
+    if m:
+        season = int(m.group(1))
+        episode = int(m.group(2))
+
+    # Build output filename
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    base_filename = _safe_filename(f"{source_name}.{timestamp}")
+    if season is not None and episode is not None:
+        base_filename = _safe_filename(f"Jeopardy S{season}E{episode}.{timestamp}")
+    else:
+        base_filename = _safe_filename(f"{name_wo_ext}.{timestamp}")
     filename = f"{base_filename}.json"
     output_path = os.path.join(config.TRANSCRIPTS_DIR, filename)
 
@@ -43,6 +57,11 @@ def save_transcription(
         "created_utc": timestamp,
         **transcription,
     }
+
+    # Include season/episode if found (as integers)
+    if season is not None and episode is not None:
+        payload["season"] = season
+        payload["episode"] = episode
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
