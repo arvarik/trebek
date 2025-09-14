@@ -1,46 +1,31 @@
 # Jeopardy! Transcription Service
 
-An automated pipeline to monitor a directory for new video files, extract audio, and generate high-accuracy transcriptions using a local speech-to-text model optimized for Apple Silicon.
+An automated pipeline to monitor a directory for new video files, extract audio, and generate high-accuracy transcriptions using a local speech-to-text model.
 
 ## Features
 
 -   **Automated Monitoring**: Watches a specified folder for new video recordings.
--   **High-Accuracy Transcription**: Uses OpenAI's Whisper model (`large-v3`) for best-in-class accuracy.
+-   **High-Accuracy Transcription**: Uses OpenAI's Whisper model (via `whisper.cpp`).
 -   **Local First**: All processing is done locally. No cloud services or APIs are needed.
--   **Apple Silicon Optimized**: Leverages the M-series Neural Engine via Metal Performance Shaders (MPS) for fast transcription.
+-   **Apple Silicon + Metal**: Uses `whisper.cpp` with Apple's Metal for GPU acceleration on M-series Macs.
 -   **Persistent Service**: Runs as a background `launchd` service on macOS, ensuring it's always on.
 
 ## Run a single file (standalone test)
 
-Use this to test the pipeline on one video without modifying any code.
+Use the dedicated script with logging and progress:
 
 ```bash
-# 1) Activate your virtual environment (if not already)
 source venv/bin/activate
-
-# 2) Run a one-off Python snippet. Update the video path below.
-python - <<'PY'
-import sys, os
-sys.path.insert(0, "src")
-from audio_processor import extract_audio
-from transcriber import Transcriber
-from file_manager import save_transcription
-
-video = "/absolute/path/to/your/video.mp4"  # <-- change this
-
-wav_path, duration = extract_audio(video)
-t = Transcriber()
-result = t.transcribe(wav_path)
-out_path = save_transcription(video, result)
-try:
-    os.remove(wav_path)
-except Exception:
-    pass
-print(f"Saved transcript to: {out_path}")
-PY
-
-# The JSON transcript will be written to ./transcripts by default
+python src/single_run.py
 ```
+
+Customize paths at the top of `src/single_run.py`:
+- `video_path` – your input video (e.g., the Jeopardy episode)
+- `WhisperCppConfig.binary_path` – your whisper.cpp CLI binary
+- `WhisperCppConfig.model_path` – the model to use (default: medium.en)
+
+Notes:
+- Transcripts are saved under `./transcripts` with a timestamp including microseconds, so repeated runs will not overwrite existing files.
 
 ---
 
@@ -74,14 +59,41 @@ Create a virtual environment and install the required dependencies.
 python3 -m venv venv
 source venv/bin/activate
 
-# Install PyTorch with Metal (MPS) support
-pip3 install torch torchvision torchaudio
-
-# Install all other dependencies
+# Install dependencies
 pip3 install -r requirements.txt
 ```
 
-### 4. Configure Paths
+### 4. Install whisper.cpp (Metal on macOS)
+
+Build `whisper.cpp` with Metal support and download a model.
+
+```bash
+# Prereqs
+brew install cmake
+
+# Get the source (choose a permanent location)
+git clone https://github.com/ggerganov/whisper.cpp
+cd whisper.cpp
+
+# Build with Metal support (CMake)
+cmake -B build -DGGML_METAL=1
+cmake --build build -j --config Release
+
+# Optional: the build may produce a binary named `main` (make) or `bin/whisper-cli` (cmake)
+# Adjust paths in config accordingly.
+
+# Download a model
+cd models
+# Recommended default for Mac mini: medium.en
+bash ./download-ggml-model.sh medium.en
+# This will create: /Users/arvarik/Documents/github/whisper.cpp/models/ggml-medium.en.bin
+
+# Optional: quantized large for lower VRAM (accuracy closer to large)
+# Examples (availability may vary): ggml-large-v3-q5_0.bin, ggml-large-v3-q4_0.bin
+# You can download quantized variants from community sources or quantize yourself; update model_path accordingly.
+```
+
+### 5. Configure Paths
 
 This is the most important step. Open the `src/config.py` file and edit the paths to match your Mac mini's setup. You must use absolute paths.
 
@@ -98,9 +110,20 @@ TRANSCRIPTS_DIR = "/Users/your_username/Projects/jeopardy-transcriber/transcript
 
 # ⬇️ CHANGE THIS to the absolute path for the logs folder
 LOGS_DIR = "/Users/your_username/Projects/jeopardy-transcriber/logs"
+
+# ⬇️ Configure whisper.cpp locations and tuning
+from config import WhisperCppConfig
+
+# Example (you can also pass this at runtime as shown in the single-run snippet):
+WHISPER_CPP = WhisperCppConfig(
+    binary_path="/Users/arvarik/Documents/github/whisper.cpp/build/bin/whisper-cli",
+    model_path="/Users/arvarik/Documents/github/whisper.cpp/models/ggml-medium.en.bin",
+    threads=8,
+    language="en",
+)
 ```
 
-### 5. Configure and Install the Background Service
+### 6. Configure and Install the Background Service
 
 The `com.user.jeopardytranscriber.plist` file tells macOS how to run our script. You must edit it to include the absolute paths for your machine.
 

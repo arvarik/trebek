@@ -4,7 +4,6 @@ watchdog
 # Audio Processing
 ffmpeg-python
 
-# ML/Transcription - using a high-performance variant
-faster-whisper
+# ML/Transcription backend now uses whisper.cpp binary (no Python dep)
 
 

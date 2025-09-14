@@ -24,7 +24,7 @@ PROJECT_ROOT: str = _project_root()
 
 # Default development paths (relative to project root). For deployment, set these
 # to ABSOLUTE paths on the target machine. See README for examples.
-RECORDINGS_DIR: str = os.path.join(PROJECT_ROOT, "recordings")
+RECORDINGS_DIR: str = "/Volumes/Arvind SSD/Media/TV Shows/Jeopardy (1984)"
 TRANSCRIPTS_DIR: str = os.path.join(PROJECT_ROOT, "transcripts")
 LOGS_DIR: str = os.path.join(PROJECT_ROOT, "logs")
 
@@ -36,16 +36,23 @@ def ensure_directories_exist() -> None:
 
 
 @dataclass(frozen=True)
-class ModelConfig:
-    """Configuration values for the transcription model."""
+class WhisperCppConfig:
+    """Configuration for the whisper.cpp backend.
 
-    # Whisper model size or local directory path
-    model_size: str = "large-v3"
-    # Attempt to use Apple GPU via Metal when available; fall back to CPU.
-    preferred_device: str = "metal"  # options: "auto", "metal", "cpu"
-    # Compute type for inference; float16 on GPU/Metal, int8_float16 or int8 on CPU.
-    compute_type_metal: str = "float16"
-    compute_type_cpu: str = "int8_float16"
+    IMPORTANT: Set absolute paths on the target machine for reliability.
+    See README for build and model download instructions.
+    """
 
+    # Path to whisper.cpp binary (e.g., "/Users/you/Projects/whisper.cpp/main" or build output)
+    binary_path: str = "/Users/arvarik/Documents/github/whisper.cpp/build/bin/whisper-cli"
+    # Path to the GGML/GGUF model file. Default to medium.en for better memory/performance balance.
+    # Example filenames: ggml-medium.en.bin, ggml-medium.bin, ggml-large-v3-q5_0.bin (quantized)
+    model_path: str = "/Users/arvarik/Documents/github/whisper.cpp/models/ggml-medium.en.bin"
+
+    # Optional runtime settings
+    language: str = "en"  # ISO 639-1 code; set "auto" to autodetect
+    threads: int = max(1, os.cpu_count() or 4)
+    enable_word_timestamps: bool = True
+    print_progress: bool = True  # request progress output from whisper.cpp
 
 

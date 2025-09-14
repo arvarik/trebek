@@ -56,8 +56,9 @@ def main() -> None:
     file_queue: "queue.Queue[str]" = queue.Queue()
 
     # Initialize components
-    transcriber = Transcriber()
-    watcher = DirectoryWatcher(file_queue, DirectoryWatcherConfig(config.RECORDINGS_DIR))
+    from config import WhisperCppConfig
+    transcriber = Transcriber(WhisperCppConfig())
+    watcher = DirectoryWatcher(file_queue, DirectoryWatcherConfig(config.RECORDINGS_DIR, recursive=True))
 
     # Start the watcher in a background thread. The observer manages its own threads,
     # but we call start/stop from the main thread for lifecycle control.
