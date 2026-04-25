@@ -17,7 +17,9 @@ def _normalize_speaker_names(
     clues: "list[Clue]",
     speaker_mapping: "Dict[str, str]",
     contestant_names: "list[str]",
-    score_adjustments: "list[Any]" = [],
+    host_name: str = "",
+    score_adjustments: "Optional[list[Any]]" = None,
+    fj_wagers: "Optional[list[Any]]" = None,
 ) -> None:
     """
     Post-extraction normalization: maps all speaker name variants in buzz attempts
@@ -31,6 +33,11 @@ def _normalize_speaker_names(
     This function resolves them all to the canonical full names (e.g. Rachel Bernstein)
     to prevent FK constraint failures in the relational DB commit.
     """
+    if score_adjustments is None:
+        score_adjustments = []
+    if fj_wagers is None:
+        fj_wagers = []
+
     # Build a comprehensive lookup: variant → canonical full name
     variant_map: Dict[str, str] = {}
 
@@ -47,12 +54,27 @@ def _normalize_speaker_names(
             # Skip very short parts (initials like "W") to avoid false positives
             if len(part_lower) <= 1:
                 continue
-            if part_lower not in variant_map:
+            if part_lower in variant_map and variant_map[part_lower] != name:
+                # Name part collision — two contestants share a name part (e.g. two "James")
+                # Remove the ambiguous mapping so the LLM must use full names
+                logger.warning(
+                    "Speaker normalization: ambiguous name part, requiring full name",
+                    part=part_lower,
+                    contestant_a=variant_map[part_lower],
+                    contestant_b=name,
+                )
+                del variant_map[part_lower]
+            elif part_lower not in variant_map:
                 variant_map[part_lower] = name
 
     # 3. SPEAKER_XX → Pass 1 name → contestant full name
+    #    Skip the host — they shouldn't appear in buzz attempts
+    host_lower = host_name.lower().strip() if host_name else ""
     for speaker_id, mapped_name in speaker_mapping.items():
         sid = speaker_id.lower()
+        # Skip the host entirely — they don't buzz in
+        if mapped_name.lower().strip() == host_lower:
+            continue
         # Try to resolve the Pass 1 name to a full contestant name
         resolved = variant_map.get(mapped_name.lower())
         if not resolved:
@@ -109,6 +131,13 @@ def _normalize_speaker_names(
             canonical = variant_map.get(adj.contestant.lower())
             if canonical:
                 adj.contestant = canonical
+
+    # Normalize FinalJeopardyWager contestant names (for future FK safety)
+    for wager in fj_wagers:
+        if hasattr(wager, "contestant") and wager.contestant:
+            canonical = variant_map.get(wager.contestant.lower())
+            if canonical:
+                wager.contestant = canonical
 
     if unmapped:
         logger.warning(
@@ -218,6 +247,7 @@ async def execute_pass_2_data_extraction(
             prompt = (
                 f"Transcript Chunk ({chunk_idx + 1} of {len(chunks)}):\n{chunk_text}\n\n"
                 "Extract ALL Jeopardy and Double Jeopardy clues found in this chunk. "
+                "Do NOT extract Final Jeopardy — it is handled separately. "
                 "If a clue appears cut off at the start or end of this chunk, SKIP IT completely "
                 "(overlapping chunks will capture it whole). "
                 "If no clues are found in this chunk, return an empty array for clues. "
@@ -355,7 +385,9 @@ async def execute_pass_2_data_extraction(
     contestant_names = [c.name for c in meta_data.contestants]
     _normalize_speaker_names(
         sorted_clues, speaker_mapping, contestant_names,
+        host_name=meta_data.host_name,
         score_adjustments=meta_data.score_adjustments,
+        fj_wagers=meta_data.final_jeopardy.wagers_and_responses,
     )
 
     # ── Stage 5: Assemble Episode ───────────────────────────────────
