@@ -34,4 +34,4 @@ COPY trebek/ ./trebek/
 # We run as root by default to avoid permission issues when mounting host volumes
 # like input_videos and trebek.db. Users mapping to network drives should ensure
 # POSIX locking support for SQLite WAL mode.
-CMD ["trebek"]
+ENTRYPOINT ["trebek"]
