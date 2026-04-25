@@ -373,9 +373,18 @@ class TrebekPipelineOrchestrator:
                     break
                 await asyncio.sleep(2)
 
-    async def _no_work_remaining(self, status: str) -> bool:
-        """Check if there are no more items in the given status (for --once mode)."""
-        result = await self.db_writer.execute("SELECT COUNT(*) FROM pipeline_state WHERE status = ?", (status,))
+    async def _no_work_remaining(self, target_status: str) -> bool:
+        """Check if there are no more items in the target status OR any upstream status (for --once mode)."""
+        upstream_map = {
+            "PENDING": ["PENDING"],
+            "TRANSCRIPT_READY": ["PENDING", "TRANSCRIBING", "TRANSCRIPT_READY"],
+            "SAVING": ["PENDING", "TRANSCRIBING", "TRANSCRIPT_READY", "CLEANED", "SAVING"],
+        }
+        statuses_to_check = upstream_map.get(target_status, [target_status])
+        
+        placeholders = ",".join(["?"] * len(statuses_to_check))
+        query = f"SELECT COUNT(*) FROM pipeline_state WHERE status IN ({placeholders})"
+        result = await self.db_writer.execute(query, tuple(statuses_to_check))
         return result[0][0] == 0 if result else True
 
     async def start_workers(self, input_dir: str, progress: Any, task_id: Any) -> None:
