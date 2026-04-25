@@ -58,12 +58,17 @@ def gpu_worker_task(video_filepath: str, output_dir: str) -> tuple[str, float, f
     monitor_thread.start()
 
     # 1. FFmpeg extraction
-    subprocess.run(
+    result = subprocess.run(
         ["ffmpeg", "-y", "-i", video_filepath, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", audio_path],
-        check=True,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
     )
+    if result.returncode != 0:
+        err_msg = (result.stderr or "").strip().splitlines()
+        # Last 3 lines of ffmpeg stderr are usually the most informative
+        detail = "\n".join(err_msg[-3:]) if err_msg else f"exit code {result.returncode}"
+        raise RuntimeError(f"ffmpeg failed for {video_filepath}: {detail}")
 
     # 2. WhisperX / Pyannote
     subprocess.run(

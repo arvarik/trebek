@@ -233,7 +233,7 @@ def _get_video_duration(filepath: str) -> Optional[str]:
             ],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
         )
         if result.returncode == 0 and result.stdout.strip():
             seconds = float(result.stdout.strip())
