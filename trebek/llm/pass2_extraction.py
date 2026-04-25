@@ -14,7 +14,7 @@ GEMINI_CONCURRENCY = 3
 
 
 async def execute_pass_2_data_extraction(
-    segments: list[Dict[str, Any]], speaker_mapping: Dict[str, str], max_retries: int = 2
+    segments: list[Dict[str, Any]], speaker_mapping: Dict[str, str], max_retries: int = 4
 ) -> "tuple[Episode, dict[str, float], int]":
     """
     Pass 2: Production-grade map-reduce extraction (Gemini 3.1 Pro).
@@ -107,7 +107,20 @@ async def execute_pass_2_data_extraction(
             )
 
     chunk_tasks = [extract_chunk(idx, chunk) for idx, chunk in enumerate(chunks)]
-    chunk_results = await asyncio.gather(*chunk_tasks)
+    raw_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
+
+    # Filter out failed chunks — log them but don't crash the entire episode
+    chunk_results = []
+    for idx, result in enumerate(raw_results):
+        if isinstance(result, BaseException):
+            logger.error(
+                "Chunk extraction failed, skipping chunk",
+                chunk=idx + 1,
+                total_chunks=len(chunks),
+                error=str(result),
+            )
+            continue
+        chunk_results.append(result)
 
     # ── Stage 4: Reconstruct & Deduplicate ──────────────────────────
     all_clues: list[Clue] = []

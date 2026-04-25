@@ -22,12 +22,16 @@ async def run_ingestion_pass(orchestrator: "TrebekPipelineOrchestrator", input_d
                 # e.g. "Season 41/S41E01.mp4" → "Season_41_S41E01"
                 rel = os.path.relpath(os.path.join(dirpath, fname), input_dir)
                 episode_id = os.path.splitext(rel)[0].replace(os.sep, "_").replace(" ", "_")
-                source_path = os.path.join(dirpath, fname)
+                # Store the relative path from input_dir for cross-machine portability
+                source_rel_path = rel
 
-                await orchestrator.db_writer.execute(
+                result = await orchestrator.db_writer.execute(
                     "INSERT OR IGNORE INTO pipeline_state (episode_id, status, source_filename) VALUES (?, ?, ?)",
-                    (episode_id, "PENDING", source_path),
+                    (episode_id, "PENDING", source_rel_path),
                 )
+
+                # Only count genuinely new insertions (lastrowid > 0 means a row was inserted)
+                is_new = result is not None and isinstance(result, int) and result > 0
 
                 # Notify GPU worker that work is ready
                 orchestrator.gpu_work_ready.set()
@@ -35,7 +39,8 @@ async def run_ingestion_pass(orchestrator: "TrebekPipelineOrchestrator", input_d
                 stage_ingestion_ms = (time.perf_counter() - start_t) * 1000
                 await orchestrator.db_writer.update_job_telemetry(episode_id, stage_ingestion_ms=stage_ingestion_ms)
 
-                orchestrator.stats["total"] += 1
+                if is_new:
+                    orchestrator.stats["total"] += 1
 
 
 async def ingestion_worker(orchestrator: "TrebekPipelineOrchestrator", input_dir: str) -> None:

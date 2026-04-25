@@ -156,19 +156,21 @@ class TrebekPipelineOrchestrator:
         return result[0][0] if result else 0
 
     async def _no_work_remaining(self, target_status: str) -> bool:
-        """Check if there are no more items in the target status OR any upstream status (for --once mode)."""
+        """Check if there are no more items in the target status OR any upstream/in-flight status (for --once mode).
+
+        Each worker must wait not only for its own input status, but also for ALL
+        upstream stages that feed into it AND its own output transitional status.
+        Without this, a worker exits while episodes are still mid-flight.
+        """
         upstream_map = {
             "PENDING": ["PENDING"],
-            "TRANSCRIPT_READY": ["PENDING", "TRANSCRIBING", "TRANSCRIPT_READY"],
-            "SAVING": ["PENDING", "TRANSCRIBING", "TRANSCRIPT_READY", "CLEANED", "SAVING"],
+            "TRANSCRIPT_READY": ["PENDING", "TRANSCRIBING", "TRANSCRIPT_READY", "CLEANED"],
+            "SAVING": [
+                "PENDING", "TRANSCRIBING", "TRANSCRIPT_READY", "CLEANED", "SAVING",
+            ],
             "MULTIMODAL_DONE": [
-                "PENDING",
-                "TRANSCRIBING",
-                "TRANSCRIPT_READY",
-                "CLEANED",
-                "SAVING",
-                "MULTIMODAL_PROCESSING",
-                "MULTIMODAL_DONE",
+                "PENDING", "TRANSCRIBING", "TRANSCRIPT_READY", "CLEANED",
+                "SAVING", "MULTIMODAL_PROCESSING", "MULTIMODAL_DONE", "VECTORIZING",
             ],
         }
         statuses_to_check = upstream_map.get(target_status, [target_status])

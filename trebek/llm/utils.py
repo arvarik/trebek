@@ -39,7 +39,8 @@ async def _extract_part(
     import structlog
     logger = structlog.get_logger()
     client = _get_client()
-    
+
+    current_budget = max_output_tokens
     for attempt in range(max_retries + 1):
         try:
             response, usage = await client.generate_content(
@@ -47,7 +48,7 @@ async def _extract_part(
                 prompt=prompt,
                 system_instruction=system_prompt,
                 response_schema=schema_cls,
-                max_output_tokens=max_output_tokens,
+                max_output_tokens=current_budget,
                 cached_content_name=cached_content_name,
             )
 
@@ -61,7 +62,17 @@ async def _extract_part(
         except Exception as e:
             if attempt == max_retries:
                 raise
-            logger.warning("Extraction validation failed, retrying", attempt=attempt + 1, error=str(e))
-            await asyncio.sleep(2.0)
-            
+            # Escalate output token budget by 25% on each retry (capped at 65536)
+            # to give the model more room if truncation is the root cause
+            current_budget = min(int(current_budget * 1.25), 65536)
+            backoff_delay = 2.0 * (2 ** attempt)  # 2s, 4s, 8s, 16s
+            logger.warning(
+                "Extraction validation failed, retrying",
+                attempt=attempt + 1,
+                error=str(e),
+                next_budget=current_budget,
+                backoff_s=backoff_delay,
+            )
+            await asyncio.sleep(backoff_delay)
+
     raise RuntimeError("Unreachable")
