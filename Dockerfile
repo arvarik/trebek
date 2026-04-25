@@ -21,6 +21,9 @@ RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/cu121
 
+# Install GPU transcription and speaker diarization dependencies
+RUN pip install --no-cache-dir whisperx pyannote.audio
+
 # Install runtime dependencies from pyproject.toml without the package itself.
 # This layer is cached as long as dependency versions don't change.
 COPY pyproject.toml README.md ./
