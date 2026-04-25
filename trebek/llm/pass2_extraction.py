@@ -27,7 +27,12 @@ async def execute_pass_2_data_extraction(
     5. Composite-key deduplication for overlapping chunk regions
     6. Deterministic integrity validation encoding Jeopardy domain rules
     """
-    logger.info("Starting Map-Reduce extraction pipeline...")
+    logger.info(
+        "Starting Map-Reduce extraction pipeline",
+        total_segments=len(segments),
+        speaker_mapping=speaker_mapping,
+        max_retries=max_retries,
+    )
 
     formatted_lines = []
     for i, seg in enumerate(segments):
@@ -37,6 +42,11 @@ async def execute_pass_2_data_extraction(
         formatted_lines.append(f"[L{i}] [{start:.2f}s] {speaker}: {text}")
 
     full_transcript = "\n".join(formatted_lines)
+    logger.info(
+        "Transcript formatted for extraction",
+        total_lines=len(formatted_lines),
+        transcript_chars=len(full_transcript),
+    )
 
     base_system = (
         "You are Trebek, an expert data extraction pipeline for Jeopardy game transcripts. "
@@ -71,6 +81,14 @@ async def execute_pass_2_data_extraction(
     )
     _accumulate_usage(meta_usage)
     max_attempt_reached = max(max_attempt_reached, meta_att)
+    logger.info(
+        "Episode metadata extracted",
+        host=meta_data.host_name,
+        contestants=[c.name for c in meta_data.contestants],
+        is_tournament=meta_data.is_tournament,
+        score_adjustments=len(meta_data.score_adjustments),
+        meta_retries=meta_att,
+    )
 
     # ── Stage 2: Semantic Chunking ──────────────────────────────────
     lines = full_transcript.split("\n")
@@ -111,16 +129,31 @@ async def execute_pass_2_data_extraction(
 
     # Filter out failed chunks — log them but don't crash the entire episode
     chunk_results = []
+    failed_chunks = 0
     for idx, result in enumerate(raw_results):
         if isinstance(result, BaseException):
+            failed_chunks += 1
             logger.error(
                 "Chunk extraction failed, skipping chunk",
                 chunk=idx + 1,
                 total_chunks=len(chunks),
-                error=str(result),
+                error=str(result)[:300],
             )
             continue
+        chunk_data, _, _ = result
+        logger.info(
+            "Chunk extraction succeeded",
+            chunk=idx + 1,
+            clues_extracted=len(chunk_data.clues),
+        )
         chunk_results.append(result)
+
+    logger.info(
+        "All chunk extractions complete",
+        succeeded=len(chunk_results),
+        failed=failed_chunks,
+        total=len(chunks),
+    )
 
     # ── Stage 4: Reconstruct & Deduplicate ──────────────────────────
     all_clues: list[Clue] = []

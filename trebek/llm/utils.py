@@ -9,19 +9,23 @@ _T = TypeVar("_T", bound=BaseModel)
 
 def _estimate_output_tokens(num_input_lines: int, extraction_type: str) -> int:
     """
-    Conservative output token budget estimation.
-    Prevents both truncation (too low) and wasted quota (too high).
+    Output token budget estimation.
+
+    The reasoning_scratchpad alone consumes ~2000-4000 tokens before any
+    structured data is emitted. Budgets must account for this overhead.
     """
     if extraction_type == "meta":
-        return 8192  # Metadata is compact
+        return 16384  # Metadata + scratchpad + contestants + FJ
     elif extraction_type == "skeleton":
-        return 2048  # Just category names and counts
+        return 4096   # Just category names and counts
     elif extraction_type == "clues":
-        # ~250 tokens per clue (including nested BuzzAttempts),
-        # assume roughly 1 clue per 4 transcript lines
-        estimated_clues = max(1, num_input_lines // 4)
-        return min(max(estimated_clues * 300, 8192), 65536)
-    return 16384
+        # Each clue with nested BuzzAttempts: ~400 tokens
+        # reasoning_scratchpad overhead: ~3000 tokens
+        # Assume roughly 1 clue per 3-4 transcript lines
+        estimated_clues = max(1, num_input_lines // 3)
+        budget = 3000 + (estimated_clues * 400)
+        return min(max(budget, 16384), 65536)
+    return 32768
 
 
 async def _extract_part(
@@ -35,6 +39,9 @@ async def _extract_part(
     """
     Core extraction primitive using Native Structured Outputs with CoT scratchpad.
     Relies on Gemini API to enforce JSON schema natively, with a retry loop for truncation.
+
+    Retry strategy: each retry increases output token budget by 50% and uses
+    exponential backoff to handle both truncation and rate limiting.
     """
     import structlog
     logger = structlog.get_logger()
@@ -52,6 +59,17 @@ async def _extract_part(
                 cached_content_name=cached_content_name,
             )
 
+            output_tokens_used = int(usage.get("output_tokens", 0))
+            logger.info(
+                "LLM call completed",
+                schema=schema_cls.__name__,
+                attempt=attempt + 1,
+                budget=current_budget,
+                output_tokens_used=output_tokens_used,
+                budget_utilization_pct=round(output_tokens_used / current_budget * 100, 1) if current_budget > 0 else 0,
+                latency_ms=round(usage.get("latency_ms", 0), 0),
+            )
+
             if hasattr(response, "parsed") and response.parsed:
                 return response.parsed, usage, attempt
 
@@ -62,14 +80,15 @@ async def _extract_part(
         except Exception as e:
             if attempt == max_retries:
                 raise
-            # Escalate output token budget by 25% on each retry (capped at 65536)
+            # Escalate output token budget by 50% on each retry (capped at 65536)
             # to give the model more room if truncation is the root cause
-            current_budget = min(int(current_budget * 1.25), 65536)
+            current_budget = min(int(current_budget * 1.5), 65536)
             backoff_delay = 2.0 * (2 ** attempt)  # 2s, 4s, 8s, 16s
             logger.warning(
                 "Extraction validation failed, retrying",
+                schema=schema_cls.__name__,
                 attempt=attempt + 1,
-                error=str(e),
+                error=str(e)[:200],
                 next_budget=current_budget,
                 backoff_s=backoff_delay,
             )

@@ -33,11 +33,17 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                     )
                     if rows and rows[0][0]:
                         transcript_path = rows[0][0]
+                        logger.info("Loading transcript", episode_id=episode_id, path=transcript_path)
                         with gzip.open(transcript_path, "rt", encoding="utf-8") as f:
                             gpu_data = json.load(f)
 
                         transcript_data = gpu_data.get("transcript", {})
                         segments = transcript_data.get("segments", [])
+                        logger.info(
+                            "Transcript loaded",
+                            episode_id=episode_id,
+                            segments=len(segments),
+                        )
 
                         # Audio-Anchoring Domain Flaw: Extract exact 5-minute block
                         # starting around the 6-minute mark (host interview)
@@ -73,7 +79,17 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
 
                         start_llm_t = time.perf_counter()
                         speaker_mapping, usage1 = await execute_pass_1_speaker_anchoring(audio_slice_path)
+                        pass1_ms = (time.perf_counter() - start_llm_t) * 1000
+                        logger.info(
+                            "Pass 1 complete",
+                            episode_id=episode_id,
+                            speakers=len(speaker_mapping),
+                            pass1_ms=round(pass1_ms, 0),
+                        )
+
+                        pass2_start = time.perf_counter()
                         data, usage2, retries = await execute_pass_2_data_extraction(segments, speaker_mapping)
+                        pass2_ms = (time.perf_counter() - pass2_start) * 1000
 
                         stage_structured_extraction_ms = (time.perf_counter() - start_llm_t) * 1000
 
@@ -85,6 +101,18 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                         cost_1 = (usage1.get("input_tokens", 0) * 0.075 + usage1.get("output_tokens", 0) * 0.30) / 1000000
                         cost_2 = (usage2.get("input_tokens", 0) * 1.25 + usage2.get("output_tokens", 0) * 5.00) / 1000000
                         total_cost = cost_1 + cost_2
+
+                        logger.info(
+                            "Pass 2 complete",
+                            episode_id=episode_id,
+                            clues_extracted=len(data.clues),
+                            contestants=[c.name for c in data.contestants],
+                            pass2_ms=round(pass2_ms, 0),
+                            total_input_tokens=total_input,
+                            total_output_tokens=total_output,
+                            retries_used=retries,
+                            cost_usd=round(total_cost, 6),
+                        )
 
                         await orchestrator.db_writer.update_job_telemetry(
                             episode_id,
