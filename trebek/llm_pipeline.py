@@ -34,33 +34,68 @@ class GeminiClient:
     async def generate_content(
         self, model: str, prompt: str, system_instruction: str
     ) -> "tuple[str, dict[str, float]]":
-        from google.genai import types
+        import re
+        import random
         import time
+
+        from google.genai import types
 
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=0.0,
         )
-        start_t = time.perf_counter()
-        response = await self.client.aio.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=config,
-        )
-        latency_ms = (time.perf_counter() - start_t) * 1000
 
-        usage = {}
-        if hasattr(response, "usage_metadata") and response.usage_metadata:
-            usage = {
-                "input_tokens": getattr(response.usage_metadata, "prompt_token_count", 0),
-                "output_tokens": getattr(response.usage_metadata, "candidates_token_count", 0),
-                "cached_tokens": getattr(response.usage_metadata, "cached_content_token_count", 0),
-                "latency_ms": latency_ms,
-            }
-        else:
-            usage = {"input_tokens": 0.0, "output_tokens": 0.0, "cached_tokens": 0.0, "latency_ms": latency_ms}
+        max_retries = 10
+        base_delay = 5.0  # seconds
 
-        return str(response.text), usage
+        for attempt in range(max_retries + 1):
+            try:
+                start_t = time.perf_counter()
+                response = await self.client.aio.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=config,
+                )
+                latency_ms = (time.perf_counter() - start_t) * 1000
+
+                usage: dict[str, float] = {}
+                if hasattr(response, "usage_metadata") and response.usage_metadata:
+                    usage = {
+                        "input_tokens": getattr(response.usage_metadata, "prompt_token_count", 0),
+                        "output_tokens": getattr(response.usage_metadata, "candidates_token_count", 0),
+                        "cached_tokens": getattr(response.usage_metadata, "cached_content_token_count", 0),
+                        "latency_ms": latency_ms,
+                    }
+                else:
+                    usage = {"input_tokens": 0.0, "output_tokens": 0.0, "cached_tokens": 0.0, "latency_ms": latency_ms}
+
+                return str(response.text), usage
+
+            except Exception as e:
+                err_str = str(e)
+                is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
+                is_server_error = "500" in err_str or "503" in err_str or "UNAVAILABLE" in err_str
+
+                if not (is_rate_limit or is_server_error) or attempt == max_retries:
+                    raise
+
+                # Parse server-suggested retry delay if available
+                retry_match = re.search(r"retry.*?(\d+\.?\d*)\s*s", err_str, re.IGNORECASE)
+                if retry_match:
+                    delay = float(retry_match.group(1)) + random.uniform(1.0, 3.0)
+                else:
+                    delay = min(base_delay * (2**attempt), 120.0) + random.uniform(0.5, 2.0)
+
+                logger.warning(
+                    "Rate limited, retrying",
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                    delay_s=round(delay, 1),
+                    model=model,
+                )
+                await asyncio.sleep(delay)
+
+        raise RuntimeError("Unreachable")
 
 
 async def execute_pass_1_speaker_anchoring(host_interview_segment: str) -> "tuple[Dict[str, str], dict[str, float]]":
