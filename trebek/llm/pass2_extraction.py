@@ -17,6 +17,7 @@ def _normalize_speaker_names(
     clues: "list[Clue]",
     speaker_mapping: "Dict[str, str]",
     contestant_names: "list[str]",
+    score_adjustments: "list[Any]" = [],
 ) -> None:
     """
     Post-extraction normalization: maps all speaker name variants in buzz attempts
@@ -24,46 +25,54 @@ def _normalize_speaker_names(
 
     The LLM inconsistently uses:
       - Raw diarization IDs: SPEAKER_00, SPEAKER_02
-      - Pass 1 mapped names: Rachel, Lawrence
+      - Pass 1 mapped names: Rachel, Lawrence, Kamau
       - Full names: Harrison Whitaker
 
     This function resolves them all to the canonical full names (e.g. Rachel Bernstein)
     to prevent FK constraint failures in the relational DB commit.
     """
     # Build a comprehensive lookup: variant → canonical full name
-    # Priority: exact match > first-name match > SPEAKER_XX via Pass 1 mapping
     variant_map: Dict[str, str] = {}
 
     # 1. Exact matches (case-insensitive)
     for name in contestant_names:
         variant_map[name.lower()] = name
 
-    # 2. First-name matches: "Rachel" → "Rachel Bernstein"
+    # 2. Every individual word in the name → canonical name
+    #    Handles: "Kamau" → "W. Kamau Bell", "Rachel" → "Rachel Bernstein",
+    #    "Subba" → "Lawrence Subba", "DeFrank" → "Alex DeFrank"
     for name in contestant_names:
-        first = name.split()[0].lower()
-        if first not in variant_map:  # don't override exact matches
-            variant_map[first] = name
+        for part in name.split():
+            part_lower = part.lower().rstrip(".")  # strip trailing dots from initials like "W."
+            # Skip very short parts (initials like "W") to avoid false positives
+            if len(part_lower) <= 1:
+                continue
+            if part_lower not in variant_map:
+                variant_map[part_lower] = name
 
-    # 3. Last-name matches: "Subba" → "Lawrence Subba"
-    for name in contestant_names:
-        parts = name.split()
-        if len(parts) > 1:
-            last = parts[-1].lower()
-            if last not in variant_map:
-                variant_map[last] = name
-
-    # 4. SPEAKER_XX → Pass 1 name → contestant full name
+    # 3. SPEAKER_XX → Pass 1 name → contestant full name
     for speaker_id, mapped_name in speaker_mapping.items():
         sid = speaker_id.lower()
         # Try to resolve the Pass 1 name to a full contestant name
         resolved = variant_map.get(mapped_name.lower())
         if not resolved:
-            # Try first-name match from the mapped name
-            first = mapped_name.split()[0].lower()
-            resolved = variant_map.get(first)
+            # Try each word of the mapped name
+            for part in mapped_name.split():
+                part_lower = part.lower().rstrip(".")
+                if len(part_lower) > 1:
+                    resolved = variant_map.get(part_lower)
+                    if resolved:
+                        break
+        if not resolved:
+            # Substring containment: does the mapped name appear IN any contestant name?
+            mapped_lower = mapped_name.lower()
+            for cname in contestant_names:
+                if mapped_lower in cname.lower():
+                    resolved = cname
+                    break
         if resolved:
             variant_map[sid] = resolved
-            # Also map the Pass 1 name itself if not already mapped
+            # Also map the Pass 1 name itself
             if mapped_name.lower() not in variant_map:
                 variant_map[mapped_name.lower()] = resolved
         else:
@@ -72,9 +81,17 @@ def _normalize_speaker_names(
 
     unmapped: set[str] = set()
 
+    # Normalize buzz attempt speakers
     for clue in clues:
         for attempt in clue.attempts:
             canonical = variant_map.get(attempt.speaker.lower())
+            if not canonical:
+                # Last resort: substring containment check
+                speaker_lower = attempt.speaker.lower()
+                for cname in contestant_names:
+                    if speaker_lower in cname.lower() or cname.lower().startswith(speaker_lower):
+                        canonical = cname
+                        break
             if canonical:
                 attempt.speaker = canonical
             else:
@@ -85,6 +102,13 @@ def _normalize_speaker_names(
             canonical = variant_map.get(clue.wagerer_name.lower())
             if canonical:
                 clue.wagerer_name = canonical
+
+    # Normalize score_adjustment contestant names (they also build FK contestant_ids)
+    for adj in score_adjustments:
+        if hasattr(adj, "contestant") and adj.contestant:
+            canonical = variant_map.get(adj.contestant.lower())
+            if canonical:
+                adj.contestant = canonical
 
     if unmapped:
         logger.warning(
@@ -329,7 +353,10 @@ async def execute_pass_2_data_extraction(
 
     # ── Stage 4b: Speaker Name Normalization ────────────────────────
     contestant_names = [c.name for c in meta_data.contestants]
-    _normalize_speaker_names(sorted_clues, speaker_mapping, contestant_names)
+    _normalize_speaker_names(
+        sorted_clues, speaker_mapping, contestant_names,
+        score_adjustments=meta_data.score_adjustments,
+    )
 
     # ── Stage 5: Assemble Episode ───────────────────────────────────
     episode = Episode(
