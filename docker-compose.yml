@@ -1,0 +1,28 @@
+services:
+  trebek:
+    build: .
+    image: trebek:latest
+    container_name: trebek_daemon
+    env_file:
+      - .env
+    # CRITICAL: Docker's default 64MB shared memory will instantly crash 
+    # PyTorch's multiprocessing. 8gb is recommended for WhisperX/CUDA operations.
+    shm_size: '8gb'
+    # Ensure Docker restarts the daemon automatically on crash or host reboot
+    restart: unless-stopped
+    volumes:
+      # Map input and output directories
+      - ./input_videos:/app/input_videos
+      - ./gpu_outputs:/app/gpu_outputs
+      # IMPORTANT: SQLite in WAL mode requires POSIX advisory locks.
+      # This volume MUST be mapped to a local host filesystem (ext4, NTFS, APFS).
+      # Network mounts (NFS, SMB, CIFS) will result in database corruption.
+      - ./trebek.db:/app/trebek.db
+    # Hardware passthrough for NVIDIA GPU
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

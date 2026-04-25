@@ -290,6 +290,27 @@ All LLM extraction outputs are validated against strict Pydantic v2 models defin
    pip install whisperx pyannote.audio
    ```
 
+### 🐳 Docker Deployment
+
+The recommended way to run Trebek is via Docker to eliminate PyTorch and CUDA dependency issues.
+
+**Prerequisites:**
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed on the host.
+
+**Setup:**
+1. Populate your `.env` file (see Configuration below).
+2. Start the daemon in the background:
+   ```bash
+   docker compose up -d --build
+   ```
+3. View the logs to monitor pipeline processing:
+   ```bash
+   docker compose logs -f
+   ```
+
+> **⚠️ WARNING - SQLite WAL Mode & Network Drives**
+> Trebek uses SQLite Write-Ahead Logging (WAL) which requires strict POSIX advisory locking. Your `trebek.db` volume **must** be mounted to a local disk (ext4, NTFS, APFS). Mapping it to a network share (NFS, SMB, CIFS) will result in immediate database corruption or locking failures.
+
 ---
 
 ## ⚙️ Configuration
