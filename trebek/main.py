@@ -10,13 +10,13 @@ import uuid
 from pathlib import Path
 from typing import Any, List, Optional
 
-from core_database import DatabaseWriter
-from gpu_orchestrator import GPUOrchestrator
-from config import settings, SUPPORTED_VIDEO_EXTENSIONS
-from llm_pipeline import execute_pass_1_speaker_anchoring, execute_pass_2_data_extraction
-from state_machine import TrebekStateMachine
-from schemas import Episode
-from console import (
+from trebek.core_database import DatabaseWriter
+from trebek.gpu_orchestrator import GPUOrchestrator
+from trebek.config import settings, SUPPORTED_VIDEO_EXTENSIONS
+from trebek.llm_pipeline import execute_pass_1_speaker_anchoring, execute_pass_2_data_extraction
+from trebek.state_machine import TrebekStateMachine
+from trebek.schemas import Episode
+from trebek.console import (
     console,
     create_pipeline_progress,
     get_stage_display,
@@ -32,7 +32,6 @@ def _configure_logging() -> None:
     """Configures structlog with Rich ConsoleRenderer for TTY, JSONRenderer for piped output."""
     shared_processors = [
         structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),
     ]
 
@@ -86,13 +85,35 @@ class TrebekPipelineOrchestrator:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
         self.gpu_orchestrator.shutdown()
+        
+        telemetry_stats = {}
+        try:
+            rows = await self.db_writer.execute("""
+                SELECT 
+                    SUM(gemini_total_input_tokens + gemini_total_output_tokens + gemini_total_cached_tokens),
+                    SUM(gemini_total_cost_usd),
+                    AVG(peak_vram_mb),
+                    AVG(stage_gpu_extraction_ms)
+                FROM job_telemetry
+            """)
+            if rows and rows[0][0] is not None:
+                telemetry_stats = {
+                    "total_tokens": float(rows[0][0] or 0),
+                    "total_cost": float(rows[0][1] or 0.0),
+                    "avg_peak_vram": float(rows[0][2] or 0.0),
+                    "avg_extraction_ms": float(rows[0][3] or 0.0),
+                }
+        except Exception as e:
+            logger.warning("Failed to fetch telemetry aggregates", error=str(e))
+            
         await self.db_writer.stop()
 
-        render_shutdown_summary(self.stats)
+        render_shutdown_summary(self.stats, telemetry_stats)
         logger.info("Pipeline Orchestrator shut down cleanly.")
 
     async def _ingestion_worker(self, input_dir: str) -> None:
         """Polls input_dir for new video files across all supported formats."""
+        import time
         while self.running:
             if os.path.exists(input_dir):
                 for entry in os.scandir(input_dir):
@@ -102,6 +123,7 @@ class TrebekPipelineOrchestrator:
                     if ext not in SUPPORTED_VIDEO_EXTENSIONS:
                         continue
 
+                    start_t = time.perf_counter()
                     episode_id = os.path.basename(os.path.splitext(entry.name)[0])
                     source_filename = entry.name
 
@@ -110,6 +132,10 @@ class TrebekPipelineOrchestrator:
                         "VALUES (?, ?, ?)",
                         (episode_id, "PENDING", source_filename),
                     )
+                    
+                    stage_ingestion_ms = (time.perf_counter() - start_t) * 1000
+                    await self.db_writer.update_job_telemetry(episode_id, stage_ingestion_ms=stage_ingestion_ms)
+                    
                     self.stats["total"] += 1
 
             if self.mode == "once":
@@ -148,7 +174,18 @@ class TrebekPipelineOrchestrator:
                     continue
 
                 try:
-                    transcript_path = await self.gpu_orchestrator.execute_gpu_work(video_filepath)
+                    import time
+                    start_t = time.perf_counter()
+                    transcript_path, peak_vram_mb, avg_gpu_utilization_pct = await self.gpu_orchestrator.execute_gpu_work(video_filepath)
+                    stage_gpu_extraction_ms = (time.perf_counter() - start_t) * 1000
+                    
+                    await self.db_writer.update_job_telemetry(
+                        episode_id, 
+                        stage_gpu_extraction_ms=stage_gpu_extraction_ms,
+                        peak_vram_mb=peak_vram_mb,
+                        avg_gpu_utilization_pct=avg_gpu_utilization_pct
+                    )
+                    
                     await self.db_writer.execute(
                         "UPDATE pipeline_state SET status = 'TRANSCRIPT_READY', transcript_path = ?, "
                         "updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
@@ -205,8 +242,32 @@ class TrebekPipelineOrchestrator:
                         if not interview_text:
                             interview_text = full_transcript[:3000]
 
-                        speaker_mapping = await execute_pass_1_speaker_anchoring(interview_text)
-                        data = await execute_pass_2_data_extraction(full_transcript, speaker_mapping)
+                        import time
+                        start_llm_t = time.perf_counter()
+                        speaker_mapping, usage1 = await execute_pass_1_speaker_anchoring(interview_text)
+                        data, usage2, retries = await execute_pass_2_data_extraction(full_transcript, speaker_mapping)
+                        
+                        stage_structured_extraction_ms = (time.perf_counter() - start_llm_t) * 1000
+                        
+                        total_input = int(usage1.get("input_tokens", 0) + usage2.get("input_tokens", 0))
+                        total_output = int(usage1.get("output_tokens", 0) + usage2.get("output_tokens", 0))
+                        total_cached = int(usage1.get("cached_tokens", 0) + usage2.get("cached_tokens", 0))
+                        total_latency = usage1.get("latency_ms", 0.0) + usage2.get("latency_ms", 0.0)
+                        
+                        cost_1 = (usage1.get("input_tokens", 0) * 0.075 + usage1.get("output_tokens", 0) * 0.30) / 1000000
+                        cost_2 = (usage2.get("input_tokens", 0) * 1.25 + usage2.get("output_tokens", 0) * 5.00) / 1000000
+                        total_cost = cost_1 + cost_2
+                        
+                        await self.db_writer.update_job_telemetry(
+                            episode_id,
+                            gemini_total_input_tokens=total_input,
+                            gemini_total_output_tokens=total_output,
+                            gemini_total_cached_tokens=total_cached,
+                            gemini_api_latency_ms=total_latency,
+                            gemini_total_cost_usd=total_cost,
+                            pydantic_retry_count=retries,
+                            stage_structured_extraction_ms=stage_structured_extraction_ms
+                        )
 
                         episode_data_path = os.path.join(self.output_dir, f"episode_{episode_id}.json")
                         with open(episode_data_path, "w", encoding="utf-8") as f:
@@ -255,6 +316,8 @@ class TrebekPipelineOrchestrator:
                     episode_data = await asyncio.to_thread(Episode.model_validate_json, episode_json)
 
                     # Run the deterministic state machine verification
+                    import time
+                    start_vec_t = time.perf_counter()
                     state_machine = TrebekStateMachine()
                     state_machine.load_adjustments(episode_data.score_adjustments)
                     for clue in episode_data.clues:
@@ -262,6 +325,8 @@ class TrebekPipelineOrchestrator:
 
                     # Commit relational data to the analytical tables
                     await self._commit_relational_data(episode_id, episode_data, state_machine)
+                    stage_vectorization_ms = (time.perf_counter() - start_vec_t) * 1000
+                    await self.db_writer.update_job_telemetry(episode_id, stage_vectorization_ms=stage_vectorization_ms)
 
                     await self.db_writer.execute(
                         "UPDATE pipeline_state SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP "

@@ -1,5 +1,5 @@
-from src.state_machine import TrebekStateMachine
-from src.schemas import Clue, BuzzAttempt, ScoreAdjustment
+from trebek.state_machine import TrebekStateMachine
+from trebek.schemas import Clue, BuzzAttempt, ScoreAdjustment
 
 
 def test_process_clue_basic() -> None:

@@ -40,13 +40,14 @@ Trebek is a highly resilient, fault-tolerant data extraction pipeline connecting
   - `buzz_attempts`: The behavioral physics (brain freeze durations, acoustic confidence, lockout inferences). Foreign keys link to `clues` and `contestants`.
   - `wagers`: Game-theory math (irrationality deltas). Foreign keys link to `clues` and `contestants`.
   - `score_adjustments`: Chronological corrections. Foreign keys link to `episodes` and `contestants`.
+  - `job_telemetry`: Granular operational physics. Captures millisecond-precision stage latencies, GPU resource signatures, Gemini token usage (with caching metrics), and self-healing retry counts. Foreign keys link to `pipeline_state`.
   *(No cascading deletes are currently defined; cleanup is manual.)*
 
 ## 5. ML/AI Integration Ledger
 | Provider | Model | Application | Capabilities |
 |----------|-------|-------------|--------------|
-| Google | `gemini-1.5-flash` | Speaker Anchoring & Commercial Filtering | High-speed structured mapping. |
-| Google | `gemini-1.5-pro` | Stage 5 Structured Extraction | Massive Pydantic parsing with strict instructions. |
+| Google | `gemini-1.5-flash` | Speaker Anchoring & Commercial Filtering | High-speed structured mapping. Leverages Context Caching logic optimizations for repeated large transcript processing. |
+| Google | `gemini-1.5-pro` | Stage 5 Structured Extraction | Massive Pydantic parsing with strict instructions. Leverages Context Caching to minimize token costs. |
 | Google | `Gemini Pro Vision` | Stage 6 Multimodal Augmentation | Reconstruct visual clues and detect exact podium lockout illumination frames. |
 | Local GPU | `WhisperX / Pyannote` | Stage 3 & 4 Audio Processing & Filtering | Large-v3 float16 transcription, forced alignment, diarization, and hardware-accelerated commercial pre-filtering. |
 | Local GPU | `Ollama / Llama-3-8B` | Stage 5 Local Fallback | Offline structured extraction, leveraging idle 16GB VRAM after Stage 3 completion. |
@@ -78,3 +79,5 @@ log_level=INFO
 - **MUST** pass an `asyncio.Future` in the `DatabaseWriter` payload and `await` it using `asyncio.wait_for()` to prevent false resumability and silent deadlocks.
 - **MUST** offload `Episode.model_validate_json` to a background thread to prevent `watchdog` heartbeat timeouts.
 - **MUST** perform score adjustments logically aligned to the `selection_order`.
+- **MUST** explicitly implement Gemini Context Caching optimization for recurring high-token payloads (e.g., transcripts) to minimize API cost and latency, as monitored by `job_telemetry`.
+- **MUST** surface operational telemetry via a terminal-native Rich/Textual CLI dashboard, strictly avoiding web-based HTTP frontends.

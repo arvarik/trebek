@@ -1,6 +1,6 @@
 import structlog
 from typing import Dict, List, Optional
-from schemas import Clue, ScoreAdjustment
+from trebek.schemas import Clue, ScoreAdjustment
 
 logger = structlog.get_logger()
 

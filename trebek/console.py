@@ -106,52 +106,61 @@ def render_system_diagnostics(settings: Any) -> bool:
     Renders a comprehensive system diagnostics panel at startup.
     Returns True if all critical checks pass, False if there are blockers.
     """
-    checks: List[Text] = []
     has_blocker = False
+
+    # ── Diagnostic Table Setup ──
+    diag_table = Table(box=None, show_header=False, padding=(0, 2, 0, 1), expand=True)
+    diag_table.add_column("Icon", justify="center", width=4)
+    diag_table.add_column("Component", style="bold white", width=16)
+    diag_table.add_column("Details", style="dim white")
+
+    def add_check(label: str, ok: bool, detail: str = "", warn: bool = False):
+        if ok and not warn:
+            icon = "[bold green]✓[/bold green]"
+        elif warn:
+            icon = "[bold yellow]![/bold yellow]"
+        else:
+            icon = "[bold red]✗[/bold red]"
+        diag_table.add_row(icon, label, detail)
 
     # ── Python version ──
     py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     py_ok = sys.version_info >= (3, 11)
-    checks.append(_check_item("Python", py_ok, py_version, warn=not py_ok))
-    if not py_ok:
-        has_blocker = True
+    add_check("Python", py_ok, py_version, warn=not py_ok)
+    if not py_ok: has_blocker = True
 
     # ── SQLite version ──
     sqlite_version = sqlite3.sqlite_version
     sqlite_ok = tuple(int(x) for x in sqlite_version.split(".")) >= (3, 35, 0)
-    checks.append(_check_item("SQLite", sqlite_ok, f"{sqlite_version} (≥3.35 required for RETURNING)"))
-    if not sqlite_ok:
-        has_blocker = True
+    add_check("SQLite", sqlite_ok, f"{sqlite_version} (≥3.35 required)")
+    if not sqlite_ok: has_blocker = True
 
     # ── FFmpeg ──
     ffmpeg_info = _check_binary("ffmpeg")
-    checks.append(_check_item("FFmpeg", ffmpeg_info is not None, ffmpeg_info or "not found in PATH"))
-    if not ffmpeg_info:
-        has_blocker = True
+    add_check("FFmpeg", ffmpeg_info is not None, ffmpeg_info or "not found in PATH")
+    if not ffmpeg_info: has_blocker = True
 
     # ── WhisperX ──
     whisperx_info = _check_binary("whisperx")
     if whisperx_info:
-        checks.append(_check_item("WhisperX", True, whisperx_info))
+        add_check("WhisperX", True, whisperx_info)
     else:
-        checks.append(_check_item("WhisperX", False, "not found — GPU transcription will fail", warn=True))
+        add_check("WhisperX", False, "not found — GPU transcription will fail", warn=True)
 
     # ── Gemini API Key ──
     api_key = os.environ.get("GEMINI_API_KEY", settings.gemini_api_key)
     if api_key:
         masked = api_key[:4] + "•" * 12 + api_key[-4:] if len(api_key) > 8 else "•" * len(api_key)
-        checks.append(_check_item("Gemini API Key", True, masked))
+        add_check("Gemini API Key", True, masked)
     else:
-        checks.append(_check_item("Gemini API Key", False, "not set — LLM stages will fail", warn=True))
+        add_check("Gemini API Key", False, "not set — LLM stages will fail", warn=True)
 
-    # Build the System Check panel
-    check_group = Group(*checks)
     check_panel = Panel(
-        check_group,
+        diag_table,
         title="[bold]System Check[/bold]",
         border_style="dim cyan" if not has_blocker else "red",
         box=box.ROUNDED,
-        padding=(0, 1),
+        padding=(1, 1),
     )
 
     # ── Configuration table ──
@@ -164,19 +173,19 @@ def render_system_diagnostics(settings: Any) -> bool:
     config_table.add_column("Key", style="dim white", width=14)
     config_table.add_column("Value", style="bold white")
 
-    config_table.add_row("Database", settings.db_path)
-    config_table.add_row("Input Dir", settings.input_dir)
-    config_table.add_row("Output Dir", settings.output_dir)
-    config_table.add_row("GPU VRAM", f"{settings.gpu_vram_target_gb} GB")
-    config_table.add_row("Batch Size", str(settings.whisper_batch_size))
-    config_table.add_row("Compute", settings.whisper_compute_type)
+    config_table.add_row("Database", f"[cyan]{settings.db_path}[/cyan]")
+    config_table.add_row("Input Dir", f"[blue]{settings.input_dir}[/blue]")
+    config_table.add_row("Output Dir", f"[blue]{settings.output_dir}[/blue]")
+    config_table.add_row("GPU VRAM", f"[magenta]{settings.gpu_vram_target_gb} GB[/magenta]")
+    config_table.add_row("Batch Size", f"[magenta]{settings.whisper_batch_size}[/magenta]")
+    config_table.add_row("Compute", f"[magenta]{settings.whisper_compute_type}[/magenta]")
 
     config_panel = Panel(
         config_table,
         title="[bold]Configuration[/bold]",
         border_style="dim cyan",
         box=box.ROUNDED,
-        padding=(0, 0),
+        padding=(1, 1),
     )
 
     # Render side by side if terminal is wide enough, stacked otherwise
@@ -190,7 +199,7 @@ def render_system_diagnostics(settings: Any) -> bool:
     if has_blocker:
         console.print(
             "\n  [bold red]⛔ Critical prerequisites missing.[/bold red] "
-            "Resolve the issues above before starting the pipeline.\n"
+            "Resolve the issues above, or run [bold]trebek --docker[/bold] to use the containerized version.\n"
         )
 
     return not has_blocker
@@ -345,9 +354,9 @@ PIPELINE_STAGES: Dict[str, tuple[str, str]] = {
 def create_pipeline_progress() -> Progress:
     """Creates a Rich Progress instance configured for pipeline tracking."""
     return Progress(
-        SpinnerColumn(spinner_name="dots", style="cyan"),
-        TextColumn("[bold blue]{task.description}[/bold blue]"),
-        BarColumn(bar_width=35, complete_style="cyan", finished_style="bold green"),
+        SpinnerColumn(spinner_name="dots2", style="cyan"),
+        TextColumn("[bold white]{task.description}[/bold white]"),
+        BarColumn(bar_width=40, complete_style="magenta", finished_style="bold green"),
         MofNCompleteColumn(),
         TextColumn("[dim]•[/dim]"),
         TimeElapsedColumn(),
@@ -400,8 +409,8 @@ def render_episode_status_table(episodes: List[Dict[str, str]]) -> Table:
 # Shutdown Summary
 # ──────────────────────────────────────────────────────────────
 
-def render_shutdown_summary(stats: Dict[str, int]) -> None:
-    """Renders a final summary panel after pipeline shutdown."""
+def render_shutdown_summary(stats: Dict[str, int], telemetry_stats: Optional[Dict[str, float]] = None) -> None:
+    """Renders a final premium split-pane summary panel after pipeline shutdown."""
     completed = stats.get("completed", 0)
     failed = stats.get("failed", 0)
     total = stats.get("total", 0)
@@ -409,37 +418,79 @@ def render_shutdown_summary(stats: Dict[str, int]) -> None:
 
     if failed > 0 and completed == 0:
         border = "red"
-        icon = "❌"
+        icon = "[bold red]✗[/bold red]"
         verdict = "[bold red]All episodes failed.[/bold red]"
     elif failed > 0:
         border = "yellow"
-        icon = "⚠️"
+        icon = "[bold yellow]![/bold yellow]"
         verdict = "[yellow]Some episodes failed. Check logs for details.[/yellow]"
     elif completed > 0:
-        border = "green"
-        icon = "✅"
-        verdict = "[bold green]All episodes processed successfully.[/bold green]"
+        border = "cyan"
+        icon = "[bold cyan]✓[/bold cyan]"
+        verdict = "[bold cyan]All episodes processed successfully.[/bold cyan]"
     else:
         border = "dim"
-        icon = "ℹ️"
+        icon = "[dim]ℹ[/dim]"
         verdict = "[dim]No episodes were processed.[/dim]"
 
-    # Build stats table
-    stats_table = Table(box=None, show_header=False, padding=(0, 2))
-    stats_table.add_column("Label", style="dim")
-    stats_table.add_column("Value", style="bold", justify="right")
+    # ── Left Pane: Job Outcomes ──
+    outcomes_table = Table(box=None, show_header=False, padding=(0, 2))
+    outcomes_table.add_column("Label", style="dim white", width=12)
+    outcomes_table.add_column("Value", style="bold", justify="right", width=6)
 
-    stats_table.add_row("Queued", str(total))
-    stats_table.add_row("Completed", f"[green]{completed}[/green]")
+    outcomes_table.add_row("Queued", str(total))
+    outcomes_table.add_row("Completed", f"[green]{completed}[/green]")
     if failed > 0:
-        stats_table.add_row("Failed", f"[red]{failed}[/red]")
+        outcomes_table.add_row("Failed", f"[red]{failed}[/red]")
     if skipped > 0:
-        stats_table.add_row("Remaining", f"[yellow]{skipped}[/yellow]")
+        outcomes_table.add_row("Remaining", f"[yellow]{skipped}[/yellow]")
+    
+    outcomes_panel = Panel(
+        outcomes_table,
+        title="[bold]Job Outcomes[/bold]",
+        border_style="dim",
+        box=box.ROUNDED,
+        padding=(1, 2),
+        expand=True
+    )
+
+    # ── Right Pane: Performance Telemetry ──
+    telemetry_table = Table(box=None, show_header=False, padding=(0, 2))
+    telemetry_table.add_column("Metric", style="dim white", width=18)
+    telemetry_table.add_column("Value", style="bold", justify="right", width=12)
+
+    if telemetry_stats and completed > 0:
+        tokens = int(telemetry_stats.get("total_tokens", 0))
+        cost = telemetry_stats.get("total_cost", 0.0)
+        vram = telemetry_stats.get("avg_peak_vram", 0.0)
+        ext_time = telemetry_stats.get("avg_extraction_ms", 0.0) / 1000.0
+
+        telemetry_table.add_row("Total Tokens", f"[cyan]{tokens:,}[/cyan]")
+        telemetry_table.add_row("Est. API Cost", f"[green]${cost:.4f}[/green]")
+        telemetry_table.add_row("Avg Peak VRAM", f"[magenta]{vram / 1024:.1f} GB[/magenta]")
+        telemetry_table.add_row("Avg Ext. Time", f"[blue]{ext_time:.1f}s[/blue]")
+    else:
+        telemetry_table.add_row("No telemetry data", "")
+
+    telemetry_panel = Panel(
+        telemetry_table,
+        title="[bold]Performance[/bold]",
+        border_style="dim",
+        box=box.ROUNDED,
+        padding=(1, 2),
+        expand=True
+    )
+
+    # Assemble Split Pane using Table.grid for strict horizontal layout
+    split_pane = Table.grid(padding=2, expand=True)
+    split_pane.add_column(ratio=1)
+    split_pane.add_column(ratio=1)
+    split_pane.add_row(outcomes_panel, telemetry_panel)
 
     content = Group(
-        Text(f"  {icon}  Pipeline shutdown complete\n", style="bold"),
-        stats_table,
-        Text(f"\n  {verdict}"),
+        Text.from_markup(f"  {icon}  [bold]Pipeline shutdown complete[/bold]\n"),
+        split_pane,
+        Text.from_markup(f"\n  {verdict}"),
     )
 
     console.print()
@@ -448,7 +499,7 @@ def render_shutdown_summary(stats: Dict[str, int]) -> None:
             content,
             title="[bold]Trebek — Session Summary[/bold]",
             border_style=border,
-            box=box.ROUNDED,
+            box=box.DOUBLE_EDGE,
             padding=(1, 3),
         )
     )

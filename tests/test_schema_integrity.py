@@ -1,6 +1,6 @@
 import pytest
 import sqlite3
-from src.core_database import DatabaseWriter
+from trebek.core_database import DatabaseWriter
 
 
 

@@ -7,13 +7,17 @@ import os
 import signal
 import subprocess
 import uuid
+import threading
+import time
 from concurrent.futures import ProcessPoolExecutor
 
 
 logger = structlog.get_logger()
 
 
-def gpu_worker_task(video_filepath: str, output_dir: str) -> str:
+logger = structlog.get_logger()
+
+def gpu_worker_task(video_filepath: str, output_dir: str) -> tuple[str, float, float]:
     """
     Executes the GPU processing task (Stage 3) and writes results to disk to avoid
     IPC serialization bottleneck of massive JSON structures.
@@ -22,6 +26,37 @@ def gpu_worker_task(video_filepath: str, output_dir: str) -> str:
     file_id = uuid.uuid4().hex
     audio_path = os.path.join(output_dir, f"audio_{file_id}.wav")
     whisperx_output_json = os.path.join(output_dir, f"audio_{file_id}.json")
+
+    peak_vram_mb = 0.0
+    avg_gpu_utilization_pct = 0.0
+
+    stop_event = threading.Event()
+    metrics = {"peak_vram": 0.0, "util_sum": 0.0, "util_count": 0}
+
+    def monitor_gpu():
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            while not stop_event.is_set():
+                try:
+                    info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    vram_mb = float(info.used) / (1024 * 1024)
+                    if vram_mb > metrics["peak_vram"]:
+                        metrics["peak_vram"] = vram_mb
+                        
+                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    metrics["util_sum"] += float(util.gpu)
+                    metrics["util_count"] += 1
+                except Exception:
+                    pass
+                time.sleep(0.5)
+            pynvml.nvmlShutdown()
+        except Exception:
+            pass
+
+    monitor_thread = threading.Thread(target=monitor_gpu, daemon=True)
+    monitor_thread.start()
 
     # 1. FFmpeg extraction
     subprocess.run(
@@ -61,7 +96,14 @@ def gpu_worker_task(video_filepath: str, output_dir: str) -> str:
     except OSError:
         pass
 
-    return output_path
+    stop_event.set()
+    monitor_thread.join(timeout=1.0)
+    
+    if metrics["util_count"] > 0:
+        avg_gpu_utilization_pct = metrics["util_sum"] / metrics["util_count"]
+    peak_vram_mb = metrics["peak_vram"]
+
+    return output_path, peak_vram_mb, avg_gpu_utilization_pct
 
 
 class GPUOrchestrator:
@@ -82,13 +124,13 @@ class GPUOrchestrator:
         self.executor = ProcessPoolExecutor(max_workers=max_workers, mp_context=context, max_tasks_per_child=1)
         self._child_pids: list[int] = []
 
-    async def execute_gpu_work(self, video_filepath: str) -> str:
+    async def execute_gpu_work(self, video_filepath: str) -> tuple[str, float, float]:
         """
         Dispatches video filepath to the worker pool and awaits the resulting filepath.
         """
         loop = asyncio.get_running_loop()
-        filepath = await loop.run_in_executor(self.executor, gpu_worker_task, video_filepath, self.output_dir)
-        return filepath
+        filepath, peak_vram, avg_util = await loop.run_in_executor(self.executor, gpu_worker_task, video_filepath, self.output_dir)
+        return filepath, peak_vram, avg_util
 
     def shutdown(self) -> None:
         """

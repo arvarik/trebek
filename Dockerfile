@@ -22,16 +22,16 @@ RUN pip install --no-cache-dir torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/cu121
 
 # Copy dependency files
-COPY pyproject.toml .
+COPY pyproject.toml README.md ./
 
 # Install application dependencies
 # We use '.' because pyproject.toml is configured for a standard install
 RUN pip install --no-cache-dir .
 
 # Now copy the application code
-COPY src/ ./src/
+COPY trebek/ ./trebek/
 
 # We run as root by default to avoid permission issues when mounting host volumes
 # like input_videos and trebek.db. Users mapping to network drives should ensure
 # POSIX locking support for SQLite WAL mode.
-CMD ["python", "src/main.py"]
+CMD ["trebek"]

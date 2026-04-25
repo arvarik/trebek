@@ -1,7 +1,7 @@
 import pytest
 import os
 from pathlib import Path
-from src.gpu_orchestrator import GPUOrchestrator
+from trebek.gpu_orchestrator import GPUOrchestrator
 
 @pytest.fixture(autouse=True)
 def mock_path(monkeypatch):
@@ -15,8 +15,10 @@ async def test_gpu_orchestrator_execution(tmp_path: Path) -> None:
 
     try:
         # Mock video filepath
-        result_path = await orchestrator.execute_gpu_work("/mock/video.mp4")
+        result_path, peak_vram, avg_util = await orchestrator.execute_gpu_work("/mock/video.mp4")
         assert os.path.exists(result_path)
         assert result_path.endswith(".json.gz")
+        assert isinstance(peak_vram, float)
+        assert isinstance(avg_util, float)
     finally:
         orchestrator.shutdown()

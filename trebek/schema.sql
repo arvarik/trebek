@@ -107,6 +107,32 @@ CREATE TABLE IF NOT EXISTS score_adjustments (
     effective_after_clue_selection_order INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS job_telemetry (
+    episode_id TEXT PRIMARY KEY REFERENCES pipeline_state(episode_id),
+    
+    -- Hardware Resource Signatures
+    peak_vram_mb REAL,
+    avg_gpu_utilization_pct REAL,
+
+    -- Pipeline Stage Execution Latency (ms)
+    stage_ingestion_ms REAL,
+    stage_gpu_extraction_ms REAL,
+    stage_commercial_filtering_ms REAL,
+    stage_structured_extraction_ms REAL,
+    stage_multimodal_ms REAL,
+    stage_vectorization_ms REAL,
+
+    -- Gemini AI Telemetry & Self-Healing
+    gemini_total_input_tokens INTEGER,
+    gemini_total_output_tokens INTEGER,
+    gemini_total_cached_tokens INTEGER,
+    gemini_total_cost_usd REAL,
+    gemini_api_latency_ms REAL,
+    pydantic_retry_count INTEGER,
+    
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Performance indexes for pipeline polling and analytical queries
 CREATE INDEX IF NOT EXISTS idx_pipeline_state_status ON pipeline_state(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_clues_episode_id ON clues(episode_id);
@@ -114,3 +140,4 @@ CREATE INDEX IF NOT EXISTS idx_buzz_attempts_clue_id ON buzz_attempts(clue_id);
 CREATE INDEX IF NOT EXISTS idx_buzz_attempts_contestant_id ON buzz_attempts(contestant_id);
 CREATE INDEX IF NOT EXISTS idx_wagers_clue_id ON wagers(clue_id);
 CREATE INDEX IF NOT EXISTS idx_score_adjustments_episode_id ON score_adjustments(episode_id);
+CREATE INDEX IF NOT EXISTS idx_job_telemetry_episode_id ON job_telemetry(episode_id);

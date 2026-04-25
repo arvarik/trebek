@@ -1,5 +1,5 @@
 import pytest
-from src.core_database import DatabaseWriter
+from trebek.core_database import DatabaseWriter
 
 
 @pytest.mark.asyncio

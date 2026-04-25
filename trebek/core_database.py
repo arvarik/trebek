@@ -166,3 +166,56 @@ class DatabaseWriter:
         except Exception as e:
             logger.error("Error polling for work", error=str(e))
             return None
+
+    async def update_job_telemetry(self, episode_id: str, **kwargs: Any) -> None:
+        """
+        Upserts job telemetry fields for a given episode.
+        """
+        if not kwargs:
+            return
+            
+        # First ensure a row exists
+        await self.execute(
+            "INSERT OR IGNORE INTO job_telemetry (episode_id) VALUES (?)", 
+            (episode_id,)
+        )
+        
+        # Then update the provided fields
+        set_clauses = []
+        params = []
+        for k, v in kwargs.items():
+            set_clauses.append(f"{k} = ?")
+            params.append(v)
+            
+        params.append(episode_id)
+        
+        query = f"UPDATE job_telemetry SET {', '.join(set_clauses)} WHERE episode_id = ?"
+        await self.execute(query, tuple(params))
+
+    async def insert_job_telemetry(self, telemetry: Any) -> None:
+        """
+        Inserts a job telemetry record into the database.
+        """
+        query = """
+        INSERT INTO job_telemetry (
+            episode_id, peak_vram_mb, avg_gpu_utilization_pct,
+            stage_ingestion_ms, stage_gpu_extraction_ms,
+            stage_commercial_filtering_ms, stage_structured_extraction_ms,
+            stage_multimodal_ms, stage_vectorization_ms,
+            gemini_total_input_tokens, gemini_total_output_tokens,
+            gemini_total_cached_tokens, gemini_total_cost_usd,
+            gemini_api_latency_ms, pydantic_retry_count
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
+        """
+        params = (
+            telemetry.episode_id, telemetry.peak_vram_mb, telemetry.avg_gpu_utilization_pct,
+            telemetry.stage_ingestion_ms, telemetry.stage_gpu_extraction_ms,
+            telemetry.stage_commercial_filtering_ms, telemetry.stage_structured_extraction_ms,
+            telemetry.stage_multimodal_ms, telemetry.stage_vectorization_ms,
+            telemetry.gemini_total_input_tokens, telemetry.gemini_total_output_tokens,
+            telemetry.gemini_total_cached_tokens, telemetry.gemini_total_cost_usd,
+            telemetry.gemini_api_latency_ms, telemetry.pydantic_retry_count
+        )
+        await self.execute(query, params)

@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from src.schemas import Clue, Contestant
+from trebek.schemas import Clue, Contestant
 
 
 def test_contestant_podium_constraint() -> None:

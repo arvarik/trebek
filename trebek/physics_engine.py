@@ -17,7 +17,7 @@ def _get_vision_client() -> "VisionClient":
 
 
 class VisionClient:
-    """Interface for Gemini 1.5 Pro Vision via the Files API."""
+    """Interface for Gemini 3.1 Pro via the Files API."""
 
     def __init__(self) -> None:
         import os
@@ -52,7 +52,7 @@ class VisionClient:
             temperature=0.0,
         )
         response = await self.client.aio.models.generate_content(
-            model="gemini-1.5-pro",
+            model="gemini-3.1-pro",
             contents=uploaded_file,
             config=config,
         )

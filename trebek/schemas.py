@@ -81,3 +81,21 @@ class Episode(BaseModel):
     clues: List[Clue]
     final_jeopardy: FinalJeopardy
     score_adjustments: List[ScoreAdjustment]
+
+
+class JobTelemetry(BaseModel):
+    episode_id: str
+    peak_vram_mb: Optional[float] = Field(default=None, ge=0.0)
+    avg_gpu_utilization_pct: Optional[float] = Field(default=None, ge=0.0)
+    stage_ingestion_ms: Optional[float] = Field(default=None, ge=0.0)
+    stage_gpu_extraction_ms: Optional[float] = Field(default=None, ge=0.0)
+    stage_commercial_filtering_ms: Optional[float] = Field(default=None, ge=0.0)
+    stage_structured_extraction_ms: Optional[float] = Field(default=None, ge=0.0)
+    stage_multimodal_ms: Optional[float] = Field(default=None, ge=0.0)
+    stage_vectorization_ms: Optional[float] = Field(default=None, ge=0.0)
+    gemini_total_input_tokens: Optional[int] = Field(default=None, ge=0)
+    gemini_total_output_tokens: Optional[int] = Field(default=None, ge=0)
+    gemini_total_cached_tokens: Optional[int] = Field(default=None, ge=0)
+    gemini_total_cost_usd: Optional[float] = Field(default=None, ge=0.0)
+    gemini_api_latency_ms: Optional[float] = Field(default=None, ge=0.0)
+    pydantic_retry_count: Optional[int] = Field(default=None, ge=0)

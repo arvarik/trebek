@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from src.config import Settings
+from trebek.config import Settings
 
 
 def test_config_gpu_vram_bounds() -> None:

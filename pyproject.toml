@@ -5,8 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "trebek"
 version = "0.1.0"
-description = "A high-fidelity multimodal pipeline"
+description = "A high-fidelity multimodal AI pipeline for data extraction"
+readme = "README.md"
 requires-python = ">=3.11"
+authors = [{name = "Arvind", email = "arvind@example.com"}]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
@@ -14,6 +21,13 @@ dependencies = [
     "google-genai>=0.1.2",
     "rich>=13.0.0",
 ]
+
+[project.scripts]
+trebek = "trebek.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["trebek*"]
 
 [project.optional-dependencies]
 dev = [

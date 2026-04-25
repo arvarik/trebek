@@ -18,7 +18,7 @@
 
 ---
 
-Trebek is an advanced orchestration system that bridges **local GPU compute** (WhisperX, Pyannote), **Cloud LLMs** (Google Gemini 1.5 Pro/Flash, Vision), and a **deterministic Python state machine** into a single, continuously running pipeline daemon. Its core purpose is to extract highly accurate, chronological, and structurally validated data from raw Jeopardy! video episodes into a normalized relational format designed for **RAG semantic searches** and **game-theoretic analysis**.
+Trebek is an advanced orchestration system that bridges **local GPU compute** (WhisperX, Pyannote), **Cloud LLMs** (Google Gemini 3.1 Pro, Gemini 3.1 Flash-Lite), and a **deterministic Python state machine** into a single, continuously running pipeline daemon. Its core purpose is to extract highly accurate, chronological, and structurally validated data from raw Jeopardy! video episodes into a normalized relational format designed for **RAG semantic searches** and **game-theoretic analysis**.
 
 The resulting dataset captures not just the questions and answers, but the full *cognitive fingerprint* of each game: true buzzer reaction times, speech disfluency counts, wager irrationality deltas, board control patterns, and semantic lateral distances between clues and responses.
 
@@ -63,9 +63,9 @@ Uses a persistent SQLite `pipeline_state` table to manage jobs across all stages
 Local GPU operations (PyTorch/WhisperX) are sandboxed in a `ProcessPoolExecutor` with `max_tasks_per_child=1`. Worker processes forcefully die after every episode, which defragments 100% of VRAM. This makes the system immune to PyTorch's internal memory fragmentation during multi-day inference runs — a problem `torch.cuda.empty_cache()` alone cannot solve.
 
 ### Multi-Pass LLM Architecture
-- **Pass 1 (Gemini Flash):** Fast speaker anchoring. Extracts a rigid `{SPEAKER_XX: "Name"}` mapping from the host interview segment to prevent hallucinations in later passes.
-- **Pass 2 (Gemini Pro):** Massive structured extraction of clues, buzzes, and wagers into strict JSON. Includes a **Pydantic self-healing retry loop** — if the LLM output fails schema validation, the `ValidationError` is injected back into the prompt for automatic correction (up to 2 retries).
-- **Pass 3 (Gemini Pro Vision):** Multimodal augmentation for visual clue reconstruction and exact podium lockout illumination frame detection.
+- **Pass 1 (Gemini 3.1 Flash-Lite):** Fast speaker anchoring. Extracts a rigid `{SPEAKER_XX: "Name"}` mapping from the host interview segment to prevent hallucinations in later passes.
+- **Pass 2 (Gemini 3.1 Pro):** Massive structured extraction of clues, buzzes, and wagers into strict JSON. Includes a **Pydantic self-healing retry loop** — if the LLM output fails schema validation, the `ValidationError` is injected back into the prompt for automatic correction (up to 2 retries).
+- **Pass 3 (Gemini 3.1 Pro):** Multimodal augmentation for visual clue reconstruction and exact podium lockout illumination frame detection.
 
 ### Deterministic State Machine
 A pure Python `TrebekStateMachine` replays extracted atomic game events chronologically to:
@@ -137,9 +137,9 @@ The pipeline processes each episode through a rigorous sequence of stages, with 
 |-------|------|-------------------|--------|-------------|
 | 1 | **Ingestion** | → `PENDING` | Filesystem polling | `.mp4` files detected in `input_dir` are registered in `pipeline_state` |
 | 2–3 | **GPU Extraction** | `PENDING` → `TRANSCRIBING` → `TRANSCRIPT_READY` | FFmpeg + WhisperX + Pyannote | Audio extraction, Large-v3 float16 transcription, forced alignment diarization. Output: `.json.gz` |
-| 4 | **Commercial Filtering** | `TRANSCRIPT_READY` → `CLEANED` | Gemini Flash | Hardware-accelerated advertisement removal while preserving exact word-level timings |
-| 5 | **Structured Extraction** | `CLEANED` → `SAVING` | Gemini Flash + Pro | Pass 1: Speaker anchoring. Pass 2: Full game event extraction with Pydantic self-healing |
-| 6 | **Multimodal Augmentation** | (inline) | Gemini Pro Vision | Visual clue reconstruction and podium illumination timestamp extraction |
+| 4 | **Commercial Filtering** | `TRANSCRIPT_READY` → `CLEANED` | Gemini 3.1 Flash-Lite | Hardware-accelerated advertisement removal while preserving exact word-level timings |
+| 5 | **Structured Extraction** | `CLEANED` → `SAVING` | Gemini 3.1 Flash-Lite + Pro | Pass 1: Speaker anchoring. Pass 2: Full game event extraction with Pydantic self-healing |
+| 6 | **Multimodal Augmentation** | (inline) | Gemini 3.1 Pro | Visual clue reconstruction and podium illumination timestamp extraction |
 | 7 | **State Verification** | `SAVING` → `VECTORIZING` | `TrebekStateMachine` | Deterministic replay validates score sequences, adjustments, and board control logic |
 | 8–9 | **Relational & Semantic Commit** | `VECTORIZING` → `COMPLETED` | `DatabaseWriter` + `sqlite-vec` | Normalized INSERT into relational tables + vector embedding for semantic search |
 
@@ -244,9 +244,9 @@ All LLM extraction outputs are validated against strict Pydantic v2 models defin
 | Provider | Model | Stage | Application |
 |----------|-------|-------|-------------|
 | **Local GPU** | WhisperX / Pyannote | 2–3 | Large-v3 float16 transcription, forced alignment, speaker diarization |
-| **Google** | Gemini 1.5 Flash | 4–5 | Speaker anchoring and commercial filtering (high-speed structured mapping) |
-| **Google** | Gemini 1.5 Pro | 5 | Massive structured extraction with Pydantic self-healing retry loop |
-| **Google** | Gemini Pro Vision | 6 | Visual clue reconstruction, podium lockout illumination frame detection |
+| **Google** | Gemini 3.1 Flash-Lite | 4–5 | Speaker anchoring and commercial filtering (high-speed structured mapping) |
+| **Google** | Gemini 3.1 Pro | 5 | Massive structured extraction with Pydantic self-healing retry loop |
+| **Google** | Gemini 3.1 Pro | 6 | Visual clue reconstruction, podium lockout illumination frame detection |
 | **Local GPU** | Ollama / Llama-3-8B | 5 (fallback) | Offline structured extraction for environments without Gemini API access |
 | **Local/API** | Text Embeddings | 9 | Cosine distance calculation for `semantic_lateral_distance` |
 
@@ -267,46 +267,36 @@ All LLM extraction outputs are validated against strict Pydantic v2 models defin
 
 ### Setup
 
-1. **Clone the repository:**
+Trebek is published to PyPI and can be installed globally.
+
+1. **Install the package:**
    ```bash
-   git clone https://github.com/arvarik/trebek.git
-   cd trebek
+   pip install trebek
    ```
 
-2. **Create and activate a virtual environment:**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   ```
-
-3. **Install the package with development dependencies:**
-   ```bash
-   pip install -e ".[dev]"
-   ```
-
-4. **Install GPU dependencies** (if processing locally):
+2. **(Optional) Install GPU dependencies** for native processing:
    ```bash
    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
    pip install whisperx pyannote.audio
    ```
+   *Note: If you do not wish to install these heavy dependencies, you can use the built-in Docker wrapper (see below).*
 
-### 🐳 Docker Deployment
+### 🐳 Docker Hybrid Execution (Recommended)
 
-The recommended way to run Trebek is via Docker to eliminate PyTorch and CUDA dependency issues.
+To completely bypass complex PyTorch and CUDA dependency issues on your host, Trebek includes a seamless Docker orchestrator. 
 
 **Prerequisites:**
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed on the host.
+- [Docker](https://docs.docker.com/get-docker/) and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed on your host.
 
-**Setup:**
-1. Populate your `.env` file (see Configuration below).
-2. Start the daemon in the background:
-   ```bash
-   docker compose up -d --build
-   ```
-3. View the logs to monitor pipeline processing:
-   ```bash
-   docker compose logs -f
-   ```
+**Usage:**
+Simply append the `--docker` flag to any `trebek` command. The CLI will automatically spin up the official GPU-enabled container, mapping your current working directory and `.env` variables seamlessly:
+
+```bash
+trebek --docker
+trebek --docker --once --input-dir ./videos
+```
+
+
 
 > **⚠️ WARNING - SQLite WAL Mode & Network Drives**
 > Trebek uses SQLite Write-Ahead Logging (WAL) which requires strict POSIX advisory locking. Your `trebek.db` volume **must** be mounted to a local disk (ext4, NTFS, APFS). Mapping it to a network share (NFS, SMB, CIFS) will result in immediate database corruption or locking failures.
@@ -358,7 +348,8 @@ Trebek is designed to run as a **continuous daemon**. Once started, it will poll
 ### Start the Pipeline
 
 ```bash
-python src/main.py
+trebek                   # Native mode (requires GPU dependencies)
+trebek --docker          # Docker mode (recommended)
 ```
 
 ### Process Episodes
@@ -421,16 +412,16 @@ LIMIT 10;
 
 ```bash
 # Run the full test suite
-pytest
+pytest tests/
 
 # Run with verbose output
-pytest -v
+pytest tests/ -v
 
 # Run the linter
 ruff check .
 
 # Run the type checker
-mypy src/
+mypy trebek/
 ```
 
 ### Test Coverage
@@ -453,8 +444,9 @@ The test suite validates critical system contracts:
 
 ```
 trebek/
-├── src/
-│   ├── main.py               # Pipeline orchestrator daemon (asyncio event loop, workers, signal handling)
+├── trebek/
+│   ├── cli.py                 # Pipeline entrypoint (CLI parser and Docker orchestration)
+│   ├── main.py                # Pipeline orchestrator daemon (asyncio event loop, workers, signal handling)
 │   ├── config.py              # Pydantic Settings with GPU constraint validators
 │   ├── schemas.py             # Pydantic v2 data contracts (Episode, Clue, BuzzAttempt, etc.)
 │   ├── schema.sql             # SQLite DDL: 8 tables with foreign keys, CHECK constraints, PRAGMAs

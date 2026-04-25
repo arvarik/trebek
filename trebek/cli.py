@@ -11,8 +11,8 @@ import argparse
 import os
 import sqlite3
 
-from config import settings, SUPPORTED_VIDEO_EXTENSIONS
-from console import (
+from trebek.config import settings, SUPPORTED_VIDEO_EXTENSIONS
+from trebek.console import (
     console,
     render_startup_banner,
     render_dry_run_table,
@@ -102,6 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the input directory (default: from .env or 'input_videos')",
     )
+    parser.add_argument(
+        "--docker",
+        action="store_true",
+        help="Run the pipeline inside a GPU-enabled Docker container",
+    )
     return parser
 
 
@@ -112,13 +117,41 @@ def main() -> None:
     # Override input_dir if provided via CLI
     input_dir = args.input_dir or settings.input_dir
 
+    if args.docker:
+        import subprocess
+        import sys
+        
+        cmd = [
+            "docker", "run", "--rm", "-it",
+            "--gpus", "all",
+            "-v", f"{os.path.abspath(os.getcwd())}:/app",
+        ]
+        if "GEMINI_API_KEY" in os.environ:
+            cmd.extend(["-e", f"GEMINI_API_KEY={os.environ['GEMINI_API_KEY']}"])
+            
+        cmd.append("trebek:latest")
+        
+        if args.dry_run:
+            cmd.append("--dry-run")
+        if args.once:
+            cmd.append("--once")
+        if args.input_dir:
+            cmd.extend(["--input-dir", args.input_dir])
+            
+        console.print("[dim cyan]Orchestrating Docker container...[/dim cyan]")
+        try:
+            sys.exit(subprocess.run(cmd).returncode)
+        except FileNotFoundError:
+            console.print("[bold red]❌ Docker is not installed or not in PATH.[/bold red]")
+            sys.exit(1)
+
     if args.dry_run:
         handle_dry_run(input_dir)
         return
 
     # Import here to avoid loading heavy modules for --dry-run
     import asyncio
-    from main import run_pipeline
+    from trebek.main import run_pipeline
 
     mode = "once" if args.once else "daemon"
 
