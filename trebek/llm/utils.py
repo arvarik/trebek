@@ -9,22 +9,22 @@ _T = TypeVar("_T", bound=BaseModel)
 
 def _estimate_output_tokens(num_input_lines: int, extraction_type: str) -> int:
     """
-    Output token budget estimation.
+    Output token budget. Generous ceilings are free — you only pay for tokens
+    actually generated. Being too conservative causes truncation, which triggers
+    retries that cost MORE in the end.
 
-    The reasoning_scratchpad alone consumes ~2000-4000 tokens before any
-    structured data is emitted. Budgets must account for this overhead.
+    Gemini 3.1 Pro max: 65,536 output tokens.
     """
     if extraction_type == "meta":
-        return 16384  # Metadata + scratchpad + contestants + FJ
+        return 16384
     elif extraction_type == "skeleton":
-        return 4096   # Just category names and counts
+        return 4096
     elif extraction_type == "clues":
-        # Each clue with nested BuzzAttempts: ~400 tokens
-        # reasoning_scratchpad overhead: ~3000 tokens
-        # Assume roughly 1 clue per 3-4 transcript lines
-        estimated_clues = max(1, num_input_lines // 3)
-        budget = 3000 + (estimated_clues * 400)
-        return min(max(budget, 16384), 65536)
+        # Each transcript segment is 20-30s of dense, multi-speaker dialogue.
+        # A chunk of 20 segments can contain 20-30 clues, each needing ~400 tokens,
+        # plus the reasoning_scratchpad at ~3000-5000 tokens.
+        # Use 32768 as floor — it's free headroom.
+        return 32768
     return 32768
 
 
