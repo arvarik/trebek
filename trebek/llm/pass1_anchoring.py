@@ -32,7 +32,7 @@ async def execute_pass_1_speaker_anchoring(audio_file_path: str) -> "tuple[Dict[
         ]
 
         response, usage = await client.generate_content(
-            model="gemini-3.1-flash-preview",
+            model="gemini-3-flash-preview",
             prompt=prompt,
             system_instruction=system_prompt,
             max_output_tokens=2048,

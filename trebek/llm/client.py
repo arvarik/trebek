@@ -67,9 +67,9 @@ class GeminiClient:
                 usage = {}
                 if hasattr(response, "usage_metadata") and response.usage_metadata:
                     usage = {
-                        "input_tokens": getattr(response.usage_metadata, "prompt_token_count", 0),
-                        "output_tokens": getattr(response.usage_metadata, "candidates_token_count", 0),
-                        "cached_tokens": getattr(response.usage_metadata, "cached_content_token_count", 0),
+                        "input_tokens": getattr(response.usage_metadata, "prompt_token_count", 0) or 0.0,
+                        "output_tokens": getattr(response.usage_metadata, "candidates_token_count", 0) or 0.0,
+                        "cached_tokens": getattr(response.usage_metadata, "cached_content_token_count", 0) or 0.0,
                         "latency_ms": latency_ms,
                     }
                 else:
