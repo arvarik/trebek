@@ -50,6 +50,23 @@ async def execute_pass_3_multimodal_augmentation(
                 if proc.returncode == 0:
                     try:
                         uploaded_file = await client.upload_file(clip_path)
+
+                        # Wait for file to become ACTIVE (video processing takes 1-5s)
+                        for poll_i in range(15):
+                            file_info = await asyncio.to_thread(
+                                client.client.files.get, name=uploaded_file.name
+                            )
+                            state_name = file_info.state.name if file_info.state else "UNKNOWN"
+                            if state_name == "ACTIVE":
+                                break
+                            if state_name == "FAILED":
+                                raise RuntimeError(f"File processing failed: {uploaded_file.name}")
+                            await asyncio.sleep(1)
+                        else:
+                            logger.warning("File never became ACTIVE, skipping", file=uploaded_file.name)
+                            await client.delete_file(uploaded_file.name)
+                            return
+
                         prompt = [
                             "Watch this 3-second clip immediately following the host finishing the clue. "
                             "Determine if any contestant's podium indicator light illuminates, indicating a buzz. "

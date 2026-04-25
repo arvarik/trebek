@@ -25,6 +25,8 @@ PIPELINE_STAGES: Dict[str, tuple[str, str]] = {
     "TRANSCRIPT_READY": ("📝 Transcript Ready", "cyan"),
     "CLEANED": ("🧹 LLM Extraction", "blue"),
     "SAVING": ("💾 State Verification", "magenta"),
+    "MULTIMODAL_PROCESSING": ("🔬 Multimodal Augmentation", "bright_magenta"),
+    "MULTIMODAL_DONE": ("🔬 Multimodal Complete", "cyan"),
     "VECTORIZING": ("🧠 Relational Commit", "green"),
     "COMPLETED": ("✅ Done", "bold green"),
     "FAILED": ("❌ Failed", "bold red"),

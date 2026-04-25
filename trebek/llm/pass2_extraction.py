@@ -13,6 +13,92 @@ logger = structlog.get_logger()
 GEMINI_CONCURRENCY = 3
 
 
+def _normalize_speaker_names(
+    clues: "list[Clue]",
+    speaker_mapping: "Dict[str, str]",
+    contestant_names: "list[str]",
+) -> None:
+    """
+    Post-extraction normalization: maps all speaker name variants in buzz attempts
+    to canonical contestant full names from the episode metadata.
+
+    The LLM inconsistently uses:
+      - Raw diarization IDs: SPEAKER_00, SPEAKER_02
+      - Pass 1 mapped names: Rachel, Lawrence
+      - Full names: Harrison Whitaker
+
+    This function resolves them all to the canonical full names (e.g. Rachel Bernstein)
+    to prevent FK constraint failures in the relational DB commit.
+    """
+    # Build a comprehensive lookup: variant → canonical full name
+    # Priority: exact match > first-name match > SPEAKER_XX via Pass 1 mapping
+    variant_map: Dict[str, str] = {}
+
+    # 1. Exact matches (case-insensitive)
+    for name in contestant_names:
+        variant_map[name.lower()] = name
+
+    # 2. First-name matches: "Rachel" → "Rachel Bernstein"
+    for name in contestant_names:
+        first = name.split()[0].lower()
+        if first not in variant_map:  # don't override exact matches
+            variant_map[first] = name
+
+    # 3. Last-name matches: "Subba" → "Lawrence Subba"
+    for name in contestant_names:
+        parts = name.split()
+        if len(parts) > 1:
+            last = parts[-1].lower()
+            if last not in variant_map:
+                variant_map[last] = name
+
+    # 4. SPEAKER_XX → Pass 1 name → contestant full name
+    for speaker_id, mapped_name in speaker_mapping.items():
+        sid = speaker_id.lower()
+        # Try to resolve the Pass 1 name to a full contestant name
+        resolved = variant_map.get(mapped_name.lower())
+        if not resolved:
+            # Try first-name match from the mapped name
+            first = mapped_name.split()[0].lower()
+            resolved = variant_map.get(first)
+        if resolved:
+            variant_map[sid] = resolved
+            # Also map the Pass 1 name itself if not already mapped
+            if mapped_name.lower() not in variant_map:
+                variant_map[mapped_name.lower()] = resolved
+        else:
+            # Pass 1 name doesn't match any contestant — map SPEAKER_XX to it directly
+            variant_map[sid] = mapped_name
+
+    unmapped: set[str] = set()
+
+    for clue in clues:
+        for attempt in clue.attempts:
+            canonical = variant_map.get(attempt.speaker.lower())
+            if canonical:
+                attempt.speaker = canonical
+            else:
+                unmapped.add(attempt.speaker)
+
+        # Also normalize wagerer_name on daily doubles
+        if clue.wagerer_name:
+            canonical = variant_map.get(clue.wagerer_name.lower())
+            if canonical:
+                clue.wagerer_name = canonical
+
+    if unmapped:
+        logger.warning(
+            "Speaker normalization: unmapped speakers remain",
+            unmapped=unmapped,
+            variant_map={k: v for k, v in variant_map.items() if not k.startswith("speaker_")},
+        )
+    else:
+        logger.info(
+            "Speaker normalization complete — all speakers mapped to contestant full names",
+            total_attempts=sum(len(c.attempts) for c in clues),
+        )
+
+
 async def execute_pass_2_data_extraction(
     segments: list[Dict[str, Any]], speaker_mapping: Dict[str, str], max_retries: int = 4
 ) -> "tuple[Episode, dict[str, float], int]":
@@ -240,6 +326,10 @@ async def execute_pass_2_data_extraction(
         clue.selection_order = i + 1
 
     logger.info("Clues after deduplication", count=len(sorted_clues))
+
+    # ── Stage 4b: Speaker Name Normalization ────────────────────────
+    contestant_names = [c.name for c in meta_data.contestants]
+    _normalize_speaker_names(sorted_clues, speaker_mapping, contestant_names)
 
     # ── Stage 5: Assemble Episode ───────────────────────────────────
     episode = Episode(
