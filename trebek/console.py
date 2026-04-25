@@ -752,7 +752,7 @@ def render_stats_dashboard(db_path: str) -> None:
     console.print("[dim]Press Ctrl+C to exit dashboard[/dim]\n")
 
     layout = generate_stats_layout(db_path)
-    
+
     # If the layout is a Panel indicating no database, just print and exit
     if isinstance(layout, Panel):
         console.print(layout)

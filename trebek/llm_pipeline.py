@@ -170,6 +170,7 @@ async def execute_pass_1_speaker_anchoring(host_interview_segment: str) -> "tupl
 #  to reduce schema complexity and improve constrained decoding.
 # ─────────────────────────────────────────────────────────────────────
 
+
 class PartialEpisodeMeta(BaseModel):
     episode_date: str
     host_name: str
@@ -185,10 +186,15 @@ class PartialClues(BaseModel):
 
 class EpisodeSkeleton(BaseModel):
     """Lightweight structural contract extracted before full clue extraction."""
+
     jeopardy_categories: list[str] = Field(description="The 6 Jeopardy round category names, left to right.")
-    double_jeopardy_categories: list[str] = Field(description="The 6 Double Jeopardy round category names, left to right.")
+    double_jeopardy_categories: list[str] = Field(
+        description="The 6 Double Jeopardy round category names, left to right."
+    )
     total_jeopardy_clues_played: int = Field(description="How many Jeopardy round clues were actually played (max 30).")
-    total_double_jeopardy_clues_played: int = Field(description="How many Double Jeopardy round clues were actually played (max 30).")
+    total_double_jeopardy_clues_played: int = Field(
+        description="How many Double Jeopardy round clues were actually played (max 30)."
+    )
     daily_double_count: int = Field(description="Total number of Daily Doubles in this episode (typically 3).")
 
 
@@ -351,6 +357,7 @@ def _chunk_by_semantic_boundaries(transcript_lines: list[str], max_chunk_lines: 
 #  that catch LLM hallucinations without another LLM call.
 # ─────────────────────────────────────────────────────────────────────
 
+
 def _validate_extraction_integrity(episode: Episode) -> list[str]:
     """
     Post-extraction deterministic sanity checks encoding Jeopardy domain rules.
@@ -421,6 +428,7 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
 #  Deduplication — merge clues from overlapping chunks
 # ─────────────────────────────────────────────────────────────────────
 
+
 def _deduplicate_clues(all_clues: list[Clue]) -> list[Clue]:
     """
     Deduplicates clues from overlapping chunks using a composite key of:
@@ -455,6 +463,7 @@ def _deduplicate_clues(all_clues: list[Clue]) -> list[Clue]:
 # ─────────────────────────────────────────────────────────────────────
 #  Pass 2: Map-Reduce Data Extraction Pipeline
 # ─────────────────────────────────────────────────────────────────────
+
 
 async def execute_pass_2_data_extraction(
     full_transcript: str, speaker_mapping: Dict[str, str], max_retries: int = 2
@@ -496,7 +505,10 @@ async def execute_pass_2_data_extraction(
         "DO NOT extract individual clues."
     )
     meta_data, meta_usage, meta_att = await _extract_part(
-        meta_prompt, base_system, PartialEpisodeMeta, max_retries,
+        meta_prompt,
+        base_system,
+        PartialEpisodeMeta,
+        max_retries,
         max_output_tokens=_estimate_output_tokens(0, "meta"),
     )
     _accumulate_usage(meta_usage)
@@ -528,7 +540,10 @@ async def execute_pass_2_data_extraction(
             )
             output_budget = _estimate_output_tokens(chunk_lines, "clues")
             return await _extract_part(
-                prompt, base_system, PartialClues, max_retries,
+                prompt,
+                base_system,
+                PartialClues,
+                max_retries,
                 max_output_tokens=output_budget,
             )
 

@@ -242,7 +242,7 @@ class TrebekPipelineOrchestrator:
                             gpu_data = json.load(f)
 
                         transcript_data = gpu_data.get("transcript", {})
-                        full_transcript = json.dumps(transcript_data)
+                        full_transcript = json.dumps(transcript_data, indent=2)
 
                         # Use diarization speaker boundaries to locate interview segment
                         segments = transcript_data.get("segments", [])
@@ -381,7 +381,7 @@ class TrebekPipelineOrchestrator:
             "SAVING": ["PENDING", "TRANSCRIBING", "TRANSCRIPT_READY", "CLEANED", "SAVING"],
         }
         statuses_to_check = upstream_map.get(target_status, [target_status])
-        
+
         placeholders = ",".join(["?"] * len(statuses_to_check))
         query = f"SELECT COUNT(*) FROM pipeline_state WHERE status IN ({placeholders})"
         result = await self.db_writer.execute(query, tuple(statuses_to_check))
