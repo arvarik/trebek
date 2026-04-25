@@ -25,7 +25,7 @@ def test_config_whisper_compute_type() -> None:
     # Invalid type
     with pytest.raises(ValidationError, match="whisper_compute_type"):
         Settings(whisper_compute_type="float64")
-    
+
     with pytest.raises(ValidationError, match="whisper_compute_type"):
         Settings(whisper_compute_type="int8")
 
@@ -37,6 +37,6 @@ def test_config_whisper_batch_size() -> None:
     # Invalid sizes (<= 0)
     with pytest.raises(ValidationError, match="whisper_batch_size"):
         Settings(whisper_batch_size=0)
-        
+
     with pytest.raises(ValidationError, match="whisper_batch_size"):
         Settings(whisper_batch_size=-4)

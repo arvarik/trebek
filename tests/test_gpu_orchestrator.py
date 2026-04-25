@@ -3,10 +3,12 @@ import os
 from pathlib import Path
 from trebek.gpu_orchestrator import GPUOrchestrator
 
+
 @pytest.fixture(autouse=True)
 def mock_path(monkeypatch):
     mock_bin = os.path.abspath(os.path.join(os.path.dirname(__file__), "mock_bin"))
     monkeypatch.setenv("PATH", f"{mock_bin}:{os.environ.get('PATH', '')}")
+
 
 @pytest.mark.asyncio
 async def test_gpu_orchestrator_execution(tmp_path: Path) -> None:

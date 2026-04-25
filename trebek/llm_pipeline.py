@@ -31,7 +31,9 @@ class GeminiClient:
             )
         self.client = genai.Client(api_key=api_key)
 
-    async def generate_content(self, model: str, prompt: str, system_instruction: str) -> "tuple[str, dict[str, float]]":
+    async def generate_content(
+        self, model: str, prompt: str, system_instruction: str
+    ) -> "tuple[str, dict[str, float]]":
         from google.genai import types
         import time
 
@@ -104,7 +106,7 @@ async def execute_pass_2_data_extraction(
 
     base_prompt = f"Transcript Data:\n{full_transcript}\n\nOutput strict JSON matching the Episode schema."
     current_prompt = base_prompt
-    
+
     total_usage: dict[str, float] = {"input_tokens": 0.0, "output_tokens": 0.0, "cached_tokens": 0.0, "latency_ms": 0.0}
 
     for attempt in range(max_retries + 1):
@@ -115,7 +117,7 @@ async def execute_pass_2_data_extraction(
             response_text, usage = await client.generate_content(
                 model="gemini-3.1-pro", prompt=current_prompt, system_instruction=system_prompt
             )
-            
+
             total_usage["input_tokens"] += usage.get("input_tokens", 0.0)
             total_usage["output_tokens"] += usage.get("output_tokens", 0.0)
             total_usage["cached_tokens"] += usage.get("cached_tokens", 0.0)

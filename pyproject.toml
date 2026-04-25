@@ -11,9 +11,10 @@ requires-python = ">=3.11"
 authors = [{name = "Arvind", email = "arvind@example.com"}]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: OS Independent",
 ]
+license = {text = "AGPL-3.0-only"}
 dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
@@ -29,18 +30,22 @@ trebek = "trebek.cli:main"
 where = ["."]
 include = ["trebek*"]
 
+[tool.setuptools.package-data]
+trebek = ["py.typed", "schema.sql"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-mock>=3.10.0",
+    "pytest-cov>=4.0.0",
     "ruff>=0.0.280",
     "mypy>=1.4.0",
 ]
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py311"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

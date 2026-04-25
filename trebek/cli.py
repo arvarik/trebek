@@ -2,11 +2,12 @@
 Trebek CLI — Entry point for the pipeline daemon.
 
 Usage:
-    python src/cli.py                    # Start continuous daemon mode
-    python src/cli.py --once             # Process current queue then exit
-    python src/cli.py --dry-run          # Preview discovered files, no processing
-    python src/cli.py --input-dir /path  # Override input directory
+    trebek                    # Start continuous daemon mode
+    trebek --once             # Process current queue then exit
+    trebek --dry-run          # Preview discovered files, no processing
+    trebek --input-dir /path  # Override input directory
 """
+
 import argparse
 import os
 import sqlite3
@@ -16,6 +17,7 @@ from trebek.console import (
     console,
     render_startup_banner,
     render_dry_run_table,
+    render_stats_dashboard,
     render_system_diagnostics,
 )
 
@@ -48,13 +50,15 @@ def discover_video_files(input_dir: str) -> list[dict[str, object]]:
         episode_id = os.path.splitext(entry.name)[0]
         status = "Already Queued" if episode_id in queued_ids else "New"
 
-        files.append({
-            "filename": entry.name,
-            "filepath": entry.path,
-            "format": ext,
-            "size_bytes": entry.stat().st_size,
-            "status": status,
-        })
+        files.append(
+            {
+                "filename": entry.name,
+                "filepath": entry.path,
+                "format": ext,
+                "size_bytes": entry.stat().st_size,
+                "status": status,
+            }
+        )
 
     return files
 
@@ -80,10 +84,10 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python src/cli.py                    Start continuous daemon\n"
-            "  python src/cli.py --dry-run           Preview discovered files\n"
-            "  python src/cli.py --once              Process queue then exit\n"
-            "  python src/cli.py --input-dir ./vids  Override input directory\n"
+            "  trebek                    Start continuous daemon\n"
+            "  trebek --dry-run           Preview discovered files\n"
+            "  trebek --once              Process queue then exit\n"
+            "  trebek --input-dir ./vids  Override input directory\n"
         ),
     )
     parser.add_argument(
@@ -107,6 +111,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run the pipeline inside a GPU-enabled Docker container",
     )
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Show database analytics dashboard (no processing)",
+    )
     return parser
 
 
@@ -120,24 +129,33 @@ def main() -> None:
     if args.docker:
         import subprocess
         import sys
-        
+
         cmd = [
-            "docker", "run", "--rm", "-it",
-            "--gpus", "all",
-            "-v", f"{os.path.abspath(os.getcwd())}:/app",
+            "docker",
+            "run",
+            "--rm",
+            "-it",
+            "--gpus",
+            "all",
+            "-v",
+            f"{os.path.abspath(os.getcwd())}:/app",
         ]
+        # Pass .env file if it exists, so container gets the same config
+        env_file = os.path.join(os.getcwd(), ".env")
+        if os.path.exists(env_file):
+            cmd.extend(["--env-file", env_file])
         if "GEMINI_API_KEY" in os.environ:
             cmd.extend(["-e", f"GEMINI_API_KEY={os.environ['GEMINI_API_KEY']}"])
-            
+
         cmd.append("trebek:latest")
-        
+
         if args.dry_run:
             cmd.append("--dry-run")
         if args.once:
             cmd.append("--once")
         if args.input_dir:
             cmd.extend(["--input-dir", args.input_dir])
-            
+
         console.print("[dim cyan]Orchestrating Docker container...[/dim cyan]")
         try:
             sys.exit(subprocess.run(cmd).returncode)
@@ -147,6 +165,10 @@ def main() -> None:
 
     if args.dry_run:
         handle_dry_run(input_dir)
+        return
+
+    if args.stats:
+        render_stats_dashboard(settings.db_path)
         return
 
     # Import here to avoid loading heavy modules for --dry-run

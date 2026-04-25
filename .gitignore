@@ -49,3 +49,6 @@ wheels/
 *.swo
 .DS_Store
 input_videos/
+
+# Agent state
+.agent/

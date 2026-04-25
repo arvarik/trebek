@@ -1,11 +1,11 @@
 <div align="center">
   <h1>Trebek 🎙️</h1>
-  <p><b>A highly resilient, fault-tolerant data extraction pipeline daemon for transcribing and extracting structured game events from Jeopardy! episodes.</b></p>
+  <p><b>A highly resilient, fault-tolerant data extraction pipeline for transcribing and extracting structured game events from Jeopardy! episodes.</b></p>
   <p>
     <a href="https://github.com/arvarik/trebek/actions/workflows/ci.yml">
       <img alt="CI" src="https://github.com/arvarik/trebek/actions/workflows/ci.yml/badge.svg" />
     </a>
-    <img alt="Python 3.9+" src="https://img.shields.io/badge/python-3.9%2B-blue?logo=python&logoColor=white" />
+    <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white" />
     <img alt="SQLite" src="https://img.shields.io/badge/database-SQLite%20(WAL)-003B57?logo=sqlite&logoColor=white" />
     <img alt="Pydantic v2" src="https://img.shields.io/badge/pydantic-v2-e92063?logo=pydantic&logoColor=white" />
     <img alt="Google Gemini" src="https://img.shields.io/badge/LLM-Google%20Gemini-4285F4?logo=google&logoColor=white" />
@@ -18,25 +18,25 @@
 
 ---
 
-Trebek is an advanced orchestration system that bridges **local GPU compute** (WhisperX, Pyannote), **Cloud LLMs** (Google Gemini 3.1 Pro, Gemini 3.1 Flash-Lite), and a **deterministic Python state machine** into a single, continuously running pipeline daemon. Its core purpose is to extract highly accurate, chronological, and structurally validated data from raw Jeopardy! video episodes into a normalized relational format designed for **RAG semantic searches** and **game-theoretic analysis**.
+Trebek is an advanced orchestration system that bridges **local GPU compute** (WhisperX, Pyannote), **Cloud LLMs** (Google Gemini 3.1 Pro, Gemini 3.1 Flash-Lite), and a **deterministic Python state machine** into a single, continuously running pipeline daemon. It extracts highly accurate, chronological, and structurally validated data from raw Jeopardy! video episodes into a normalized relational format designed for **RAG semantic searches** and **game-theoretic analysis**.
 
 The resulting dataset captures not just the questions and answers, but the full *cognitive fingerprint* of each game: true buzzer reaction times, speech disfluency counts, wager irrationality deltas, board control patterns, and semantic lateral distances between clues and responses.
 
 ## Table of Contents
 
 - [Why Trebek?](#why-trebek)
-- [Core Features](#-core-features)
-- [System Architecture](#-system-architecture)
-- [Pipeline Stages](#-pipeline-stages)
-- [Data Model](#-data-model)
-- [ML/AI Integration](#-mlai-integration)
-- [Installation](#-installation)
-- [Configuration](#-configuration)
-- [Usage](#-usage)
-- [Development](#-development)
-- [Project Structure](#-project-structure)
-- [Safety Invariants](#-safety-invariants)
-- [Design Philosophy](#-design-philosophy)
+- [Core Features](#core-features)
+- [System Architecture](#system-architecture)
+- [Pipeline Stages](#pipeline-stages)
+- [Data Model](#data-model)
+- [ML/AI Integration](#mlai-integration)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Development](#development)
+- [Project Structure](#project-structure)
+- [Safety Invariants](#safety-invariants)
+- [Design Philosophy](#design-philosophy)
 
 ---
 
@@ -88,44 +88,45 @@ All SQLite writes are routed through a single `DatabaseWriter` actor — an asyn
 ## 🏗️ System Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                    TrebekPipelineOrchestrator                    │
-│                      (asyncio event loop)                       │
-├─────────┬─────────────┬───────────────┬─────────────────────────┤
-│ Ingest  │  Extractor  │  LLM Worker   │  State Machine Worker   │
-│ Worker  │   Worker    │               │                         │
-│         │             │               │                         │
-│ polls   │ dispatches  │ Gemini Flash  │ TrebekStateMachine      │
-│ input/  │ to GPU      │ Gemini Pro    │ Score verification      │
-│ dir     │ subprocess  │ Self-healing  │ Board control           │
-│         │             │ retry loop    │ Wager math              │
-└────┬────┴──────┬──────┴───────┬───────┴──────────┬──────────────┘
-     │           │              │                  │
-     ▼           ▼              ▼                  ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     DatabaseWriter (Actor)                       │
-│              asyncio.Queue → sqlite3.Connection                 │
-│         PRAGMA foreign_keys=ON | journal_mode=WAL               │
-│       PRAGMA busy_timeout=5000 | auto_vacuum=INCREMENTAL        │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│        TrebekPipelineOrchestrator             │
+│            (asyncio event loop)               │
+├──────────┬──────────┬──────────┬──────────────┤
+│ Ingest   │ GPU      │ LLM     │ State Machine│
+│ Worker   │ Worker   │ Worker  │ Worker       │
+│          │          │         │              │
+│ polls    │ FFmpeg + │ Flash-  │ Score verify │
+│ input/   │ WhisperX │ Lite +  │ Board ctrl   │
+│ dir      │ Pyannote │ Pro     │ Wager math   │
+└────┬─────┴────┬─────┴────┬────┴───────┬──────┘
+     │          │          │            │
+     ▼          ▼          ▼            ▼
+┌──────────────────────────────────────────────┐
+│         DatabaseWriter (Actor)                │
+│      asyncio.Queue → sqlite3.Connection       │
+│  journal_mode=WAL | foreign_keys=ON           │
+│  busy_timeout=5000 | auto_vacuum=INCREMENTAL  │
+└──────────────────────────────────────────────┘
      │
      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        SQLite Database                          │
-│  pipeline_state │ episodes │ contestants │ clues │ buzz_attempts│
-│  wagers │ score_adjustments │ episode_performances              │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│            SQLite Database                    │
+│  pipeline_state │ episodes │ contestants      │
+│  clues │ buzz_attempts │ wagers               │
+│  score_adjustments │ episode_performances     │
+│  job_telemetry                                │
+└──────────────────────────────────────────────┘
 ```
 
 ### Concurrency Model
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| **I/O Orchestration** | `asyncio` event loop | Manages state polling, signal handling, and worker coordination |
-| **GPU Isolation** | `ProcessPoolExecutor` (`spawn`, `max_tasks_per_child=1`) | Subprocess dies after every task → 100% VRAM reclamation |
-| **Write Serialization** | Actor pattern (`asyncio.Queue` + `Future`) | Prevents SQLite `database is locked` errors |
-| **CPU Offloading** | `asyncio.to_thread()` | Offloads heavy Pydantic JSON validation off the event loop |
-| **IPC Optimization** | Filepath strings over `.json.gz` | Avoids pickling overhead of massive JSON structures across process boundaries |
+| **I/O Orchestration** | `asyncio` event loop | State polling, signal handling, worker coordination |
+| **GPU Isolation** | `ProcessPoolExecutor` (`spawn`) | Subprocess dies after every task → 100% VRAM reclamation |
+| **Write Serialization** | Actor pattern (`Queue` + `Future`) | Prevents SQLite `database is locked` errors |
+| **CPU Offloading** | `asyncio.to_thread()` | Offloads Pydantic JSON validation off the event loop |
+| **IPC Optimization** | Filepath strings over `.json.gz` | Avoids pickling large JSON across process boundaries |
 
 ---
 
@@ -133,15 +134,15 @@ All SQLite writes are routed through a single `DatabaseWriter` actor — an asyn
 
 The pipeline processes each episode through a rigorous sequence of stages, with the `pipeline_state` table acting as a persistent, crash-safe queue:
 
-| Stage | Name | Status Transition | Engine | Description |
-|-------|------|-------------------|--------|-------------|
-| 1 | **Ingestion** | → `PENDING` | Filesystem polling | `.mp4` files detected in `input_dir` are registered in `pipeline_state` |
-| 2–3 | **GPU Extraction** | `PENDING` → `TRANSCRIBING` → `TRANSCRIPT_READY` | FFmpeg + WhisperX + Pyannote | Audio extraction, Large-v3 float16 transcription, forced alignment diarization. Output: `.json.gz` |
-| 4 | **Commercial Filtering** | `TRANSCRIPT_READY` → `CLEANED` | Gemini 3.1 Flash-Lite | Hardware-accelerated advertisement removal while preserving exact word-level timings |
-| 5 | **Structured Extraction** | `CLEANED` → `SAVING` | Gemini 3.1 Flash-Lite + Pro | Pass 1: Speaker anchoring. Pass 2: Full game event extraction with Pydantic self-healing |
-| 6 | **Multimodal Augmentation** | (inline) | Gemini 3.1 Pro | Visual clue reconstruction and podium illumination timestamp extraction |
-| 7 | **State Verification** | `SAVING` → `VECTORIZING` | `TrebekStateMachine` | Deterministic replay validates score sequences, adjustments, and board control logic |
-| 8–9 | **Relational & Semantic Commit** | `VECTORIZING` → `COMPLETED` | `DatabaseWriter` + `sqlite-vec` | Normalized INSERT into relational tables + vector embedding for semantic search |
+| Stage | Name | Engine | Description |
+|-------|------|--------|-------------|
+| 1 | **Ingestion** | Filesystem polling | New video files registered as `PENDING` |
+| 2–3 | **GPU Extraction** | FFmpeg + WhisperX | Audio extraction, transcription, diarization |
+| 4 | **Commercial Filtering** | Gemini Flash-Lite | Ad removal preserving word-level timings |
+| 5 | **Structured Extraction** | Flash-Lite + Pro | Speaker anchoring → full event extraction |
+| 6 | **Multimodal Augmentation** | Gemini Pro | Visual clue + podium illumination detection |
+| 7 | **State Verification** | `TrebekStateMachine` | Deterministic score/adjustment validation |
+| 8–9 | **Relational & Semantic Commit** | `DatabaseWriter` | Normalized INSERT + vector embeddings |
 
 If any stage fails, the episode status is set to `FAILED` and logged for manual review. The daemon continues processing other episodes.
 
@@ -154,79 +155,98 @@ The SQLite schema is designed as a **normalized relational model** optimized for
 ### Core Tables
 
 ```
-pipeline_state          The persistent job queue
+pipeline_state
 ├── episode_id (PK)
-├── status              PENDING → TRANSCRIBING → TRANSCRIPT_READY → CLEANED → SAVING → VECTORIZING → COMPLETED
-├── transcript_path     Filepath to .json.gz GPU output
+├── status           PENDING → TRANSCRIBING →
+│                    TRANSCRIPT_READY → CLEANED →
+│                    SAVING → VECTORIZING → COMPLETED
+├── transcript_path  Filepath to .json.gz output
 ├── created_at
 └── updated_at
 
-episodes                High-level episode metadata
+episodes
 ├── episode_id (PK)
 ├── air_date
 ├── host_name
 └── is_tournament
 
-contestants             Unique contestant profiles
+contestants
 ├── contestant_id (PK)
 ├── name
-├── occupational_category    LLM-classified (e.g., 'Academia', 'STEM', 'Law')
+├── occupational_category
 └── is_returning_champion
 
-episode_performances    Per-episode contestant stats
+episode_performances
 ├── episode_id (FK)
 ├── contestant_id (FK)
-├── podium_position     1 (left), 2 (center), 3 (right)
-├── coryat_score        Score without Daily Doubles and Final Jeopardy
+├── podium_position   1 (left), 2 (center), 3 (right)
+├── coryat_score
 ├── final_score
 └── forrest_bounce_index
 
-clues                   The board matrix with temporal and semantic markers
+clues
 ├── clue_id (PK)
 ├── episode_id (FK)
-├── round               CHECK('Jeopardy', 'Double', 'Final', 'Tiebreaker')
-├── category / board_row / board_col / selection_order
+├── round              Jeopardy / Double / Final
+├── category / board_row / board_col
+├── selection_order
 ├── clue_text / correct_response
-├── is_daily_double / daily_double_wager / wagerer_name
-├── host_start_timestamp_ms / host_finish_timestamp_ms
-├── clue_syllable_count / host_speech_rate_wpm
+├── is_daily_double / daily_double_wager
+├── host_start_timestamp_ms
+├── host_finish_timestamp_ms
+├── clue_syllable_count
 ├── requires_visual_context
-├── clue_embedding (BLOB)     Vector for semantic search
+├── clue_embedding (BLOB)
 ├── response_embedding (BLOB)
-└── semantic_lateral_distance  Cosine distance: wordplay vs. factual recall
+└── semantic_lateral_distance
 
-buzz_attempts           Behavioral physics per buzz-in
+buzz_attempts
 ├── attempt_id (PK)
 ├── clue_id (FK) / contestant_id (FK)
-├── attempt_order       1st buzz, 2nd/3rd for rebounds
-├── buzz_timestamp_ms / podium_light_timestamp_ms
-├── true_buzzer_latency_ms   Reaction time (visual - acoustic)
-├── is_lockout_inferred      0.25s penalty detection
+├── attempt_order
+├── buzz_timestamp_ms
+├── podium_light_timestamp_ms
+├── true_buzzer_latency_ms
+├── is_lockout_inferred
 ├── response_given / is_correct
 ├── brain_freeze_duration_ms
-├── true_acoustic_confidence_score   From WhisperX logprobs
+├── true_acoustic_confidence_score
 ├── disfluency_count
 └── phonetic_similarity_score
 
-wagers                  Game theory analysis
+wagers
 ├── wager_id (PK)
 ├── clue_id (FK) / contestant_id (FK)
-├── running_score_at_time / opponent scores
+├── running_score_at_time
 ├── actual_wager
 ├── game_theory_optimal_wager
 └── wager_irrationality_delta
 
-score_adjustments       Chronological host/judge corrections
+score_adjustments
 ├── adjustment_id (PK)
 ├── episode_id (FK) / contestant_id (FK)
 ├── points_adjusted
 ├── reason
 └── effective_after_clue_selection_order
+
+job_telemetry
+├── episode_id (FK)
+├── peak_vram_mb / avg_gpu_utilization_pct
+├── gemini_total_input_tokens
+├── gemini_total_output_tokens
+├── gemini_total_cached_tokens
+├── gemini_total_cost_usd
+├── stage_ingestion_ms
+├── stage_gpu_extraction_ms
+├── stage_structured_extraction_ms
+├── stage_vectorization_ms
+├── gemini_api_latency_ms
+└── pydantic_retry_count
 ```
 
 ### Pydantic Data Contracts
 
-All LLM extraction outputs are validated against strict Pydantic v2 models defined in `src/schemas.py`. Key models include:
+All LLM extraction outputs are validated against strict Pydantic v2 models defined in `trebek/schemas.py`. Key models include:
 
 | Model | Description |
 |-------|-------------|
@@ -236,6 +256,7 @@ All LLM extraction outputs are validated against strict Pydantic v2 models defin
 | `Contestant` | Name, podium position, occupation category, champion status |
 | `FinalJeopardy` | Category, clue text, per-contestant wagers and responses |
 | `ScoreAdjustment` | Chronologically anchored point corrections with reasons |
+| `JobTelemetry` | Hardware signatures, token usage, latency, and cost tracking |
 
 ---
 
@@ -243,12 +264,11 @@ All LLM extraction outputs are validated against strict Pydantic v2 models defin
 
 | Provider | Model | Stage | Application |
 |----------|-------|-------|-------------|
-| **Local GPU** | WhisperX / Pyannote | 2–3 | Large-v3 float16 transcription, forced alignment, speaker diarization |
-| **Google** | Gemini 3.1 Flash-Lite | 4–5 | Speaker anchoring and commercial filtering (high-speed structured mapping) |
-| **Google** | Gemini 3.1 Pro | 5 | Massive structured extraction with Pydantic self-healing retry loop |
-| **Google** | Gemini 3.1 Pro | 6 | Visual clue reconstruction, podium lockout illumination frame detection |
-| **Local GPU** | Ollama / Llama-3-8B | 5 (fallback) | Offline structured extraction for environments without Gemini API access |
-| **Local/API** | Text Embeddings | 9 | Cosine distance calculation for `semantic_lateral_distance` |
+| **Local GPU** | WhisperX / Pyannote | 2–3 | Large-v3 float16 transcription, diarization |
+| **Google** | Gemini 3.1 Flash-Lite | 4–5 | Speaker anchoring, commercial filtering |
+| **Google** | Gemini 3.1 Pro | 5 | Structured extraction + Pydantic self-healing |
+| **Google** | Gemini 3.1 Pro | 6 | Visual clue + podium illumination detection |
+| **Local/API** | Text Embeddings | 9 | Cosine distance for `semantic_lateral_distance` |
 
 ---
 
@@ -258,48 +278,57 @@ All LLM extraction outputs are validated against strict Pydantic v2 models defin
 
 | Requirement | Notes |
 |-------------|-------|
-| **Python** | 3.9 or higher |
+| **Python** | 3.11 or higher |
 | **FFmpeg** | Required for audio extraction from video files |
-| **NVIDIA GPU** | Minimum 16GB VRAM recommended (optimized for RTX 4060 Ti / 5060 Ti) |
+| **NVIDIA GPU** | 16GB VRAM recommended (RTX 4060 Ti / 5060 Ti) |
 | **CUDA Toolkit** | Required for WhisperX GPU acceleration |
-| **SQLite** | 3.35+ (for `RETURNING` clause support in atomic polling) |
+| **SQLite** | 3.35+ (for `RETURNING` clause support) |
 | **Gemini API Key** | Required for LLM extraction stages |
 
-### Setup
+### Quick Start
 
-Trebek is published to PyPI and can be installed globally.
+```bash
+# 1. Install the package
+pip install trebek
 
-1. **Install the package:**
-   ```bash
-   pip install trebek
-   ```
+# 2. Create your config
+cp .env.example .env
+# Edit .env with your GEMINI_API_KEY
+# Get a free key at https://aistudio.google.com/apikey
 
-2. **(Optional) Install GPU dependencies** for native processing:
-   ```bash
-   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
-   pip install whisperx pyannote.audio
-   ```
-   *Note: If you do not wish to install these heavy dependencies, you can use the built-in Docker wrapper (see below).*
+# 3. Run the pipeline
+trebek
+```
+
+### GPU Dependencies (Optional)
+
+For native GPU processing without Docker:
+
+```bash
+pip install torch torchaudio \
+  --index-url https://download.pytorch.org/whl/cu121
+pip install whisperx pyannote.audio
+```
+
+If you prefer not to install these heavy dependencies, use the built-in Docker wrapper instead (see below).
 
 ### 🐳 Docker Hybrid Execution (Recommended)
 
-To completely bypass complex PyTorch and CUDA dependency issues on your host, Trebek includes a seamless Docker orchestrator. 
+To completely bypass complex PyTorch and CUDA dependency issues on your host, Trebek includes a seamless Docker orchestrator.
 
 **Prerequisites:**
 - [Docker](https://docs.docker.com/get-docker/) and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed on your host.
 
 **Usage:**
-Simply append the `--docker` flag to any `trebek` command. The CLI will automatically spin up the official GPU-enabled container, mapping your current working directory and `.env` variables seamlessly:
+Simply append the `--docker` flag to any `trebek` command. The CLI will automatically spin up the official GPU-enabled container, mapping your working directory and `.env` variables seamlessly:
 
 ```bash
 trebek --docker
 trebek --docker --once --input-dir ./videos
 ```
 
-
-
-> **⚠️ WARNING - SQLite WAL Mode & Network Drives**
-> Trebek uses SQLite Write-Ahead Logging (WAL) which requires strict POSIX advisory locking. Your `trebek.db` volume **must** be mounted to a local disk (ext4, NTFS, APFS). Mapping it to a network share (NFS, SMB, CIFS) will result in immediate database corruption or locking failures.
+> **⚠️ WARNING — SQLite WAL Mode & Network Drives**
+> Trebek uses SQLite Write-Ahead Logging (WAL) which requires strict POSIX advisory locking. Your `trebek.db` volume **must** be mounted to a local disk (ext4, NTFS, APFS). Mapping it to a network share (NFS, SMB, CIFS) will result in database corruption.
 
 ---
 
@@ -311,20 +340,21 @@ Create a `.env` file:
 
 ```env
 # ─── Core Paths ───
-db_path=trebek.db                     # Path to the SQLite database
-output_dir=gpu_outputs                # Directory for intermediate pipeline outputs (.json.gz)
-input_dir=input_videos                # Directory to poll for new .mp4 files
+db_path=trebek.db
+output_dir=gpu_outputs
+input_dir=input_videos
 
 # ─── API Keys ───
-GEMINI_API_KEY=your_api_key_here      # Google Gemini API key
+# Get your key at https://aistudio.google.com/apikey
+GEMINI_API_KEY=your_api_key_here
 
 # ─── Logging ───
-log_level=INFO                        # DEBUG, INFO, WARNING, ERROR
+log_level=INFO
 
 # ─── GPU Constraints ───
-gpu_vram_target_gb=16                 # Target VRAM ceiling (4–24 GB)
-whisper_batch_size=16                 # WhisperX batch size (tuned for 16GB VRAM)
-whisper_compute_type=float16          # float16 or float32
+gpu_vram_target_gb=16
+whisper_batch_size=8
+whisper_compute_type=float16
 ```
 
 ### Configuration Validation
@@ -333,9 +363,9 @@ The `Settings` class enforces runtime constraints via Pydantic field validators:
 
 | Setting | Constraint | Default |
 |---------|-----------|---------|
-| `gpu_vram_target_gb` | Must be between 4 and 24 (inclusive) | `16` |
-| `whisper_compute_type` | Must be `float16` or `float32` | `float16` |
-| `whisper_batch_size` | Must be greater than 0 | `16` |
+| `gpu_vram_target_gb` | Between 4 and 24 (inclusive) | `16` |
+| `whisper_compute_type` | `float16` or `float32` | `float16` |
+| `whisper_batch_size` | Must be greater than 0 | `8` |
 
 Invalid configurations will raise a `ValidationError` at startup, preventing the daemon from running with unsafe GPU parameters.
 
@@ -343,21 +373,33 @@ Invalid configurations will raise a `ValidationError` at startup, preventing the
 
 ## 🚀 Usage
 
-Trebek is designed to run as a **continuous daemon**. Once started, it will poll the configured `input_dir` for new `.mp4` files and orchestrate the full extraction pipeline automatically.
+Trebek is designed to run as a **continuous daemon**. Once started, it will poll the configured `input_dir` for new video files and orchestrate the full extraction pipeline automatically. Trebek supports 12 video formats natively: MP4, TS, MKV, AVI, MOV, WebM, MPG, MPEG, FLV, WMV, M2TS, and VOB.
 
 ### Start the Pipeline
 
 ```bash
-trebek                   # Native mode (requires GPU dependencies)
-trebek --docker          # Docker mode (recommended)
+# Native mode (requires GPU dependencies)
+trebek
+
+# Docker mode (recommended)
+trebek --docker
+
+# Process current queue then exit
+trebek --once
+
+# Preview discovered files without processing
+trebek --dry-run
+
+# View database analytics dashboard
+trebek --stats
 ```
 
 ### Process Episodes
 
-1. Place `.mp4` video files into the `input_videos/` directory (or your configured `input_dir`).
-2. The ingestion worker will detect new files within 5 seconds and register them as `PENDING`.
+1. Place video files into `input_videos/` (or your configured `input_dir`).
+2. The ingestion worker detects new files within 5 seconds and registers them as `PENDING`.
 3. Each episode flows through the pipeline stages automatically.
-4. Monitor progress via structured JSON logs (stdout) or query the `pipeline_state` table directly.
+4. Monitor progress via the Rich console output, or run `trebek --stats` to view aggregate metrics.
 
 ### Graceful Shutdown
 
@@ -366,33 +408,39 @@ Send `SIGINT` (Ctrl+C) or `SIGTERM` to the process. The daemon will:
 2. Cancel all running async tasks.
 3. Wait for the GPU subprocess to complete its current task.
 4. Flush and close the database connection.
-5. Log a clean shutdown confirmation.
+5. Render a final session summary with telemetry.
 
 ### Querying Results
 
-After processing, query the normalized SQLite database directly:
+After processing, query the SQLite database directly:
 
 ```sql
--- Find the fastest buzzer in a specific episode
+-- Find the fastest buzzers
 SELECT c.name, ba.true_buzzer_latency_ms
 FROM buzz_attempts ba
-JOIN contestants c ON ba.contestant_id = c.contestant_id
+JOIN contestants c
+  ON ba.contestant_id = c.contestant_id
 WHERE ba.is_correct = 1
 ORDER BY ba.true_buzzer_latency_ms ASC
 LIMIT 5;
 
 -- Identify irrational Daily Double wagers
-SELECT c.name, w.actual_wager, w.game_theory_optimal_wager, w.wager_irrationality_delta
+SELECT c.name,
+       w.actual_wager,
+       w.game_theory_optimal_wager,
+       w.wager_irrationality_delta
 FROM wagers w
-JOIN contestants c ON w.contestant_id = c.contestant_id
+JOIN contestants c
+  ON w.contestant_id = c.contestant_id
 WHERE ABS(w.wager_irrationality_delta) > 500
 ORDER BY ABS(w.wager_irrationality_delta) DESC;
 
--- Semantic search for wordplay-heavy categories
-SELECT category, AVG(semantic_lateral_distance) as avg_distance
+-- Wordplay-heavy categories
+SELECT category,
+       AVG(semantic_lateral_distance) AS avg_dist
 FROM clues
 GROUP BY category
-ORDER BY avg_distance DESC
+ORDER BY avg_dist DESC
 LIMIT 10;
 ```
 
@@ -404,23 +452,26 @@ LIMIT 10;
 
 | Tool | Purpose | Configuration |
 |------|---------|---------------|
-| **pytest** | Test runner (with `pytest-asyncio` for async tests) | `pyproject.toml` |
-| **ruff** | Linter and import sorter | Line length: 120, target: Python 3.9 |
+| **pytest** | Test runner (`pytest-asyncio` for async) | `pyproject.toml` |
+| **ruff** | Linter + formatter | Line length 120, target py311 |
 | **mypy** | Static type checker | Strict mode enabled |
+| **pre-commit** | Git hook enforcement | `.pre-commit-config.yaml` |
 
 ### Commands
 
 ```bash
-# Run the full test suite
-pytest tests/
+# Run the full quality gate
+make all
 
-# Run with verbose output
+# Individual commands
+make test       # pytest with coverage
+make lint       # ruff check
+make typecheck  # mypy
+make format     # ruff auto-format
+
+# Or directly:
 pytest tests/ -v
-
-# Run the linter
 ruff check .
-
-# Run the type checker
 mypy trebek/
 ```
 
@@ -430,13 +481,14 @@ The test suite validates critical system contracts:
 
 | Test Module | Coverage Area |
 |-------------|---------------|
-| `test_state_machine.py` | Score calculation, board control, chronological adjustments, True Daily Double resolution |
-| `test_core_database.py` | Actor-pattern write execution, atomic polling (`RETURNING` clause) |
-| `test_schema_integrity.py` | Foreign key enforcement, CHECK constraints, NOT NULL constraints |
-| `test_config_validation.py` | GPU VRAM bounds, compute type validation, batch size validation |
-| `test_schemas.py` | Pydantic model constraints: podium positions, Daily Double wager union types |
-| `test_gpu_orchestrator.py` | Subprocess lifecycle, `.json.gz` output generation, mock binary integration |
+| `test_state_machine.py` | Score calculation, board control, chronological adjustments |
+| `test_core_database.py` | Actor-pattern write execution, atomic polling |
+| `test_schema_integrity.py` | Foreign key, CHECK, and NOT NULL constraints |
+| `test_config_validation.py` | GPU VRAM bounds, compute type, batch size validation |
+| `test_schemas.py` | Pydantic model constraints, podium positions, wager types |
+| `test_gpu_orchestrator.py` | Subprocess lifecycle, `.json.gz` output, mock binaries |
 | `test_llm_pipeline.py` | Speaker anchoring Pass 1 with mocked Gemini client |
+| `test_job_telemetry.py` | Telemetry schema, validation rules, upsert logic |
 
 ---
 
@@ -445,29 +497,33 @@ The test suite validates critical system contracts:
 ```
 trebek/
 ├── trebek/
-│   ├── cli.py                 # Pipeline entrypoint (CLI parser and Docker orchestration)
-│   ├── main.py                # Pipeline orchestrator daemon (asyncio event loop, workers, signal handling)
-│   ├── config.py              # Pydantic Settings with GPU constraint validators
-│   ├── schemas.py             # Pydantic v2 data contracts (Episode, Clue, BuzzAttempt, etc.)
-│   ├── schema.sql             # SQLite DDL: 8 tables with foreign keys, CHECK constraints, PRAGMAs
-│   ├── core_database.py       # Actor-pattern DatabaseWriter with deadlock protection
-│   ├── gpu_orchestrator.py    # ProcessPoolExecutor with spawn context and SIGKILL safety
-│   ├── llm_pipeline.py        # Multi-pass Gemini extraction with self-healing retry loop
-│   ├── state_machine.py       # Deterministic game state replay (scores, adjustments, board control)
-│   └── physics_engine.py      # Buzzer latency, acoustic metrics, semantic distance, Vision client
+│   ├── cli.py              # CLI parser + Docker orchestration
+│   ├── main.py             # Pipeline orchestrator daemon
+│   ├── config.py           # Pydantic Settings + validators
+│   ├── console.py          # Rich UI: banners, diagnostics, stats
+│   ├── schemas.py          # Pydantic v2 data contracts
+│   ├── schema.sql          # SQLite DDL (9 tables)
+│   ├── core_database.py    # Actor-pattern DatabaseWriter
+│   ├── gpu_orchestrator.py # ProcessPoolExecutor + VRAM mgmt
+│   ├── llm_pipeline.py     # Multi-pass Gemini extraction
+│   ├── state_machine.py    # Deterministic game state replay
+│   └── physics_engine.py   # Buzzer latency + semantic distance
 ├── tests/
-│   ├── conftest.py            # Shared fixtures (in-memory SQLite with schema)
-│   ├── mock_bin/              # Mock ffmpeg/whisperx binaries for GPU orchestrator tests
+│   ├── conftest.py          # Shared fixtures
+│   ├── mock_bin/            # Mock ffmpeg/whisperx binaries
 │   ├── test_state_machine.py
 │   ├── test_core_database.py
 │   ├── test_schema_integrity.py
 │   ├── test_config_validation.py
 │   ├── test_schemas.py
 │   ├── test_gpu_orchestrator.py
-│   └── test_llm_pipeline.py
-├── docs/                      # Design documents, plans, explorations, and archived specs
-├── .agent/                    # Agent lifecycle metadata (architecture, philosophy, status, style)
-├── pyproject.toml             # Build system, dependencies, tool configuration
+│   ├── test_llm_pipeline.py
+│   └── test_job_telemetry.py
+├── docs/                    # Design documents and plans
+├── Makefile                 # Developer shortcuts
+├── pyproject.toml           # Build system + tool config
+├── .pre-commit-config.yaml  # Git hook enforcement
+├── .env.example             # Template configuration
 ├── .gitignore
 └── README.md
 ```
@@ -506,7 +562,7 @@ LLMs are hallucination-prone when performing arithmetic. They extract pure facts
 VRAM fragmentation is inevitable in long-running PyTorch processes. Forceful memory reclamation via ephemeral subprocesses (`max_tasks_per_child=1`) guarantees stability over multi-day batch runs processing hundreds of episodes.
 
 ### What Trebek Is NOT
-- **Not a real-time application.** This is a batch-processing, heavy-compute daemon pipeline, not an interactive or real-time streaming service.
+- **Not a real-time application.** This is a batch-processing daemon pipeline, not an interactive or real-time streaming service.
 - **Not an API server.** It operates via filesystem polling and SQLite state management, not over HTTP endpoints.
 - **Not a keyword matcher.** The dataset relies on vectorized embeddings (`sqlite-vec`) for semantic evaluation of clues, isolating wordplay from direct factual recall.
 

@@ -15,8 +15,6 @@ from concurrent.futures import ProcessPoolExecutor
 logger = structlog.get_logger()
 
 
-logger = structlog.get_logger()
-
 def gpu_worker_task(video_filepath: str, output_dir: str) -> tuple[str, float, float]:
     """
     Executes the GPU processing task (Stage 3) and writes results to disk to avoid
@@ -33,9 +31,10 @@ def gpu_worker_task(video_filepath: str, output_dir: str) -> tuple[str, float, f
     stop_event = threading.Event()
     metrics = {"peak_vram": 0.0, "util_sum": 0.0, "util_count": 0}
 
-    def monitor_gpu():
+    def monitor_gpu() -> None:
         try:
             import pynvml
+
             pynvml.nvmlInit()
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)
             while not stop_event.is_set():
@@ -44,7 +43,7 @@ def gpu_worker_task(video_filepath: str, output_dir: str) -> tuple[str, float, f
                     vram_mb = float(info.used) / (1024 * 1024)
                     if vram_mb > metrics["peak_vram"]:
                         metrics["peak_vram"] = vram_mb
-                        
+
                     util = pynvml.nvmlDeviceGetUtilizationRates(handle)
                     metrics["util_sum"] += float(util.gpu)
                     metrics["util_count"] += 1
@@ -98,7 +97,7 @@ def gpu_worker_task(video_filepath: str, output_dir: str) -> tuple[str, float, f
 
     stop_event.set()
     monitor_thread.join(timeout=1.0)
-    
+
     if metrics["util_count"] > 0:
         avg_gpu_utilization_pct = metrics["util_sum"] / metrics["util_count"]
     peak_vram_mb = metrics["peak_vram"]
@@ -122,14 +121,15 @@ class GPUOrchestrator:
         # max_tasks_per_child=1 ensures worker death and VRAM flush per task (Python 3.11+)
         # Setting max_workers=1 to limit memory usage specifically for Stage 3 constraint.
         self.executor = ProcessPoolExecutor(max_workers=max_workers, mp_context=context, max_tasks_per_child=1)
-        self._child_pids: list[int] = []
 
     async def execute_gpu_work(self, video_filepath: str) -> tuple[str, float, float]:
         """
         Dispatches video filepath to the worker pool and awaits the resulting filepath.
         """
         loop = asyncio.get_running_loop()
-        filepath, peak_vram, avg_util = await loop.run_in_executor(self.executor, gpu_worker_task, video_filepath, self.output_dir)
+        filepath, peak_vram, avg_util = await loop.run_in_executor(
+            self.executor, gpu_worker_task, video_filepath, self.output_dir
+        )
         return filepath, peak_vram, avg_util
 
     def shutdown(self) -> None:

@@ -5,8 +5,18 @@ from typing import Tuple
 
 # All container formats natively supported by FFmpeg's libavformat
 SUPPORTED_VIDEO_EXTENSIONS: Tuple[str, ...] = (
-    ".mp4", ".ts", ".mkv", ".avi", ".mov", ".webm",
-    ".mpg", ".mpeg", ".flv", ".wmv", ".m2ts", ".vob",
+    ".mp4",
+    ".ts",
+    ".mkv",
+    ".avi",
+    ".mov",
+    ".webm",
+    ".mpg",
+    ".mpeg",
+    ".flv",
+    ".wmv",
+    ".m2ts",
+    ".vob",
 )
 
 

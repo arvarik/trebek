@@ -6,11 +6,11 @@ import os
 import gzip
 import json
 import sys
-import uuid
+import time
 from pathlib import Path
 from typing import Any, List, Optional
 
-from trebek.core_database import DatabaseWriter
+from trebek.core_database import DatabaseWriter, commit_episode_to_relational_tables
 from trebek.gpu_orchestrator import GPUOrchestrator
 from trebek.config import settings, SUPPORTED_VIDEO_EXTENSIONS
 from trebek.llm_pipeline import execute_pass_1_speaker_anchoring, execute_pass_2_data_extraction
@@ -85,7 +85,7 @@ class TrebekPipelineOrchestrator:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
         self.gpu_orchestrator.shutdown()
-        
+
         telemetry_stats = {}
         try:
             rows = await self.db_writer.execute("""
@@ -105,7 +105,7 @@ class TrebekPipelineOrchestrator:
                 }
         except Exception as e:
             logger.warning("Failed to fetch telemetry aggregates", error=str(e))
-            
+
         await self.db_writer.stop()
 
         render_shutdown_summary(self.stats, telemetry_stats)
@@ -113,7 +113,6 @@ class TrebekPipelineOrchestrator:
 
     async def _ingestion_worker(self, input_dir: str) -> None:
         """Polls input_dir for new video files across all supported formats."""
-        import time
         while self.running:
             if os.path.exists(input_dir):
                 for entry in os.scandir(input_dir):
@@ -128,14 +127,13 @@ class TrebekPipelineOrchestrator:
                     source_filename = entry.name
 
                     await self.db_writer.execute(
-                        "INSERT OR IGNORE INTO pipeline_state (episode_id, status, source_filename) "
-                        "VALUES (?, ?, ?)",
+                        "INSERT OR IGNORE INTO pipeline_state (episode_id, status, source_filename) VALUES (?, ?, ?)",
                         (episode_id, "PENDING", source_filename),
                     )
-                    
+
                     stage_ingestion_ms = (time.perf_counter() - start_t) * 1000
                     await self.db_writer.update_job_telemetry(episode_id, stage_ingestion_ms=stage_ingestion_ms)
-                    
+
                     self.stats["total"] += 1
 
             if self.mode == "once":
@@ -174,18 +172,21 @@ class TrebekPipelineOrchestrator:
                     continue
 
                 try:
-                    import time
                     start_t = time.perf_counter()
-                    transcript_path, peak_vram_mb, avg_gpu_utilization_pct = await self.gpu_orchestrator.execute_gpu_work(video_filepath)
+                    (
+                        transcript_path,
+                        peak_vram_mb,
+                        avg_gpu_utilization_pct,
+                    ) = await self.gpu_orchestrator.execute_gpu_work(video_filepath)
                     stage_gpu_extraction_ms = (time.perf_counter() - start_t) * 1000
-                    
+
                     await self.db_writer.update_job_telemetry(
-                        episode_id, 
+                        episode_id,
                         stage_gpu_extraction_ms=stage_gpu_extraction_ms,
                         peak_vram_mb=peak_vram_mb,
-                        avg_gpu_utilization_pct=avg_gpu_utilization_pct
+                        avg_gpu_utilization_pct=avg_gpu_utilization_pct,
                     )
-                    
+
                     await self.db_writer.execute(
                         "UPDATE pipeline_state SET status = 'TRANSCRIPT_READY', transcript_path = ?, "
                         "updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
@@ -242,22 +243,25 @@ class TrebekPipelineOrchestrator:
                         if not interview_text:
                             interview_text = full_transcript[:3000]
 
-                        import time
                         start_llm_t = time.perf_counter()
                         speaker_mapping, usage1 = await execute_pass_1_speaker_anchoring(interview_text)
                         data, usage2, retries = await execute_pass_2_data_extraction(full_transcript, speaker_mapping)
-                        
+
                         stage_structured_extraction_ms = (time.perf_counter() - start_llm_t) * 1000
-                        
+
                         total_input = int(usage1.get("input_tokens", 0) + usage2.get("input_tokens", 0))
                         total_output = int(usage1.get("output_tokens", 0) + usage2.get("output_tokens", 0))
                         total_cached = int(usage1.get("cached_tokens", 0) + usage2.get("cached_tokens", 0))
                         total_latency = usage1.get("latency_ms", 0.0) + usage2.get("latency_ms", 0.0)
-                        
-                        cost_1 = (usage1.get("input_tokens", 0) * 0.075 + usage1.get("output_tokens", 0) * 0.30) / 1000000
-                        cost_2 = (usage2.get("input_tokens", 0) * 1.25 + usage2.get("output_tokens", 0) * 5.00) / 1000000
+
+                        cost_1 = (
+                            usage1.get("input_tokens", 0) * 0.075 + usage1.get("output_tokens", 0) * 0.30
+                        ) / 1000000
+                        cost_2 = (
+                            usage2.get("input_tokens", 0) * 1.25 + usage2.get("output_tokens", 0) * 5.00
+                        ) / 1000000
                         total_cost = cost_1 + cost_2
-                        
+
                         await self.db_writer.update_job_telemetry(
                             episode_id,
                             gemini_total_input_tokens=total_input,
@@ -266,7 +270,7 @@ class TrebekPipelineOrchestrator:
                             gemini_api_latency_ms=total_latency,
                             gemini_total_cost_usd=total_cost,
                             pydantic_retry_count=retries,
-                            stage_structured_extraction_ms=stage_structured_extraction_ms
+                            stage_structured_extraction_ms=stage_structured_extraction_ms,
                         )
 
                         episode_data_path = os.path.join(self.output_dir, f"episode_{episode_id}.json")
@@ -316,7 +320,6 @@ class TrebekPipelineOrchestrator:
                     episode_data = await asyncio.to_thread(Episode.model_validate_json, episode_json)
 
                     # Run the deterministic state machine verification
-                    import time
                     start_vec_t = time.perf_counter()
                     state_machine = TrebekStateMachine()
                     state_machine.load_adjustments(episode_data.score_adjustments)
@@ -324,7 +327,7 @@ class TrebekPipelineOrchestrator:
                         state_machine.process_clue(clue)
 
                     # Commit relational data to the analytical tables
-                    await self._commit_relational_data(episode_id, episode_data, state_machine)
+                    await commit_episode_to_relational_tables(self.db_writer, episode_id, episode_data, state_machine)
                     stage_vectorization_ms = (time.perf_counter() - start_vec_t) * 1000
                     await self.db_writer.update_job_telemetry(episode_id, stage_vectorization_ms=stage_vectorization_ms)
 
@@ -355,104 +358,9 @@ class TrebekPipelineOrchestrator:
                     break
                 await asyncio.sleep(2)
 
-    async def _commit_relational_data(
-        self, episode_id: str, episode_data: Episode, state_machine: TrebekStateMachine
-    ) -> None:
-        """
-        Commits verified episode data into the normalized relational tables.
-        This is the Stage 8 relational commit — writing to episodes, contestants,
-        clues, buzz_attempts, wagers, score_adjustments, and episode_performances.
-        """
-        # 1. Insert episode metadata
-        await self.db_writer.execute(
-            "INSERT OR IGNORE INTO episodes (episode_id, air_date, host_name, is_tournament) VALUES (?, ?, ?, ?)",
-            (episode_id, episode_data.episode_date, episode_data.host_name, episode_data.is_tournament),
-        )
-
-        # 2. Insert contestants
-        for contestant in episode_data.contestants:
-            contestant_id = f"{episode_id}_{contestant.name.replace(' ', '_').lower()}"
-            await self.db_writer.execute(
-                "INSERT OR IGNORE INTO contestants "
-                "(contestant_id, name, occupational_category, is_returning_champion) VALUES (?, ?, ?, ?)",
-                (contestant_id, contestant.name, contestant.occupational_category, contestant.is_returning_champion),
-            )
-
-            # 3. Insert episode_performances with final scores from state machine
-            final_score = state_machine.scores.get(contestant.name, 0)
-            await self.db_writer.execute(
-                "INSERT OR IGNORE INTO episode_performances "
-                "(episode_id, contestant_id, podium_position, final_score) VALUES (?, ?, ?, ?)",
-                (episode_id, contestant_id, contestant.podium_position, final_score),
-            )
-
-        # 4. Insert clues and buzz_attempts
-        for clue in episode_data.clues:
-            clue_id = f"{episode_id}_c{clue.selection_order}"
-            is_triple_stumper = len(clue.attempts) == 0 or all(not a.is_correct for a in clue.attempts)
-
-            dd_wager_str = str(clue.daily_double_wager) if clue.daily_double_wager is not None else None
-
-            await self.db_writer.execute(
-                "INSERT OR IGNORE INTO clues "
-                "(clue_id, episode_id, round, category, board_row, board_col, selection_order, "
-                "clue_text, correct_response, is_daily_double, is_triple_stumper, "
-                "daily_double_wager, wagerer_name, requires_visual_context, "
-                "host_start_timestamp_ms, host_finish_timestamp_ms, clue_syllable_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    clue_id, episode_id, clue.round, clue.category,
-                    clue.board_row, clue.board_col, clue.selection_order,
-                    clue.clue_text, clue.correct_response, clue.is_daily_double,
-                    is_triple_stumper, dd_wager_str, clue.wagerer_name,
-                    clue.requires_visual_context, clue.host_start_timestamp_ms,
-                    clue.host_finish_timestamp_ms, clue.clue_syllable_count,
-                ),
-            )
-
-            # Insert buzz_attempts for this clue
-            for attempt in clue.attempts:
-                attempt_id = f"{clue_id}_a{attempt.attempt_order}_{uuid.uuid4().hex[:8]}"
-                contestant_id = f"{episode_id}_{attempt.speaker.replace(' ', '_').lower()}"
-                await self.db_writer.execute(
-                    "INSERT OR IGNORE INTO buzz_attempts "
-                    "(attempt_id, clue_id, contestant_id, attempt_order, buzz_timestamp_ms, "
-                    "response_given, is_correct, response_start_timestamp_ms, is_lockout_inferred) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        attempt_id, clue_id, contestant_id, attempt.attempt_order,
-                        attempt.buzz_timestamp_ms, attempt.response_given,
-                        attempt.is_correct, attempt.response_start_timestamp_ms,
-                        attempt.is_lockout_inferred,
-                    ),
-                )
-
-        # 5. Insert score_adjustments
-        for adj in episode_data.score_adjustments:
-            adjustment_id = f"{episode_id}_adj_{adj.effective_after_clue_selection_order}_{uuid.uuid4().hex[:8]}"
-            contestant_id = f"{episode_id}_{adj.contestant.replace(' ', '_').lower()}"
-            await self.db_writer.execute(
-                "INSERT OR IGNORE INTO score_adjustments "
-                "(adjustment_id, episode_id, contestant_id, points_adjusted, reason, "
-                "effective_after_clue_selection_order) VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    adjustment_id, episode_id, contestant_id,
-                    adj.points_adjusted, adj.reason, adj.effective_after_clue_selection_order,
-                ),
-            )
-
-        logger.info(
-            "Relational commit complete",
-            episode_id=episode_id,
-            clues=len(episode_data.clues),
-            contestants=len(episode_data.contestants),
-        )
-
     async def _no_work_remaining(self, status: str) -> bool:
         """Check if there are no more items in the given status (for --once mode)."""
-        result = await self.db_writer.execute(
-            "SELECT COUNT(*) FROM pipeline_state WHERE status = ?", (status,)
-        )
+        result = await self.db_writer.execute("SELECT COUNT(*) FROM pipeline_state WHERE status = ?", (status,))
         return result[0][0] == 0 if result else True
 
     async def start_workers(self, input_dir: str, progress: Any, task_id: Any) -> None:
@@ -465,7 +373,7 @@ class TrebekPipelineOrchestrator:
 
 async def run_pipeline(mode: str = "daemon", input_dir_override: Optional[str] = None) -> None:
     """Main pipeline entry point, called by cli.py."""
-    from console import render_startup_banner, render_system_diagnostics
+    from trebek.console import render_startup_banner, render_system_diagnostics
 
     input_dir = input_dir_override or settings.input_dir
 
@@ -515,4 +423,3 @@ async def run_pipeline(mode: str = "daemon", input_dir_override: Optional[str] =
 # Backward compatibility — allow `python src/main.py` to still work
 if __name__ == "__main__":
     asyncio.run(run_pipeline(mode="daemon"))
-
