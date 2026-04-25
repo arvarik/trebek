@@ -98,8 +98,12 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                         total_cached = int(usage1.get("cached_tokens", 0) + usage2.get("cached_tokens", 0))
                         total_latency = usage1.get("latency_ms", 0.0) + usage2.get("latency_ms", 0.0)
 
-                        cost_1 = (usage1.get("input_tokens", 0) * 0.075 + usage1.get("output_tokens", 0) * 0.30) / 1000000
-                        cost_2 = (usage2.get("input_tokens", 0) * 1.25 + usage2.get("output_tokens", 0) * 5.00) / 1000000
+                        cost_1 = (
+                            usage1.get("input_tokens", 0) * 0.075 + usage1.get("output_tokens", 0) * 0.30
+                        ) / 1000000
+                        cost_2 = (
+                            usage2.get("input_tokens", 0) * 1.25 + usage2.get("output_tokens", 0) * 5.00
+                        ) / 1000000
                         total_cost = cost_1 + cost_2
 
                         logger.info(

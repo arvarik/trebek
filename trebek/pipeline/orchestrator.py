@@ -167,11 +167,21 @@ class TrebekPipelineOrchestrator:
             "PENDING": ["PENDING"],
             "TRANSCRIPT_READY": ["PENDING", "TRANSCRIBING", "TRANSCRIPT_READY", "CLEANED"],
             "SAVING": [
-                "PENDING", "TRANSCRIBING", "TRANSCRIPT_READY", "CLEANED", "SAVING",
+                "PENDING",
+                "TRANSCRIBING",
+                "TRANSCRIPT_READY",
+                "CLEANED",
+                "SAVING",
             ],
             "MULTIMODAL_DONE": [
-                "PENDING", "TRANSCRIBING", "TRANSCRIPT_READY", "CLEANED",
-                "SAVING", "MULTIMODAL_PROCESSING", "MULTIMODAL_DONE", "VECTORIZING",
+                "PENDING",
+                "TRANSCRIBING",
+                "TRANSCRIPT_READY",
+                "CLEANED",
+                "SAVING",
+                "MULTIMODAL_PROCESSING",
+                "MULTIMODAL_DONE",
+                "VECTORIZING",
             ],
         }
         statuses_to_check = upstream_map.get(target_status, [target_status])

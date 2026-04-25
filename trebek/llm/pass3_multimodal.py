@@ -53,9 +53,7 @@ async def execute_pass_3_multimodal_augmentation(
 
                         # Wait for file to become ACTIVE (video processing takes 1-5s)
                         for poll_i in range(15):
-                            file_info = await asyncio.to_thread(
-                                client.client.files.get, name=uploaded_file.name
-                            )
+                            file_info = await asyncio.to_thread(client.client.files.get, name=uploaded_file.name)
                             state_name = file_info.state.name if file_info.state else "UNKNOWN"
                             if state_name == "ACTIVE":
                                 break

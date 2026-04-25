@@ -26,6 +26,7 @@ async def _extract_part(
     validation failures. Always uses the full 65536 output token budget.
     """
     import structlog
+
     logger = structlog.get_logger()
     client = _get_client()
 
@@ -47,7 +48,9 @@ async def _extract_part(
                 attempt=attempt + 1,
                 budget=max_output_tokens,
                 output_tokens_used=output_tokens_used,
-                budget_utilization_pct=round(output_tokens_used / max_output_tokens * 100, 1) if max_output_tokens > 0 else 0,
+                budget_utilization_pct=round(output_tokens_used / max_output_tokens * 100, 1)
+                if max_output_tokens > 0
+                else 0,
                 latency_ms=round(usage.get("latency_ms", 0), 0),
             )
 
@@ -61,7 +64,7 @@ async def _extract_part(
         except Exception as e:
             if attempt == max_retries:
                 raise
-            backoff_delay = 2.0 * (2 ** attempt)  # 2s, 4s, 8s, 16s
+            backoff_delay = 2.0 * (2**attempt)  # 2s, 4s, 8s, 16s
             logger.warning(
                 "Extraction validation failed, retrying",
                 schema=schema_cls.__name__,

@@ -384,7 +384,9 @@ async def execute_pass_2_data_extraction(
     # ── Stage 4b: Speaker Name Normalization ────────────────────────
     contestant_names = [c.name for c in meta_data.contestants]
     _normalize_speaker_names(
-        sorted_clues, speaker_mapping, contestant_names,
+        sorted_clues,
+        speaker_mapping,
+        contestant_names,
         host_name=meta_data.host_name,
         score_adjustments=meta_data.score_adjustments,
         fj_wagers=meta_data.final_jeopardy.wagers_and_responses,
