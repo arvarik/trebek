@@ -67,7 +67,7 @@ class FinalJeopardy(BaseModel):
 
 class Contestant(BaseModel):
     name: str
-    podium_position: Literal[1, 2, 3] = Field(description="1 (left), 2 (center), or 3 (right).")
+    podium_position: int = Field(description="1 (left), 2 (center), or 3 (right).", ge=1, le=3)
     occupational_category: str = Field(description="Classified by LLM (e.g., 'Academia', 'STEM', 'Law').")
     is_returning_champion: bool
     description: str = Field(description="Hometown/occupational context from the interview segment.")
