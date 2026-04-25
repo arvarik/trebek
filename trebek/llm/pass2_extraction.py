@@ -7,7 +7,7 @@ from trebek.schemas import Episode, Clue, BuzzAttempt
 from trebek.llm.schemas import PartialEpisodeMeta, PartialClues
 from trebek.llm.chunking import _chunk_by_semantic_boundaries
 from trebek.llm.validation import _validate_extraction_integrity, _deduplicate_clues
-from trebek.llm.utils import _extract_part, _estimate_output_tokens
+from trebek.llm.utils import _extract_part
 
 logger = structlog.get_logger()
 GEMINI_CONCURRENCY = 3
@@ -77,7 +77,6 @@ async def execute_pass_2_data_extraction(
         base_system,
         PartialEpisodeMeta,
         max_retries,
-        max_output_tokens=_estimate_output_tokens(0, "meta"),
     )
     _accumulate_usage(meta_usage)
     max_attempt_reached = max(max_attempt_reached, meta_att)
@@ -115,13 +114,11 @@ async def execute_pass_2_data_extraction(
                 "Output ONLY Line IDs for clue reading and buzz attempts (e.g. 'L105'). "
                 "Ensure you extract ALL buzz attempts."
             )
-            output_budget = _estimate_output_tokens(chunk_lines, "clues")
             return await _extract_part(
                 prompt,
                 base_system,
                 PartialClues,
                 max_retries,
-                max_output_tokens=output_budget,
             )
 
     chunk_tasks = [extract_chunk(idx, chunk) for idx, chunk in enumerate(chunks)]
