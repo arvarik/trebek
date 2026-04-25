@@ -548,26 +548,20 @@ def render_episode_completion_summary(
 # ──────────────────────────────────────────────────────────────
 
 
-def render_stats_dashboard(db_path: str) -> None:
-    """
-    Queries the SQLite database and renders a comprehensive analytics dashboard
-    showing pipeline health, telemetry, and recent episode history.
-    """
+def generate_stats_layout(db_path: str) -> Any:
+    """Generates the Rich Group containing the stats dashboard UI."""
     import sqlite3 as _sqlite3
 
     if not os.path.exists(db_path):
-        console.print(
-            Panel(
-                "[yellow]No database found.[/yellow]\n"
-                f"Expected: [bold]{db_path}[/bold]\n\n"
-                "Run [bold]trebek[/bold] to start the pipeline and create the database.",
-                title="📊 Stats Dashboard",
-                border_style="yellow",
-                box=box.ROUNDED,
-                padding=(1, 2),
-            )
+        return Panel(
+            "[yellow]No database found.[/yellow]\n"
+            f"Expected: [bold]{db_path}[/bold]\n\n"
+            "Run [bold]trebek[/bold] to start the pipeline and create the database.",
+            title="📊 Stats Dashboard",
+            border_style="yellow",
+            box=box.ROUNDED,
+            padding=(1, 2),
         )
-        return
 
     conn = _sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -735,20 +729,39 @@ def render_stats_dashboard(db_path: str) -> None:
 
     conn.close()
 
-    # ── Render ──
-    console.print()
-    render_startup_banner(mode="stats")
-
     # Top row: Health + Telemetry side by side
     top_grid = Table.grid(padding=2, expand=True)
     top_grid.add_column(ratio=1)
     top_grid.add_column(ratio=1)
     top_grid.add_row(health_panel, telemetry_panel)
-    console.print(top_grid)
 
-    # Timing breakdown
-    console.print(timing_panel)
+    return Group(top_grid, timing_panel, recent_panel)
 
-    # Recent episodes
-    console.print(recent_panel)
+
+def render_stats_dashboard(db_path: str) -> None:
+    """
+    Renders a live-updating analytics dashboard showing pipeline health,
+    telemetry, and recent episode history.
+    """
+    from rich.live import Live
+    import time
+
     console.print()
+    render_startup_banner(mode="stats")
+
+    console.print("[dim]Press Ctrl+C to exit dashboard[/dim]\n")
+
+    layout = generate_stats_layout(db_path)
+    
+    # If the layout is a Panel indicating no database, just print and exit
+    if isinstance(layout, Panel):
+        console.print(layout)
+        return
+
+    try:
+        with Live(layout, console=console, refresh_per_second=1) as live:
+            while True:
+                time.sleep(2)
+                live.update(generate_stats_layout(db_path))
+    except KeyboardInterrupt:
+        console.print("\n[dim]Exiting dashboard...[/dim]\n")
