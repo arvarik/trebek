@@ -30,7 +30,7 @@ def test_job_telemetry_validation_rules() -> None:
 
 @pytest.mark.asyncio
 async def test_insert_job_telemetry(memory_db_path: str) -> None:
-    from trebek.core_database import DatabaseWriter
+    from trebek.database import DatabaseWriter
     from trebek.schemas import JobTelemetry
 
     writer = DatabaseWriter(memory_db_path)

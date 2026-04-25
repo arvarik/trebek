@@ -59,8 +59,8 @@ The target audience is **ML engineers, data scientists, and researchers** who ne
 ### Database-Backed Queueing (True Resumability)
 Uses a persistent SQLite `pipeline_state` table to manage jobs across all stages of execution. The daemon can be interrupted at any point — via `SIGINT`, `SIGTERM`, or a crash — and will seamlessly resume exactly where it left off. No data is lost. No re-processing is required.
 
-### VRAM Fragmentation Immunity
-Local GPU operations (PyTorch/WhisperX) are sandboxed in a `ProcessPoolExecutor` with `max_tasks_per_child=1`. Worker processes forcefully die after every episode, which defragments 100% of VRAM. This makes the system immune to PyTorch's internal memory fragmentation during multi-day inference runs — a problem `torch.cuda.empty_cache()` alone cannot solve.
+### Warm Worker Architecture & VRAM Management
+Local GPU operations (PyTorch/WhisperX) utilize a "Warm Worker" architecture where the model weights remain resident in VRAM across tasks, eliminating cold-start latency. Memory fragmentation is actively managed via explicit tensor deletion, garbage collection (`gc.collect()`), and `torch.cuda.empty_cache()`. If a CUDA Out-Of-Memory (OOM) error occurs, the orchestrator seamlessly catches it and restarts the worker pool to recover. Shutdowns are handled gracefully via `SIGTERM` signals using `psutil`, falling back to `SIGKILL` only for stubborn zombies.
 
 ### Multi-Pass LLM Architecture
 - **Pass 1 (Gemini 3.1 Flash-Lite):** Fast speaker anchoring. Extracts a rigid `{SPEAKER_XX: "Name"}` mapping from the host interview segment to prevent hallucinations in later passes.
@@ -81,7 +81,7 @@ Cross-references visual podium illumination timestamps (from Gemini Vision) with
 - Semantic lateral distance via cosine distance on text embeddings.
 
 ### Actor-Pattern Database Writer
-All SQLite writes are routed through a single `DatabaseWriter` actor — an asyncio task owning an internal `asyncio.Queue`. This serializes concurrent write requests, preventing `database is locked` exceptions. Every enqueued operation returns an `asyncio.Future` protected by `asyncio.wait_for()` to prevent silent deadlocks.
+All SQLite writes are routed through a single `DatabaseWriter` actor — an asyncio task owning an internal `asyncio.Queue`. This serializes concurrent write requests, preventing `database is locked` exceptions. It supports high-throughput atomic transactions via `execute_transaction`, allowing multiple related queries to be batched efficiently, eliminating micro-transaction disk stalls. Every enqueued operation returns an `asyncio.Future` protected by `asyncio.wait_for()` to prevent silent deadlocks.
 
 ---
 
@@ -122,8 +122,8 @@ All SQLite writes are routed through a single `DatabaseWriter` actor — an asyn
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| **I/O Orchestration** | `asyncio` event loop | State polling, signal handling, worker coordination |
-| **GPU Isolation** | `ProcessPoolExecutor` (`spawn`) | Subprocess dies after every task → 100% VRAM reclamation |
+| **I/O Orchestration** | `asyncio` Event-Driven | `asyncio.Event` objects replace polling latency, orchestrating stages efficiently |
+| **GPU Isolation** | `ProcessPoolExecutor` (`spawn`) | Warm Worker architecture with active GC and automatic OOM-recovery pool restarts |
 | **Write Serialization** | Actor pattern (`Queue` + `Future`) | Prevents SQLite `database is locked` errors |
 | **CPU Offloading** | `asyncio.to_thread()` | Offloads Pydantic JSON validation off the event loop |
 | **IPC Optimization** | Filepath strings over `.json.gz` | Avoids pickling large JSON across process boundaries |
@@ -498,16 +498,17 @@ The test suite validates critical system contracts:
 trebek/
 ├── trebek/
 │   ├── cli.py              # CLI parser + Docker orchestration
-│   ├── main.py             # Pipeline orchestrator daemon
+│   ├── main.py             # Pipeline entrypoint wrapper
 │   ├── config.py           # Pydantic Settings + validators
-│   ├── console.py          # Rich UI: banners, diagnostics, stats
 │   ├── schemas.py          # Pydantic v2 data contracts
 │   ├── schema.sql          # SQLite DDL (9 tables)
-│   ├── core_database.py    # Actor-pattern DatabaseWriter
-│   ├── gpu_orchestrator.py # ProcessPoolExecutor + VRAM mgmt
-│   ├── llm_pipeline.py     # Multi-pass Gemini extraction
 │   ├── state_machine.py    # Deterministic game state replay
-│   └── physics_engine.py   # Buzzer latency + semantic distance
+│   ├── physics_engine.py   # Buzzer latency + semantic distance
+│   ├── database/           # Database writer and operations (Actor-pattern)
+│   ├── gpu/                # ProcessPoolExecutor + VRAM mgmt workers
+│   ├── llm/                # Multi-pass Gemini extraction pipeline
+│   ├── pipeline/           # Async pipeline orchestrator and workers
+│   └── ui/                 # Rich CLI dashboard and rendering components
 ├── tests/
 │   ├── conftest.py          # Shared fixtures
 │   ├── mock_bin/            # Mock ffmpeg/whisperx binaries
@@ -534,11 +535,11 @@ trebek/
 
 These are **non-negotiable** constraints that must be preserved across all contributions:
 
-1. **GPU Subprocess Isolation.** All PyTorch/WhisperX operations **must** execute inside a `ProcessPoolExecutor` with `max_tasks_per_child=1`. Workers must die after every task to guarantee VRAM defragmentation. Never use `torch.cuda.empty_cache()` as a substitute.
+1. **GPU Warm Worker Architecture.** PyTorch/WhisperX operations execute inside a `ProcessPoolExecutor`. Workers maintain model weights in VRAM for speed but must perform rigorous explicit memory management (`del`, `gc.collect()`, `torch.cuda.empty_cache()`) per task. The pool must automatically catch `MemoryError` (CUDA OOM) and restart itself cleanly to guarantee stability over multi-day inference runs.
 
-2. **Database Write Serialization.** All SQLite write operations **must** be routed through the `DatabaseWriter` actor queue. Direct `conn.execute()` calls from workers will cause `database is locked` errors under concurrent load.
+2. **Database Write Serialization.** All SQLite write operations **must** be routed through the `DatabaseWriter` actor queue. Direct `conn.execute()` calls from workers will cause `database is locked` errors under concurrent load. Multi-statement commits should utilize atomic transactions via `execute_transaction` to avoid I/O bottlenecks.
 
-3. **Event Loop Protection.** Heavy CPU-bound operations (specifically `Episode.model_validate_json`) **must** be offloaded to a background thread via `asyncio.to_thread()`. Blocking the main event loop will trigger watchdog heartbeat timeouts.
+3. **Event Loop Protection.** Heavy CPU-bound operations (specifically `Episode.model_validate_json`) **must** be offloaded to a background thread via `asyncio.to_thread()`. Stage coordination **must** use `asyncio.Event` triggers rather than tight `asyncio.sleep` polling loops.
 
 4. **IPC Boundary Hygiene.** Never pass large JSON structures across process boundaries (IPC pickling). Write data to disk as compressed `.json.gz` and pass the filepath string instead.
 
@@ -558,8 +559,8 @@ True resumability and crash immunity are paramount. Zero data loss during multi-
 ### Deterministic Math over LLM Approximations
 LLMs are hallucination-prone when performing arithmetic. They extract pure facts from transcripts; deterministic Python state machines execute the score tracking, True Daily Double resolution, and game-theory optimal wager calculations.
 
-### Hardware Isolation is Safety
-VRAM fragmentation is inevitable in long-running PyTorch processes. Forceful memory reclamation via ephemeral subprocesses (`max_tasks_per_child=1`) guarantees stability over multi-day batch runs processing hundreds of episodes.
+### Hardware Isolation & Active Management
+VRAM fragmentation is inevitable in long-running PyTorch processes. While previous iterations relied on ephemeral subprocesses, the current "Warm Worker" paradigm achieves higher throughput by managing memory explicitly and gracefully recovering from OOM states by restarting the pool when necessary.
 
 ### What Trebek Is NOT
 - **Not a real-time application.** This is a batch-processing daemon pipeline, not an interactive or real-time streaming service.

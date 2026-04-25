@@ -1,6 +1,6 @@
 import pytest
 import sqlite3
-from trebek.core_database import DatabaseWriter
+from trebek.database import DatabaseWriter
 
 
 @pytest.mark.asyncio

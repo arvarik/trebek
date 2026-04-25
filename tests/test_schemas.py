@@ -25,7 +25,9 @@ def test_contestant_podium_constraint() -> None:
 
 
 def test_clue_daily_double_wager_types() -> None:
-    clue_data = {
+    from typing import Any
+
+    clue_data: dict[str, Any] = {
         "round": "Jeopardy",
         "category": "Math",
         "board_row": 1,

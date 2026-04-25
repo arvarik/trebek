@@ -13,7 +13,7 @@ import os
 import sqlite3
 
 from trebek.config import settings, SUPPORTED_VIDEO_EXTENSIONS
-from trebek.console import (
+from trebek.ui import (
     console,
     render_startup_banner,
     render_dry_run_table,
@@ -183,7 +183,7 @@ def main() -> None:
 
     # Import here to avoid loading heavy modules for --dry-run
     import asyncio
-    from trebek.main import run_pipeline
+    from trebek.pipeline import run_pipeline
 
     mode = "once" if args.once else "daemon"
 
