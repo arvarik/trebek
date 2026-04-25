@@ -117,6 +117,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show database analytics dashboard (no processing)",
     )
+    parser.add_argument(
+        "--nollm",
+        action="store_true",
+        help="GPU-only mode: transcribe episodes but skip LLM extraction, multimodal, and state machine",
+    )
     return parser
 
 
@@ -163,6 +168,8 @@ def main() -> None:
             cmd.append("--dry-run")
         if args.once:
             cmd.append("--once")
+        if args.nollm:
+            cmd.append("--nollm")
         if args.input_dir:
             cmd.extend(["--input-dir", input_abs])
 
@@ -187,7 +194,7 @@ def main() -> None:
 
     mode = "once" if args.once else "daemon"
 
-    asyncio.run(run_pipeline(mode=mode, input_dir_override=input_dir))
+    asyncio.run(run_pipeline(mode=mode, input_dir_override=input_dir, nollm=args.nollm))
 
 
 if __name__ == "__main__":

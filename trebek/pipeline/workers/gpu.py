@@ -66,7 +66,12 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                         (transcript_path, episode_id),
                     )
                     current_episode_id = None
-                    orchestrator.llm_work_ready.set()
+                    if not orchestrator.nollm:
+                        orchestrator.llm_work_ready.set()
+                    else:
+                        # In --nollm mode, GPU is the final worker — advance the progress bar
+                        orchestrator.stats["completed"] += 1
+                        progress.advance(task_id)
                     logger.info("Transcription complete", episode_id=episode_id)
                 except Exception as e:
                     logger.error("GPU Orchestrator failed", error=str(e))

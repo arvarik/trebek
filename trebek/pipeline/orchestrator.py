@@ -51,10 +51,11 @@ logger = structlog.get_logger()
 
 
 class TrebekPipelineOrchestrator:
-    def __init__(self, db_path: str, output_dir: str, mode: str = "daemon") -> None:
+    def __init__(self, db_path: str, output_dir: str, mode: str = "daemon", nollm: bool = False) -> None:
         self.db_path = db_path
         self.output_dir = output_dir
         self.mode = mode
+        self.nollm = nollm
         self.db_writer = DatabaseWriter(db_path)
         self.gpu_orchestrator = GPUOrchestrator(
             output_dir,
@@ -183,11 +184,13 @@ class TrebekPipelineOrchestrator:
     async def start_workers(self, input_dir: str, progress: Any, task_id: Any) -> None:
         self.running = True
 
-        # Wake up all workers for an initial database poll in case there's backlogged work
+        # Wake up GPU worker for an initial database poll in case there's backlogged work
         self.gpu_work_ready.set()
-        self.llm_work_ready.set()
-        self.multimodal_work_ready.set()
-        self.state_machine_work_ready.set()
+
+        if not self.nollm:
+            self.llm_work_ready.set()
+            self.multimodal_work_ready.set()
+            self.state_machine_work_ready.set()
 
         # Run ingestion first so we know the total count
         await run_ingestion_pass(self, input_dir)
@@ -196,12 +199,16 @@ class TrebekPipelineOrchestrator:
 
         self.tasks.append(asyncio.create_task(ingestion_worker(self, input_dir)))
         self.tasks.append(asyncio.create_task(extractor_worker(self, progress, task_id)))
-        self.tasks.append(asyncio.create_task(llm_worker(self, progress, task_id)))
-        self.tasks.append(asyncio.create_task(multimodal_worker(self, progress, task_id)))
-        self.tasks.append(asyncio.create_task(state_machine_worker(self, progress, task_id)))
+
+        if not self.nollm:
+            self.tasks.append(asyncio.create_task(llm_worker(self, progress, task_id)))
+            self.tasks.append(asyncio.create_task(multimodal_worker(self, progress, task_id)))
+            self.tasks.append(asyncio.create_task(state_machine_worker(self, progress, task_id)))
+        else:
+            logger.info("🚫 --nollm mode: LLM, multimodal, and state machine workers DISABLED")
 
 
-async def run_pipeline(mode: str = "daemon", input_dir_override: Optional[str] = None) -> None:
+async def run_pipeline(mode: str = "daemon", input_dir_override: Optional[str] = None, nollm: bool = False) -> None:
     """Main pipeline entry point, called by cli.py."""
     from trebek.ui import render_startup_banner, render_system_diagnostics
 
@@ -215,6 +222,7 @@ async def run_pipeline(mode: str = "daemon", input_dir_override: Optional[str] =
         db_path=settings.db_path,
         output_dir=settings.output_dir,
         mode=mode,
+        nollm=nollm,
     )
 
     await orchestrator.initialize(input_dir)
