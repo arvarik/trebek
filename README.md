@@ -12,7 +12,7 @@
     <img alt="WhisperX" src="https://img.shields.io/badge/ASR-WhisperX-green" />
     <img alt="Ruff" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json" />
     <img alt="Mypy" src="https://img.shields.io/badge/types-Mypy-blue.svg" />
-    <img alt="License" src="https://img.shields.io/badge/license-private-lightgrey" />
+    <img alt="License" src="https://img.shields.io/badge/license-AGPL_3.0-green" />
   </p>
 </div>
 

@@ -98,7 +98,7 @@ class GPUOrchestrator:
         """
         # Forcefully kill child processes to reclaim GPU memory
         try:
-            for pid in list(self.executor._processes.keys()):  # type: ignore[attr-defined]
+            for pid in list(self.executor._processes.keys()):
                 try:
                     os.kill(pid, signal.SIGKILL)
                     logger.info("Force killed worker PID during shutdown", pid=pid)

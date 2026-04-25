@@ -62,7 +62,7 @@ class DatabaseWriter:
                         cursor.execute(query, params)
                     # Fetch results BEFORE commit — RETURNING clause results are only
                     # available while the transaction is still active
-                    result = cursor.fetchall() if cursor.description else None
+                    result: Any = cursor.fetchall() if cursor.description else None
                     self.conn.commit()
                     if result is None:
                         result = cursor.lastrowid

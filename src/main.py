@@ -45,7 +45,8 @@ def _configure_logging() -> None:
         # Piped / redirected — machine-parseable JSON lines
         renderer = structlog.processors.JSONRenderer()  # type: ignore[assignment]
 
-    structlog.configure(processors=[*shared_processors, renderer])
+    processors: list[Any] = [*shared_processors, renderer]
+    structlog.configure(processors=processors)
 
 
 _configure_logging()
