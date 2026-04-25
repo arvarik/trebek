@@ -52,7 +52,7 @@ class VisionClient:
             temperature=0.0,
         )
         response = await self.client.aio.models.generate_content(
-            model="gemini-3.1-pro",
+            model="gemini-3.1-pro-preview",
             contents=uploaded_file,
             config=config,
         )

@@ -77,7 +77,7 @@ async def execute_pass_1_speaker_anchoring(host_interview_segment: str) -> "tupl
     try:
         client = _get_client()
         response_text, usage = await client.generate_content(
-            model="gemini-3.1-flash-lite",
+            model="gemini-3.1-flash-lite-preview",
             prompt=f"Segment:\n{host_interview_segment}",
             system_instruction=system_prompt,
         )
@@ -115,7 +115,7 @@ async def execute_pass_2_data_extraction(
         try:
             client = _get_client()
             response_text, usage = await client.generate_content(
-                model="gemini-3.1-pro", prompt=current_prompt, system_instruction=system_prompt
+                model="gemini-3.1-pro-preview", prompt=current_prompt, system_instruction=system_prompt
             )
 
             total_usage["input_tokens"] += usage.get("input_tokens", 0.0)
