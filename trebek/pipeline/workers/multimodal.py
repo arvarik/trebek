@@ -5,7 +5,6 @@ import structlog
 from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
 from trebek.schemas import Episode
-from trebek.config import settings
 from trebek.llm import execute_pass_3_multimodal_augmentation
 
 if TYPE_CHECKING:
@@ -39,7 +38,7 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                         (episode_id,),
                     )
                     source_filename = rows[0][0] if rows and rows[0][0] else f"{episode_id}.mp4"
-                    video_filepath = os.path.join(settings.input_dir, source_filename)
+                    video_filepath = source_filename
 
                     start_multi_t = time.perf_counter()
                     episode_data, multi_usage = await execute_pass_3_multimodal_augmentation(

@@ -6,7 +6,6 @@ import json
 import structlog
 from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
-from trebek.config import settings
 from trebek.llm import execute_pass_1_speaker_anchoring, execute_pass_2_data_extraction
 
 if TYPE_CHECKING:
@@ -46,7 +45,7 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                             "SELECT source_filename FROM pipeline_state WHERE episode_id = ?", (episode_id,)
                         )
                         source_filename = rows_src[0][0] if rows_src and rows_src[0][0] else f"{episode_id}.mp4"
-                        video_filepath = os.path.join(settings.input_dir, source_filename)
+                        video_filepath = source_filename
 
                         audio_slice_path = os.path.join(orchestrator.output_dir, f"{episode_id}_interview_slice.mp3")
                         if not os.path.exists(audio_slice_path):

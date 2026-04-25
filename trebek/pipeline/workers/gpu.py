@@ -4,7 +4,6 @@ import asyncio
 import structlog
 from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
-from trebek.config import settings
 
 if TYPE_CHECKING:
     from trebek.pipeline.orchestrator import TrebekPipelineOrchestrator
@@ -32,7 +31,8 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                     (episode_id,),
                 )
                 source_filename = rows[0][0] if rows and rows[0][0] else f"{episode_id}.mp4"
-                video_filepath = os.path.join(settings.input_dir, source_filename)
+                # source_filename is the full walk path from ingestion — use directly
+                video_filepath = source_filename
 
                 if not os.path.exists(video_filepath):
                     logger.error("Video file not found", filepath=video_filepath)

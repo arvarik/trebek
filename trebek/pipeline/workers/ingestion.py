@@ -22,12 +22,12 @@ async def run_ingestion_pass(orchestrator: "TrebekPipelineOrchestrator", input_d
                 # e.g. "Season 41/S41E01.mp4" → "Season_41_S41E01"
                 rel = os.path.relpath(os.path.join(dirpath, fname), input_dir)
                 episode_id = os.path.splitext(rel)[0].replace(os.sep, "_").replace(" ", "_")
-                # Store the relative path from input_dir for cross-machine portability
-                source_rel_path = rel
+                # Store the full walk path — this is directly usable by workers
+                source_path = os.path.join(dirpath, fname)
 
                 result = await orchestrator.db_writer.execute(
                     "INSERT OR IGNORE INTO pipeline_state (episode_id, status, source_filename) VALUES (?, ?, ?)",
-                    (episode_id, "PENDING", source_rel_path),
+                    (episode_id, "PENDING", source_path),
                 )
 
                 # Only count genuinely new insertions (lastrowid > 0 means a row was inserted)
