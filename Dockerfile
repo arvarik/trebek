@@ -21,15 +21,14 @@ RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/cu121
 
-# Copy dependency files
+# Install runtime dependencies from pyproject.toml without the package itself.
+# This layer is cached as long as dependency versions don't change.
 COPY pyproject.toml README.md ./
+RUN pip install --no-cache-dir pydantic pydantic-settings structlog google-genai rich
 
-# Install application dependencies
-# We use '.' because pyproject.toml is configured for a standard install
-RUN pip install --no-cache-dir .
-
-# Now copy the application code
+# Now copy the application source and install the package
 COPY trebek/ ./trebek/
+RUN pip install --no-cache-dir .
 
 # We run as root by default to avoid permission issues when mounting host volumes
 # like input_videos and trebek.db. Users mapping to network drives should ensure
