@@ -112,29 +112,31 @@ class TrebekPipelineOrchestrator:
         logger.info("Pipeline Orchestrator shut down cleanly.")
 
     async def _ingestion_worker(self, input_dir: str) -> None:
-        """Polls input_dir for new video files across all supported formats."""
+        """Polls input_dir recursively for new video files across all supported formats."""
         while self.running:
             if os.path.exists(input_dir):
-                for entry in os.scandir(input_dir):
-                    if not entry.is_file():
-                        continue
-                    ext = os.path.splitext(entry.name)[1].lower()
-                    if ext not in SUPPORTED_VIDEO_EXTENSIONS:
-                        continue
+                for dirpath, _dirnames, filenames in os.walk(input_dir):
+                    for fname in filenames:
+                        ext = os.path.splitext(fname)[1].lower()
+                        if ext not in SUPPORTED_VIDEO_EXTENSIONS:
+                            continue
 
-                    start_t = time.perf_counter()
-                    episode_id = os.path.basename(os.path.splitext(entry.name)[0])
-                    source_filename = entry.name
+                        start_t = time.perf_counter()
+                        # Include parent folder in episode_id for uniqueness
+                        # e.g. "Season 41/S41E01.mp4" → "Season_41_S41E01"
+                        rel = os.path.relpath(os.path.join(dirpath, fname), input_dir)
+                        episode_id = os.path.splitext(rel)[0].replace(os.sep, "_").replace(" ", "_")
+                        source_path = os.path.join(dirpath, fname)
 
-                    await self.db_writer.execute(
-                        "INSERT OR IGNORE INTO pipeline_state (episode_id, status, source_filename) VALUES (?, ?, ?)",
-                        (episode_id, "PENDING", source_filename),
-                    )
+                        await self.db_writer.execute(
+                            "INSERT OR IGNORE INTO pipeline_state (episode_id, status, source_filename) VALUES (?, ?, ?)",
+                            (episode_id, "PENDING", source_path),
+                        )
 
-                    stage_ingestion_ms = (time.perf_counter() - start_t) * 1000
-                    await self.db_writer.update_job_telemetry(episode_id, stage_ingestion_ms=stage_ingestion_ms)
+                        stage_ingestion_ms = (time.perf_counter() - start_t) * 1000
+                        await self.db_writer.update_job_telemetry(episode_id, stage_ingestion_ms=stage_ingestion_ms)
 
-                    self.stats["total"] += 1
+                        self.stats["total"] += 1
 
             if self.mode == "once":
                 # In once mode, stop polling after first scan

@@ -373,16 +373,16 @@ Invalid configurations will raise a `ValidationError` at startup, preventing the
 
 ## 🚀 Usage
 
-Trebek is designed to run as a **continuous daemon**. Once started, it will poll the configured `input_dir` for new video files and orchestrate the full extraction pipeline automatically. Trebek supports 12 video formats natively: MP4, TS, MKV, AVI, MOV, WebM, MPG, MPEG, FLV, WMV, M2TS, and VOB.
+Trebek is designed to run as a **continuous daemon**. Once started, it will **recursively** scan the configured `input_dir` (and all subdirectories) for video files and orchestrate the full extraction pipeline automatically. Trebek supports 12 video formats natively: MP4, TS, MKV, AVI, MOV, WebM, MPG, MPEG, FLV, WMV, M2TS, and VOB.
 
 ### Start the Pipeline
 
 ```bash
-# Native mode (requires GPU dependencies)
-trebek
+# Point at a media library with nested folders
+trebek --input-dir /path/to/TV/Jeopardy
 
 # Docker mode (recommended)
-trebek --docker
+trebek --docker --input-dir /path/to/TV/Jeopardy
 
 # Process current queue then exit
 trebek --once
@@ -396,8 +396,8 @@ trebek --stats
 
 ### Process Episodes
 
-1. Place video files into `input_videos/` (or your configured `input_dir`).
-2. The ingestion worker detects new files within 5 seconds and registers them as `PENDING`.
+1. Point `--input-dir` at any directory (nested season folders work automatically).
+2. The ingestion worker recursively discovers all video files and registers them as `PENDING`.
 3. Each episode flows through the pipeline stages automatically.
 4. Monitor progress via the Rich console output, or run `trebek --stats` to view aggregate metrics.
 

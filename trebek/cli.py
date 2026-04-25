@@ -23,7 +23,7 @@ from trebek.console import (
 
 
 def discover_video_files(input_dir: str) -> list[dict[str, object]]:
-    """Scans input_dir for all supported video files and returns metadata."""
+    """Recursively scans input_dir for all supported video files."""
     files: list[dict[str, object]] = []
 
     if not os.path.exists(input_dir):
@@ -40,25 +40,26 @@ def discover_video_files(input_dir: str) -> list[dict[str, object]]:
         except sqlite3.OperationalError:
             pass  # DB may not have the table yet
 
-    for entry in sorted(os.scandir(input_dir), key=lambda e: e.name):
-        if not entry.is_file():
-            continue
-        ext = os.path.splitext(entry.name)[1].lower()
-        if ext not in SUPPORTED_VIDEO_EXTENSIONS:
-            continue
+    for dirpath, _dirnames, filenames in os.walk(input_dir):
+        for fname in sorted(filenames):
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in SUPPORTED_VIDEO_EXTENSIONS:
+                continue
 
-        episode_id = os.path.splitext(entry.name)[0]
-        status = "Already Queued" if episode_id in queued_ids else "New"
+            filepath = os.path.join(dirpath, fname)
+            rel = os.path.relpath(filepath, input_dir)
+            episode_id = os.path.splitext(rel)[0].replace(os.sep, "_").replace(" ", "_")
+            status = "Already Queued" if episode_id in queued_ids else "New"
 
-        files.append(
-            {
-                "filename": entry.name,
-                "filepath": entry.path,
-                "format": ext,
-                "size_bytes": entry.stat().st_size,
-                "status": status,
-            }
-        )
+            files.append(
+                {
+                    "filename": rel,
+                    "filepath": filepath,
+                    "format": ext,
+                    "size_bytes": os.path.getsize(filepath),
+                    "status": status,
+                }
+            )
 
     return files
 
@@ -68,7 +69,7 @@ def handle_dry_run(input_dir: str) -> None:
     render_startup_banner(mode="dry-run")
     render_system_diagnostics(settings)
 
-    console.print(f"\n  [dim]Scanning:[/dim] [bold]{os.path.abspath(input_dir)}[/bold]")
+    console.print(f"\n  [dim]Scanning (recursive):[/dim] [bold]{os.path.abspath(input_dir)}[/bold]")
     exts = ", ".join(e.lstrip(".").upper() for e in SUPPORTED_VIDEO_EXTENSIONS[:6])
     console.print(f"  [dim]Formats:[/dim] [bold]{exts}[/bold] [dim]+ 6 more[/dim]\n")
 
@@ -130,6 +131,9 @@ def main() -> None:
         import subprocess
         import sys
 
+        cwd_abs = os.path.abspath(os.getcwd())
+        input_abs = os.path.abspath(input_dir)
+
         cmd = [
             "docker",
             "run",
@@ -137,10 +141,16 @@ def main() -> None:
             "-it",
             "--gpus",
             "all",
+            "--shm-size=8gb",
             "-v",
-            f"{os.path.abspath(os.getcwd())}:/app",
+            f"{cwd_abs}:/app",
         ]
-        # Pass .env file if it exists, so container gets the same config
+
+        # If input_dir is outside CWD, mount it separately
+        if not input_abs.startswith(cwd_abs):
+            cmd.extend(["-v", f"{input_abs}:{input_abs}:ro"])
+
+        # Pass .env file if it exists
         env_file = os.path.join(os.getcwd(), ".env")
         if os.path.exists(env_file):
             cmd.extend(["--env-file", env_file])
@@ -154,7 +164,7 @@ def main() -> None:
         if args.once:
             cmd.append("--once")
         if args.input_dir:
-            cmd.extend(["--input-dir", args.input_dir])
+            cmd.extend(["--input-dir", input_abs])
 
         console.print("[dim cyan]Orchestrating Docker container...[/dim cyan]")
         try:
