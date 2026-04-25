@@ -20,9 +20,9 @@ __pycache__/
 htmlcov/
 
 # Project Specific Output / Data
-jeopardy_ml.db
-jeopardy_ml.db-shm
-jeopardy_ml.db-wal
+trebek.db
+trebek.db-shm
+trebek.db-wal
 gpu_outputs/
 
 # Distribution / packaging
@@ -48,3 +48,4 @@ wheels/
 *.swp
 *.swo
 .DS_Store
+input_videos/

@@ -1,7 +1,7 @@
 import asyncio
 import structlog
 import sqlite3
-from typing import Any, Tuple, Optional
+from typing import Any, List, Optional, Tuple
 
 logger = structlog.get_logger()
 
@@ -16,19 +16,26 @@ class DatabaseWriter:
         self.db_path = db_path
         self.queue: asyncio.Queue[Tuple[str, Any, asyncio.Future[Any]]] = asyncio.Queue()
         self.task: Optional[asyncio.Task[Any]] = None
+        self.vacuum_task: Optional[asyncio.Task[Any]] = None
         self.conn: Optional[sqlite3.Connection] = None
 
     async def start(self) -> None:
-        self.conn = sqlite3.connect(self.db_path, isolation_level=None)
+        self.conn = sqlite3.connect(self.db_path)
         # Apply strict pragma configurations at startup
         self.conn.execute("PRAGMA foreign_keys = ON;")
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA busy_timeout=5000;")
         self.conn.execute("PRAGMA auto_vacuum=INCREMENTAL;")
         self.task = asyncio.create_task(self._process_queue())
-        asyncio.create_task(self._background_incremental_vacuum())
+        self.vacuum_task = asyncio.create_task(self._background_incremental_vacuum())
 
     async def stop(self) -> None:
+        if self.vacuum_task:
+            self.vacuum_task.cancel()
+            try:
+                await self.vacuum_task
+            except asyncio.CancelledError:
+                pass
         if self.task:
             self.task.cancel()
             try:
@@ -53,15 +60,18 @@ class DatabaseWriter:
                         cursor.executemany(query, params)
                     else:
                         cursor.execute(query, params)
+                    # Fetch results BEFORE commit — RETURNING clause results are only
+                    # available while the transaction is still active
+                    result = cursor.fetchall() if cursor.description else None
                     self.conn.commit()
-                    # Using fetchall safely inside the synchronous block
-                    result = cursor.fetchall() if cursor.description else cursor.lastrowid
+                    if result is None:
+                        result = cursor.lastrowid
                     if not future.done():
                         future.set_result(result)
                 except Exception as db_err:
                     if self.conn is not None:
                         self.conn.rollback()
-                    logger.error(f"Transaction failed: {db_err}")
+                    logger.error("Transaction failed", error=str(db_err))
                     if not future.done():
                         future.set_exception(db_err)
                 finally:
@@ -70,7 +80,7 @@ class DatabaseWriter:
         except asyncio.CancelledError:
             logger.info("DatabaseWriter actor shutting down via cancellation.")
         except Exception as critical_err:
-            logger.critical(f"DatabaseWriter fatal crash: {critical_err}")
+            logger.critical("DatabaseWriter fatal crash", error=str(critical_err))
         finally:
             # DEADLOCK PROTECTION: Forcefully resolve all pending futures in queue
             while not self.queue.empty():
@@ -94,10 +104,12 @@ class DatabaseWriter:
         try:
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError as te:
-            logger.error(f"Query execution timed out waiting for DatabaseWriter: {query}")
+            logger.error("Query execution timed out waiting for DatabaseWriter", query=query)
             raise te
 
-    async def executemany(self, query: str, params_list: list[Tuple[Any, ...]], timeout: float = 10.0) -> Any:
+    async def executemany(
+        self, query: str, params_list: List[Tuple[Any, ...]], timeout: float = 10.0
+    ) -> Any:
         """
         Enqueues an executemany query for actor processing and protects the caller with wait_for().
         """
@@ -109,7 +121,7 @@ class DatabaseWriter:
         try:
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError as te:
-            logger.error(f"Query executemany timed out waiting for DatabaseWriter: {query}")
+            logger.error("Query executemany timed out waiting for DatabaseWriter", query=query)
             raise te
 
     async def _background_incremental_vacuum(self, interval_seconds: int = 300) -> None:
@@ -126,7 +138,7 @@ class DatabaseWriter:
                 logger.info("Vacuum background task cancelled.")
                 break
             except Exception as e:
-                logger.error(f"Incremental vacuum background task failed: {e}")
+                logger.error("Incremental vacuum background task failed", error=str(e))
 
     async def poll_for_work(self, from_status: str, to_status: str) -> Optional[str]:
         """
@@ -152,5 +164,5 @@ class DatabaseWriter:
                 return result[0][0]  # extract RETURNING clause
             return None
         except Exception as e:
-            logger.error(f"Error polling for work: {e}")
+            logger.error("Error polling for work", error=str(e))
             return None

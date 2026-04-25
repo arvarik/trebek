@@ -1,5 +1,13 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
+from typing import Tuple
+
+
+# All container formats natively supported by FFmpeg's libavformat
+SUPPORTED_VIDEO_EXTENSIONS: Tuple[str, ...] = (
+    ".mp4", ".ts", ".mkv", ".avi", ".mov", ".webm",
+    ".mpg", ".mpeg", ".flv", ".wmv", ".m2ts", ".vob",
+)
 
 
 class Settings(BaseSettings):
@@ -8,10 +16,14 @@ class Settings(BaseSettings):
     input_dir: str = Field(default="input_videos", description="Directory to poll for new video files")
     gemini_api_key: str = Field(default="", description="GCP / Gemini API Key")
     log_level: str = Field(default="INFO", description="Logging level")
-    
+
     # GPU constraints
-    gpu_vram_target_gb: int = Field(default=16, description="Target VRAM ceiling for safety limits (e.g. 16 for 4060/5060 Ti)")
-    whisper_batch_size: int = Field(default=16, description="WhisperX batch size tuned for 16GB VRAM")
+    gpu_vram_target_gb: int = Field(
+        default=16, description="Target VRAM ceiling for safety limits (e.g. 16 for 4060/5060 Ti)"
+    )
+    whisper_batch_size: int = Field(
+        default=8, description="WhisperX batch size tuned for 16GB VRAM (safe default; max ~16)"
+    )
     whisper_compute_type: str = Field(default="float16", description="Compute type for WhisperX to prevent OOM")
 
     @field_validator("gpu_vram_target_gb")

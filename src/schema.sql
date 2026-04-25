@@ -2,29 +2,30 @@ PRAGMA auto_vacuum = INCREMENTAL;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 
-CREATE TABLE pipeline_state (
+CREATE TABLE IF NOT EXISTS pipeline_state (
     episode_id TEXT PRIMARY KEY,
     status TEXT NOT NULL,
+    source_filename TEXT,
     transcript_path TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE episodes (
+CREATE TABLE IF NOT EXISTS episodes (
     episode_id TEXT PRIMARY KEY,
     air_date DATE,
     host_name TEXT,
     is_tournament BOOLEAN
 );
 
-CREATE TABLE contestants (
+CREATE TABLE IF NOT EXISTS contestants (
     contestant_id TEXT PRIMARY KEY,
     name TEXT,
     occupational_category TEXT,
     is_returning_champion BOOLEAN
 );
 
-CREATE TABLE episode_performances (
+CREATE TABLE IF NOT EXISTS episode_performances (
     episode_id TEXT REFERENCES episodes(episode_id),
     contestant_id TEXT REFERENCES contestants(contestant_id),
     podium_position INTEGER CHECK(podium_position IN (1, 2, 3)),
@@ -34,10 +35,10 @@ CREATE TABLE episode_performances (
     PRIMARY KEY (episode_id, contestant_id)
 );
 
-CREATE TABLE clues (
+CREATE TABLE IF NOT EXISTS clues (
     clue_id TEXT PRIMARY KEY,
     episode_id TEXT REFERENCES episodes(episode_id),
-    round TEXT CHECK(round IN ('Jeopardy', 'Double', 'Final', 'Tiebreaker')),
+    round TEXT CHECK(round IN ('Jeopardy', 'Double Jeopardy', 'Final Jeopardy', 'Tiebreaker')),
     category TEXT,
     board_row INTEGER,
     board_col INTEGER,
@@ -63,7 +64,7 @@ CREATE TABLE clues (
     semantic_lateral_distance REAL
 );
 
-CREATE TABLE buzz_attempts (
+CREATE TABLE IF NOT EXISTS buzz_attempts (
     attempt_id TEXT PRIMARY KEY,
     clue_id TEXT REFERENCES clues(clue_id),
     contestant_id TEXT REFERENCES contestants(contestant_id),
@@ -83,7 +84,7 @@ CREATE TABLE buzz_attempts (
     phonetic_similarity_score REAL
 );
 
-CREATE TABLE wagers (
+CREATE TABLE IF NOT EXISTS wagers (
     wager_id TEXT PRIMARY KEY,
     clue_id TEXT REFERENCES clues(clue_id),
     contestant_id TEXT REFERENCES contestants(contestant_id),
@@ -97,7 +98,7 @@ CREATE TABLE wagers (
     wager_irrationality_delta INTEGER
 );
 
-CREATE TABLE score_adjustments (
+CREATE TABLE IF NOT EXISTS score_adjustments (
     adjustment_id TEXT PRIMARY KEY,
     episode_id TEXT REFERENCES episodes(episode_id),
     contestant_id TEXT REFERENCES contestants(contestant_id),
@@ -105,3 +106,11 @@ CREATE TABLE score_adjustments (
     reason TEXT,
     effective_after_clue_selection_order INTEGER
 );
+
+-- Performance indexes for pipeline polling and analytical queries
+CREATE INDEX IF NOT EXISTS idx_pipeline_state_status ON pipeline_state(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_clues_episode_id ON clues(episode_id);
+CREATE INDEX IF NOT EXISTS idx_buzz_attempts_clue_id ON buzz_attempts(clue_id);
+CREATE INDEX IF NOT EXISTS idx_buzz_attempts_contestant_id ON buzz_attempts(contestant_id);
+CREATE INDEX IF NOT EXISTS idx_wagers_clue_id ON wagers(clue_id);
+CREATE INDEX IF NOT EXISTS idx_score_adjustments_episode_id ON score_adjustments(episode_id);

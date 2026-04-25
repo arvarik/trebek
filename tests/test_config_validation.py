@@ -32,7 +32,7 @@ def test_config_whisper_compute_type() -> None:
 
 def test_config_whisper_batch_size() -> None:
     # Valid sizes
-    assert Settings(whisper_batch_size=16).whisper_batch_size == 16
+    assert Settings(whisper_batch_size=8).whisper_batch_size == 8
 
     # Invalid sizes (<= 0)
     with pytest.raises(ValidationError, match="whisper_batch_size"):

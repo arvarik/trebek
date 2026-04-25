@@ -12,7 +12,7 @@ class TrebekStateMachine:
     "True Daily Double" calculations to runtime. Applies score adjustments sequentially.
     """
 
-    def __init__(self, initial_scores: Optional[dict[str, int]] = None):
+    def __init__(self, initial_scores: Optional[Dict[str, int]] = None):
         self.scores: Dict[str, int] = initial_scores or {}
         self.pending_adjustments: List[ScoreAdjustment] = []
         self.current_board_control_contestant: Optional[str] = None
@@ -26,8 +26,7 @@ class TrebekStateMachine:
         Processes a single clue, updating scores based on responses, wagers,
         and chronologically anchored corrections. Tracks board control.
         """
-        # Determine board control
-        # We process responses chronologically
+        # 1. Determine clue value based on round
         if clue.round == "Jeopardy":
             clue_value = clue.board_row * 200
         elif clue.round == "Double Jeopardy":
@@ -35,38 +34,56 @@ class TrebekStateMachine:
         else:
             clue_value = 0
 
-        # Handle True Daily Double Wager Interception
+        # 2. Handle Daily Double — only one attempt allowed per Jeopardy rules
         if clue.is_daily_double and clue.daily_double_wager is not None and clue.wagerer_name:
             wagerer = clue.wagerer_name
             self.scores.setdefault(wagerer, 0)
+
             if clue.daily_double_wager == "True Daily Double":
                 current_score = self.scores[wagerer]
                 max_board_value = 1000 if clue.round == "Jeopardy" else 2000
                 wager_amount = max(current_score, max_board_value)
                 logger.info(
-                    f"Resolved 'True Daily Double' for {wagerer} at index {clue.selection_order}: ${wager_amount}"
+                    "Resolved 'True Daily Double'",
+                    wagerer=wagerer,
+                    selection_order=clue.selection_order,
+                    wager_amount=wager_amount,
                 )
                 clue.daily_double_wager = wager_amount  # Store resolved value
             else:
                 wager_amount = int(clue.daily_double_wager)
+
+            # Daily Doubles: only the wagerer responds (max 1 attempt)
+            if clue.attempts:
+                attempt = clue.attempts[0]
+                if attempt.is_correct:
+                    self.scores[wagerer] += wager_amount
+                    self.current_board_control_contestant = wagerer
+                else:
+                    self.scores[wagerer] -= wager_amount
+                    # Board control stays with wagerer on DD miss per Jeopardy rules
         else:
+            # 3. Standard clue: process all buzz attempts (rebounds allowed)
             wager_amount = clue_value
+            for attempt in clue.attempts:
+                player = attempt.speaker
+                self.scores.setdefault(player, 0)
 
-        for attempt in clue.attempts:
-            player = attempt.speaker
-            self.scores.setdefault(player, 0)
+                if attempt.is_correct:
+                    self.scores[player] += wager_amount
+                    # Shift board control ONLY on correct response
+                    if self.current_board_control_contestant != player:
+                        logger.info(
+                            "Board control shift",
+                            old=self.current_board_control_contestant,
+                            new=player,
+                        )
+                    self.current_board_control_contestant = player
+                    break  # Only one person can be correct per clue
+                else:
+                    self.scores[player] -= wager_amount
 
-            if attempt.is_correct:
-                self.scores[player] += wager_amount
-                # Shift board control ONLY on correct response
-                if self.current_board_control_contestant != player:
-                    logger.info("Board control shift:", old=self.current_board_control_contestant, new=player)
-                self.current_board_control_contestant = player
-                break  # Only one person can be correct per clue
-            else:
-                self.scores[player] -= wager_amount
-
-        # 3. Enforce Chronological Rigidity for Score Adjustments
+        # 4. Enforce Chronological Rigidity for Score Adjustments
         self._apply_score_adjustments_for_index(clue.selection_order)
 
         return clue
@@ -82,8 +99,11 @@ class TrebekStateMachine:
                 self.scores.setdefault(adj.contestant, 0)
                 self.scores[adj.contestant] += adj.points_adjusted
                 logger.warning(
-                    f"Applied anchored adjustment at index {current_index} for "
-                    f"{adj.contestant}: {adj.points_adjusted > 0 and '+' or ''}{adj.points_adjusted} ({adj.reason})"
+                    "Applied anchored adjustment",
+                    index=current_index,
+                    contestant=adj.contestant,
+                    delta=adj.points_adjusted,
+                    reason=adj.reason,
                 )
             else:
                 remaining_adjustments.append(adj)

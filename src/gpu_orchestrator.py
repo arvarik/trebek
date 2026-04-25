@@ -5,11 +5,10 @@ import structlog
 import multiprocessing
 import os
 import signal
-import sys
-import uuid
 import subprocess
+import uuid
 from concurrent.futures import ProcessPoolExecutor
-from typing import Any
+
 
 logger = structlog.get_logger()
 
@@ -19,31 +18,31 @@ def gpu_worker_task(video_filepath: str, output_dir: str) -> str:
     Executes the GPU processing task (Stage 3) and writes results to disk to avoid
     IPC serialization bottleneck of massive JSON structures.
     """
-    
+
     file_id = uuid.uuid4().hex
     audio_path = os.path.join(output_dir, f"audio_{file_id}.wav")
     whisperx_output_json = os.path.join(output_dir, f"audio_{file_id}.json")
-    
+
     # 1. FFmpeg extraction
     subprocess.run(
         ["ffmpeg", "-y", "-i", video_filepath, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", audio_path],
         check=True,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        stderr=subprocess.DEVNULL,
     )
-    
+
     # 2. WhisperX / Pyannote
     subprocess.run(
         ["whisperx", audio_path, "--output_dir", output_dir, "--output_format", "json", "--compute_type", "float16"],
         check=True,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        stderr=subprocess.DEVNULL,
     )
-    
+
     # Read the JSON from WhisperX
     with open(whisperx_output_json, "r", encoding="utf-8") as f:
         transcript_data = json.load(f)
-        
+
     processed_result = {
         "status": "success",
         "video_filepath": video_filepath,
@@ -54,7 +53,7 @@ def gpu_worker_task(video_filepath: str, output_dir: str) -> str:
 
     with gzip.open(output_path, "wt", encoding="utf-8") as f:
         json.dump(processed_result, f)
-        
+
     # Cleanup intermediate files
     try:
         os.remove(audio_path)
@@ -81,26 +80,7 @@ class GPUOrchestrator:
         # max_tasks_per_child=1 ensures worker death and VRAM flush per task (Python 3.11+)
         # Setting max_workers=1 to limit memory usage specifically for Stage 3 constraint.
         self.executor = ProcessPoolExecutor(max_workers=max_workers, mp_context=context, max_tasks_per_child=1)
-        self._setup_safety_handlers()
-
-    def _setup_safety_handlers(self) -> None:
-        """
-        Registers signal handlers to forcefully SIGKILL zombie workers if the
-        main event loop panics or receives an interrupt.
-        """
-
-        def kill_children(signum: int, frame: Any) -> None:
-            logger.critical(f"Orchestrator received signal {signum}. Sending SIGKILL to children...")
-            for pid in self.executor._processes.keys():
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                    logger.info(f"Force killed worker PID: {pid}")
-                except ProcessLookupError:
-                    pass
-            sys.exit(signum)
-
-        signal.signal(signal.SIGINT, kill_children)
-        signal.signal(signal.SIGTERM, kill_children)
+        self._child_pids: list[int] = []
 
     async def execute_gpu_work(self, video_filepath: str) -> str:
         """
@@ -111,4 +91,19 @@ class GPUOrchestrator:
         return filepath
 
     def shutdown(self) -> None:
-        self.executor.shutdown(wait=True)
+        """
+        Forcefully SIGKILL any zombie workers, then shut down the executor cleanly.
+        This is called from the orchestrator's shutdown path, which is triggered
+        by the asyncio signal handlers registered in main.py.
+        """
+        # Forcefully kill child processes to reclaim GPU memory
+        try:
+            for pid in list(self.executor._processes.keys()):  # type: ignore[attr-defined]
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    logger.info("Force killed worker PID during shutdown", pid=pid)
+                except ProcessLookupError:
+                    pass
+        except Exception:
+            pass  # executor may already be cleaned up
+        self.executor.shutdown(wait=True, cancel_futures=True)

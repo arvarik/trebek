@@ -3,45 +3,77 @@ import sqlite3
 import signal
 import structlog
 import os
-import glob
 import gzip
 import json
+import sys
+import uuid
 from pathlib import Path
-from typing import List, Any
+from typing import Any, List, Optional
 
 from core_database import DatabaseWriter
 from gpu_orchestrator import GPUOrchestrator
-from config import settings
+from config import settings, SUPPORTED_VIDEO_EXTENSIONS
 from llm_pipeline import execute_pass_1_speaker_anchoring, execute_pass_2_data_extraction
 from state_machine import TrebekStateMachine
 from schemas import Episode
+from console import (
+    console,
+    create_pipeline_progress,
+    get_stage_display,
+    render_shutdown_summary,
+)
 
-# Configure structlog globally (basic configuration suitable for enterprise JSON lines or rich console)
-structlog.configure(
-    processors=[
+# ──────────────────────────────────────────────────────────────
+# Structlog Configuration — Rich in TTY, JSON when piped
+# ──────────────────────────────────────────────────────────────
+
+
+def _configure_logging() -> None:
+    """Configures structlog with Rich ConsoleRenderer for TTY, JSONRenderer for piped output."""
+    shared_processors = [
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer(),
-    ],
-)
+    ]
 
+    if sys.stderr.isatty():
+        # Interactive terminal — beautiful Rich output
+        renderer = structlog.dev.ConsoleRenderer(
+            colors=True,
+        )
+    else:
+        # Piped / redirected — machine-parseable JSON lines
+        renderer = structlog.processors.JSONRenderer()  # type: ignore[assignment]
+
+    structlog.configure(processors=[*shared_processors, renderer])
+
+
+_configure_logging()
 logger = structlog.get_logger()
 
 
 class TrebekPipelineOrchestrator:
-    def __init__(self, db_path: str, output_dir: str) -> None:
+    def __init__(self, db_path: str, output_dir: str, mode: str = "daemon") -> None:
         self.db_path = db_path
         self.output_dir = output_dir
+        self.mode = mode
         self.db_writer = DatabaseWriter(db_path)
         self.gpu_orchestrator = GPUOrchestrator(output_dir)
         self.running = False
         self.tasks: List[asyncio.Task[Any]] = []
 
-    async def initialize(self) -> None:
+        # Stats for shutdown summary
+        self.stats = {"total": 0, "completed": 0, "failed": 0}
+
+    async def initialize(self, input_dir: str) -> None:
+        # Ensure input/output directories exist
+        os.makedirs(input_dir, exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
+
         # Create schema if it doesn't exist using safe relative path
         schema_path = Path(__file__).parent / "schema.sql"
         with sqlite3.connect(self.db_path) as conn:
+            conn.execute("PRAGMA foreign_keys = ON;")
             with open(schema_path, "r", encoding="utf-8") as f:
                 conn.executescript(f.read())
 
@@ -54,55 +86,98 @@ class TrebekPipelineOrchestrator:
         await asyncio.gather(*self.tasks, return_exceptions=True)
         self.gpu_orchestrator.shutdown()
         await self.db_writer.stop()
+
+        render_shutdown_summary(self.stats)
         logger.info("Pipeline Orchestrator shut down cleanly.")
 
-    async def _ingestion_worker(self) -> None:
-        """Polls input_dir for new videos and adds them to DB."""
+    async def _ingestion_worker(self, input_dir: str) -> None:
+        """Polls input_dir for new video files across all supported formats."""
         while self.running:
-            input_dir = settings.input_dir
             if os.path.exists(input_dir):
-                for video_file in glob.glob(os.path.join(input_dir, "*.mp4")):
-                    episode_id = os.path.splitext(os.path.basename(video_file))[0]
+                for entry in os.scandir(input_dir):
+                    if not entry.is_file():
+                        continue
+                    ext = os.path.splitext(entry.name)[1].lower()
+                    if ext not in SUPPORTED_VIDEO_EXTENSIONS:
+                        continue
+
+                    episode_id = os.path.basename(os.path.splitext(entry.name)[0])
+                    source_filename = entry.name
+
                     await self.db_writer.execute(
-                        "INSERT OR IGNORE INTO pipeline_state (episode_id, status) VALUES (?, ?)",
-                        (episode_id, "PENDING")
+                        "INSERT OR IGNORE INTO pipeline_state (episode_id, status, source_filename) "
+                        "VALUES (?, ?, ?)",
+                        (episode_id, "PENDING", source_filename),
                     )
+                    self.stats["total"] += 1
+
+            if self.mode == "once":
+                # In once mode, stop polling after first scan
+                break
             await asyncio.sleep(5)
 
-    async def _extractor_worker(self) -> None:
-        """Polls for new files (PENDING) and sends to GPU."""
+    async def _extractor_worker(self, progress: Any, task_id: Any) -> None:
+        """Polls for PENDING episodes and sends to GPU for transcription."""
         while self.running:
             episode_id = await self.db_writer.poll_for_work("PENDING", "TRANSCRIBING")
             if episode_id:
-                logger.info("Extractor: Processing episode", episode_id=episode_id)
-                video_filepath = os.path.join(settings.input_dir, f"{episode_id}.mp4")
+                logger.info(
+                    "Extractor: Processing episode",
+                    episode_id=episode_id,
+                    stage=get_stage_display("TRANSCRIBING"),
+                )
+
+                # Look up the actual source filename from the database
+                rows = await self.db_writer.execute(
+                    "SELECT source_filename FROM pipeline_state WHERE episode_id = ?",
+                    (episode_id,),
+                )
+                source_filename = rows[0][0] if rows and rows[0][0] else f"{episode_id}.mp4"
+                video_filepath = os.path.join(settings.input_dir, source_filename)
+
                 if not os.path.exists(video_filepath):
                     logger.error("Video file not found", filepath=video_filepath)
                     await self.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'FAILED' WHERE episode_id = ?", (episode_id,)
+                        "UPDATE pipeline_state SET status = 'FAILED', updated_at = CURRENT_TIMESTAMP "
+                        "WHERE episode_id = ?",
+                        (episode_id,),
                     )
+                    self.stats["failed"] += 1
+                    progress.advance(task_id)
                     continue
 
                 try:
                     transcript_path = await self.gpu_orchestrator.execute_gpu_work(video_filepath)
                     await self.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'TRANSCRIPT_READY', transcript_path = ? WHERE episode_id = ?",
+                        "UPDATE pipeline_state SET status = 'TRANSCRIPT_READY', transcript_path = ?, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
                         (transcript_path, episode_id),
                     )
+                    logger.info("Transcription complete", episode_id=episode_id)
                 except Exception as e:
                     logger.error("GPU Orchestrator failed", error=str(e))
                     await self.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'FAILED' WHERE episode_id = ?", (episode_id,)
+                        "UPDATE pipeline_state SET status = 'FAILED', updated_at = CURRENT_TIMESTAMP "
+                        "WHERE episode_id = ?",
+                        (episode_id,),
                     )
+                    self.stats["failed"] += 1
+                    progress.advance(task_id)
             else:
+                if self.mode == "once" and await self._no_work_remaining("PENDING"):
+                    break
                 await asyncio.sleep(2)
 
-    async def _llm_worker(self) -> None:
-        """Polls for TRANSCRIPT_READY, extracts data, and saves to state."""
+    async def _llm_worker(self, progress: Any, task_id: Any) -> None:
+        """Polls for TRANSCRIPT_READY, extracts data via LLM, and saves structured output."""
         while self.running:
             episode_id = await self.db_writer.poll_for_work("TRANSCRIPT_READY", "CLEANED")
             if episode_id:
-                logger.info("LLM Worker: Processing episode", episode_id=episode_id)
+                logger.info(
+                    "LLM Worker: Processing episode",
+                    episode_id=episode_id,
+                    stage=get_stage_display("CLEANED"),
+                )
                 try:
                     rows = await self.db_writer.execute(
                         "SELECT transcript_path FROM pipeline_state WHERE episode_id = ?", (episode_id,)
@@ -111,94 +186,267 @@ class TrebekPipelineOrchestrator:
                         transcript_path = rows[0][0]
                         with gzip.open(transcript_path, "rt", encoding="utf-8") as f:
                             gpu_data = json.load(f)
-                        
+
                         transcript_data = gpu_data.get("transcript", {})
                         full_transcript = json.dumps(transcript_data)
-                        host_interview_segment = full_transcript[:1000]
 
-                        speaker_mapping = await execute_pass_1_speaker_anchoring(host_interview_segment)
+                        # Use diarization speaker boundaries to locate interview segment
+                        segments = transcript_data.get("segments", [])
+                        interview_text = ""
+                        if segments:
+                            for seg in segments:
+                                if isinstance(seg, dict):
+                                    start_time = seg.get("start", 0)
+                                    if start_time <= 120.0:
+                                        interview_text += seg.get("text", "") + " "
+                                    else:
+                                        break
+                        if not interview_text:
+                            interview_text = full_transcript[:3000]
+
+                        speaker_mapping = await execute_pass_1_speaker_anchoring(interview_text)
                         data = await execute_pass_2_data_extraction(full_transcript, speaker_mapping)
-                        
+
                         episode_data_path = os.path.join(self.output_dir, f"episode_{episode_id}.json")
                         with open(episode_data_path, "w", encoding="utf-8") as f:
                             f.write(data.model_dump_json())
 
                         await self.db_writer.execute(
-                            "UPDATE pipeline_state SET status = 'SAVING' WHERE episode_id = ?", (episode_id,)
+                            "UPDATE pipeline_state SET status = 'SAVING', updated_at = CURRENT_TIMESTAMP "
+                            "WHERE episode_id = ?",
+                            (episode_id,),
                         )
+                        logger.info("LLM extraction complete", episode_id=episode_id)
                     else:
                         raise ValueError("Transcript path not found in database")
                 except Exception as e:
                     logger.error("LLM Pipeline failed", error=str(e))
                     await self.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'FAILED' WHERE episode_id = ?", (episode_id,)
+                        "UPDATE pipeline_state SET status = 'FAILED', updated_at = CURRENT_TIMESTAMP "
+                        "WHERE episode_id = ?",
+                        (episode_id,),
                     )
+                    self.stats["failed"] += 1
+                    progress.advance(task_id)
             else:
+                if self.mode == "once" and await self._no_work_remaining("TRANSCRIPT_READY"):
+                    break
                 await asyncio.sleep(2)
 
-    async def _state_machine_worker(self) -> None:
-        """Polls for SAVING, verifies game state, and inserts to DB."""
+    async def _state_machine_worker(self, progress: Any, task_id: Any) -> None:
+        """Polls for SAVING, verifies game state, and commits relational data to DB."""
         while self.running:
             episode_id = await self.db_writer.poll_for_work("SAVING", "VECTORIZING")
             if episode_id:
-                logger.info("State Machine: Verifying game state for episode", episode_id=episode_id)
+                logger.info(
+                    "State Machine: Verifying game state",
+                    episode_id=episode_id,
+                    stage=get_stage_display("VECTORIZING"),
+                )
                 try:
                     episode_data_path = os.path.join(self.output_dir, f"episode_{episode_id}.json")
-                    if os.path.exists(episode_data_path):
-                        with open(episode_data_path, "r", encoding="utf-8") as f:
-                            episode_json = f.read()
-                        episode_data = Episode.model_validate_json(episode_json)
-
-                        state_machine = TrebekStateMachine()
-                        state_machine.load_adjustments(episode_data.score_adjustments)
-                        for clue in episode_data.clues:
-                            state_machine.process_clue(clue)
-                        
-                        # Assuming state machine passes without error, we mark as COMPLETED
-                        await self.db_writer.execute(
-                            "UPDATE pipeline_state SET status = 'COMPLETED' WHERE episode_id = ?", (episode_id,)
-                        )
-                    else:
+                    if not os.path.exists(episode_data_path):
                         raise ValueError(f"Episode data file not found: {episode_data_path}")
+
+                    # Offload heavy Pydantic validation to a thread to protect the event loop
+                    with open(episode_data_path, "r", encoding="utf-8") as f:
+                        episode_json = f.read()
+                    episode_data = await asyncio.to_thread(Episode.model_validate_json, episode_json)
+
+                    # Run the deterministic state machine verification
+                    state_machine = TrebekStateMachine()
+                    state_machine.load_adjustments(episode_data.score_adjustments)
+                    for clue in episode_data.clues:
+                        state_machine.process_clue(clue)
+
+                    # Commit relational data to the analytical tables
+                    await self._commit_relational_data(episode_id, episode_data, state_machine)
+
+                    await self.db_writer.execute(
+                        "UPDATE pipeline_state SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP "
+                        "WHERE episode_id = ?",
+                        (episode_id,),
+                    )
+                    self.stats["completed"] += 1
+                    progress.advance(task_id)
+                    logger.info(
+                        "Episode completed successfully",
+                        episode_id=episode_id,
+                        stage=get_stage_display("COMPLETED"),
+                    )
+
                 except Exception as e:
                     logger.error("State Machine Verification failed", error=str(e))
                     await self.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'FAILED' WHERE episode_id = ?", (episode_id,)
+                        "UPDATE pipeline_state SET status = 'FAILED', updated_at = CURRENT_TIMESTAMP "
+                        "WHERE episode_id = ?",
+                        (episode_id,),
                     )
+                    self.stats["failed"] += 1
+                    progress.advance(task_id)
             else:
+                if self.mode == "once" and await self._no_work_remaining("SAVING"):
+                    break
                 await asyncio.sleep(2)
 
-    async def start_workers(self) -> None:
+    async def _commit_relational_data(
+        self, episode_id: str, episode_data: Episode, state_machine: TrebekStateMachine
+    ) -> None:
+        """
+        Commits verified episode data into the normalized relational tables.
+        This is the Stage 8 relational commit — writing to episodes, contestants,
+        clues, buzz_attempts, wagers, score_adjustments, and episode_performances.
+        """
+        # 1. Insert episode metadata
+        await self.db_writer.execute(
+            "INSERT OR IGNORE INTO episodes (episode_id, air_date, host_name, is_tournament) VALUES (?, ?, ?, ?)",
+            (episode_id, episode_data.episode_date, episode_data.host_name, episode_data.is_tournament),
+        )
+
+        # 2. Insert contestants
+        for contestant in episode_data.contestants:
+            contestant_id = f"{episode_id}_{contestant.name.replace(' ', '_').lower()}"
+            await self.db_writer.execute(
+                "INSERT OR IGNORE INTO contestants "
+                "(contestant_id, name, occupational_category, is_returning_champion) VALUES (?, ?, ?, ?)",
+                (contestant_id, contestant.name, contestant.occupational_category, contestant.is_returning_champion),
+            )
+
+            # 3. Insert episode_performances with final scores from state machine
+            final_score = state_machine.scores.get(contestant.name, 0)
+            await self.db_writer.execute(
+                "INSERT OR IGNORE INTO episode_performances "
+                "(episode_id, contestant_id, podium_position, final_score) VALUES (?, ?, ?, ?)",
+                (episode_id, contestant_id, contestant.podium_position, final_score),
+            )
+
+        # 4. Insert clues and buzz_attempts
+        for clue in episode_data.clues:
+            clue_id = f"{episode_id}_c{clue.selection_order}"
+            is_triple_stumper = len(clue.attempts) == 0 or all(not a.is_correct for a in clue.attempts)
+
+            dd_wager_str = str(clue.daily_double_wager) if clue.daily_double_wager is not None else None
+
+            await self.db_writer.execute(
+                "INSERT OR IGNORE INTO clues "
+                "(clue_id, episode_id, round, category, board_row, board_col, selection_order, "
+                "clue_text, correct_response, is_daily_double, is_triple_stumper, "
+                "daily_double_wager, wagerer_name, requires_visual_context, "
+                "host_start_timestamp_ms, host_finish_timestamp_ms, clue_syllable_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    clue_id, episode_id, clue.round, clue.category,
+                    clue.board_row, clue.board_col, clue.selection_order,
+                    clue.clue_text, clue.correct_response, clue.is_daily_double,
+                    is_triple_stumper, dd_wager_str, clue.wagerer_name,
+                    clue.requires_visual_context, clue.host_start_timestamp_ms,
+                    clue.host_finish_timestamp_ms, clue.clue_syllable_count,
+                ),
+            )
+
+            # Insert buzz_attempts for this clue
+            for attempt in clue.attempts:
+                attempt_id = f"{clue_id}_a{attempt.attempt_order}_{uuid.uuid4().hex[:8]}"
+                contestant_id = f"{episode_id}_{attempt.speaker.replace(' ', '_').lower()}"
+                await self.db_writer.execute(
+                    "INSERT OR IGNORE INTO buzz_attempts "
+                    "(attempt_id, clue_id, contestant_id, attempt_order, buzz_timestamp_ms, "
+                    "response_given, is_correct, response_start_timestamp_ms, is_lockout_inferred) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        attempt_id, clue_id, contestant_id, attempt.attempt_order,
+                        attempt.buzz_timestamp_ms, attempt.response_given,
+                        attempt.is_correct, attempt.response_start_timestamp_ms,
+                        attempt.is_lockout_inferred,
+                    ),
+                )
+
+        # 5. Insert score_adjustments
+        for adj in episode_data.score_adjustments:
+            adjustment_id = f"{episode_id}_adj_{adj.effective_after_clue_selection_order}_{uuid.uuid4().hex[:8]}"
+            contestant_id = f"{episode_id}_{adj.contestant.replace(' ', '_').lower()}"
+            await self.db_writer.execute(
+                "INSERT OR IGNORE INTO score_adjustments "
+                "(adjustment_id, episode_id, contestant_id, points_adjusted, reason, "
+                "effective_after_clue_selection_order) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    adjustment_id, episode_id, contestant_id,
+                    adj.points_adjusted, adj.reason, adj.effective_after_clue_selection_order,
+                ),
+            )
+
+        logger.info(
+            "Relational commit complete",
+            episode_id=episode_id,
+            clues=len(episode_data.clues),
+            contestants=len(episode_data.contestants),
+        )
+
+    async def _no_work_remaining(self, status: str) -> bool:
+        """Check if there are no more items in the given status (for --once mode)."""
+        result = await self.db_writer.execute(
+            "SELECT COUNT(*) FROM pipeline_state WHERE status = ?", (status,)
+        )
+        return result[0][0] == 0 if result else True
+
+    async def start_workers(self, input_dir: str, progress: Any, task_id: Any) -> None:
         self.running = True
-        self.tasks.append(asyncio.create_task(self._ingestion_worker()))
-        self.tasks.append(asyncio.create_task(self._extractor_worker()))
-        self.tasks.append(asyncio.create_task(self._llm_worker()))
-        self.tasks.append(asyncio.create_task(self._state_machine_worker()))
+        self.tasks.append(asyncio.create_task(self._ingestion_worker(input_dir)))
+        self.tasks.append(asyncio.create_task(self._extractor_worker(progress, task_id)))
+        self.tasks.append(asyncio.create_task(self._llm_worker(progress, task_id)))
+        self.tasks.append(asyncio.create_task(self._state_machine_worker(progress, task_id)))
 
 
-async def main() -> None:
-    orchestrator = TrebekPipelineOrchestrator(db_path=settings.db_path, output_dir=settings.output_dir)
+async def run_pipeline(mode: str = "daemon", input_dir_override: Optional[str] = None) -> None:
+    """Main pipeline entry point, called by cli.py."""
+    from console import render_startup_banner, render_system_diagnostics
 
-    await orchestrator.initialize()
-    await orchestrator.start_workers()
+    input_dir = input_dir_override or settings.input_dir
 
-    loop = asyncio.get_running_loop()
-    stop_event = asyncio.Event()
+    # ── Branded startup ──
+    render_startup_banner(mode=mode)
+    render_system_diagnostics(settings)
 
-    def signal_handler() -> None:
-        logger.info("Received shutdown signal.")
-        stop_event.set()
+    orchestrator = TrebekPipelineOrchestrator(
+        db_path=settings.db_path,
+        output_dir=settings.output_dir,
+        mode=mode,
+    )
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, signal_handler)
+    await orchestrator.initialize(input_dir)
 
-    logger.info("Trebek is running...")
+    progress = create_pipeline_progress()
 
-    try:
-        await stop_event.wait()
-    finally:
-        await orchestrator.shutdown()
+    with progress:
+        task_id = progress.add_task("Processing episodes", total=None)
+
+        await orchestrator.start_workers(input_dir, progress, task_id)
+
+        if mode == "daemon":
+            # Daemon mode — wait for signal
+            loop = asyncio.get_running_loop()
+            stop_event = asyncio.Event()
+
+            def signal_handler() -> None:
+                logger.info("Received shutdown signal.")
+                stop_event.set()
+
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, signal_handler)
+
+            console.rule("[dim]Watching for new episodes • Press Ctrl+C to stop[/dim]", style="dim cyan")
+            console.print()
+            await stop_event.wait()
+        else:
+            # Once mode — wait for all workers to finish naturally
+            console.rule("[dim]Processing queued episodes[/dim]", style="dim cyan")
+            console.print()
+            await asyncio.gather(*orchestrator.tasks, return_exceptions=True)
+
+    await orchestrator.shutdown()
 
 
+# Backward compatibility — allow `python src/main.py` to still work
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_pipeline(mode="daemon"))
+
