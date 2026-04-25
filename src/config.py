@@ -1,64 +1,41 @@
-"""Application configuration.
-
-This module defines configurable paths used by the application. For development,
-the defaults are set relative to the project root. When deploying to another
-machine (e.g., a Mac mini), CHANGE THESE to absolute paths that match the
-target environment.
-"""
-
-from __future__ import annotations
-
-import os
-from dataclasses import dataclass
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
 
 
-def _project_root() -> str:
-    """Return the absolute filesystem path to the project root directory.
+class Settings(BaseSettings):
+    db_path: str = Field(default="trebek.db", description="Path to the SQLite database")
+    output_dir: str = Field(default="gpu_outputs", description="Directory to store intermediate pipeline outputs")
+    input_dir: str = Field(default="input_videos", description="Directory to poll for new video files")
+    gemini_api_key: str = Field(default="", description="GCP / Gemini API Key")
+    log_level: str = Field(default="INFO", description="Logging level")
+    
+    # GPU constraints
+    gpu_vram_target_gb: int = Field(default=16, description="Target VRAM ceiling for safety limits (e.g. 16 for 4060/5060 Ti)")
+    whisper_batch_size: int = Field(default=16, description="WhisperX batch size tuned for 16GB VRAM")
+    whisper_compute_type: str = Field(default="float16", description="Compute type for WhisperX to prevent OOM")
 
-    Computed relative to this file, so it works out-of-the-box during development.
-    """
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    @field_validator("gpu_vram_target_gb")
+    @classmethod
+    def validate_gpu_vram(cls, v: int) -> int:
+        if v < 4 or v > 24:
+            raise ValueError("gpu_vram_target_gb must be >= 4 and <= 24")
+        return v
 
+    @field_validator("whisper_compute_type")
+    @classmethod
+    def validate_whisper_compute_type(cls, v: str) -> str:
+        if v not in ("float16", "float32"):
+            raise ValueError("whisper_compute_type must be 'float16' or 'float32'")
+        return v
 
-PROJECT_ROOT: str = _project_root()
+    @field_validator("whisper_batch_size")
+    @classmethod
+    def validate_whisper_batch_size(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("whisper_batch_size must be > 0")
+        return v
 
-# Default development paths (relative to project root). For deployment, set these
-# to ABSOLUTE paths on the target machine. See README for examples.
-RECORDINGS_DIR: str = "/Volumes/Arvind SSD/Media/TV Shows/Jeopardy (1984)"
-TRANSCRIPTS_DIR: str = os.path.join(PROJECT_ROOT, "transcripts")
-LOGS_DIR: str = os.path.join(PROJECT_ROOT, "logs")
-"""Central whisper.cpp model location and name.
-
-Update these two constants to change the model globally.
-"""
-WHISPER_CPP_MODEL_DIR: str = "/Users/arvarik/Documents/github/whisper.cpp/models"
-WHISPER_CPP_MODEL_NAME: str = "ggml-large-v3.bin"
-
-
-
-def ensure_directories_exist() -> None:
-    """Create required directories if they don't already exist."""
-    for directory_path in (RECORDINGS_DIR, TRANSCRIPTS_DIR, LOGS_DIR):
-        os.makedirs(directory_path, exist_ok=True)
-
-
-@dataclass(frozen=True)
-class WhisperCppConfig:
-    """Configuration for the whisper.cpp backend.
-
-    IMPORTANT: Set absolute paths on the target machine for reliability.
-    See README for build and model download instructions.
-    """
-
-    # Path to whisper.cpp binary (e.g., "/Users/you/Projects/whisper.cpp/main" or build output)
-    binary_path: str = "/Users/arvarik/Documents/github/whisper.cpp/build/bin/whisper-cli"
-    # Path to the GGML/GGUF model file (built from central constants above)
-    model_path: str = os.path.join(WHISPER_CPP_MODEL_DIR, WHISPER_CPP_MODEL_NAME)
-
-    # Optional runtime settings
-    language: str = "en"  # ISO 639-1 code; set "auto" to autodetect
-    threads: int = max(1, os.cpu_count() or 4)
-    enable_word_timestamps: bool = True
-    print_progress: bool = True  # request progress output from whisper.cpp
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
+settings = Settings()

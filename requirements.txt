@@ -1,9 +1,0 @@
-# System & Monitoring
-watchdog
-
-# Audio Processing
-ffmpeg-python
-
-# ML/Transcription backend now uses whisper.cpp binary (no Python dep)
-
-

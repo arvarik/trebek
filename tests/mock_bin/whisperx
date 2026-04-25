@@ -1,0 +1,25 @@
+#!/bin/bash
+AUDIO_PATH=$1
+# The arguments for whisperx are: whisperx <audio_path> --output_dir <dir> ...
+# Let's find --output_dir value
+DIR=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --output_dir)
+      DIR="$2"
+      shift
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$DIR" ]; then
+  DIR=$(dirname "$AUDIO_PATH")
+fi
+
+BASENAME=$(basename "$AUDIO_PATH" .wav)
+echo '{"text": "simulated_whisper_output"}' > "$DIR/$BASENAME.json"
+exit 0

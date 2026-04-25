@@ -1,9 +1,31 @@
-# Python
+# Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-.Python
+*$py.class
+
+# Testing, Linting & Type Checking caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Project Specific Output / Data
+jeopardy_ml.db
+jeopardy_ml.db-shm
+jeopardy_ml.db-wal
+gpu_outputs/
+
+# Distribution / packaging
 build/
 develop-eggs/
 dist/
@@ -16,40 +38,13 @@ parts/
 sdist/
 var/
 wheels/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
-# Virtual environments
-venv/
-.venv/
-env/
-.env/
-ENV/
-pip-wheel-metadata/
-
-# IDE/editor
+# IDE / Editor
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Unit test / coverage
-.pytest_cache/
-.tox/
-.nox/
-coverage.xml
-.coverage*
-htmlcov/
-
-# Logs and local data
-logs/
-recordings/
-transcripts/
-
-# MacOS
 .DS_Store
-
-

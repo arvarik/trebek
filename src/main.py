@@ -1,115 +1,204 @@
-from __future__ import annotations
-
-import logging
-import logging.handlers
+import asyncio
+import sqlite3
+import signal
+import structlog
 import os
-import queue
-import threading
-import time
-from typing import Optional
+import glob
+import gzip
+import json
+from pathlib import Path
+from typing import List, Any
 
-import config
-from audio_processor import extract_audio
-from directory_watcher import DirectoryWatcher, DirectoryWatcherConfig
-from file_manager import save_transcription
-from transcriber import Transcriber
+from core_database import DatabaseWriter
+from gpu_orchestrator import GPUOrchestrator
+from config import settings
+from llm_pipeline import execute_pass_1_speaker_anchoring, execute_pass_2_data_extraction
+from state_machine import TrebekStateMachine
+from schemas import Episode
 
+# Configure structlog globally (basic configuration suitable for enterprise JSON lines or rich console)
+structlog.configure(
+    processors=[
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer(),
+    ],
+)
 
-def _setup_logging() -> None:
-    os.makedirs(config.LOGS_DIR, exist_ok=True)
-    log_path = os.path.join(config.LOGS_DIR, "transcriber.log")
-
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-
-    formatter = logging.Formatter(
-        fmt="%(asctime)s | %(levelname)s | %(threadName)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    # Console handler
-    ch = logging.StreamHandler()
-    ch.setFormatter(formatter)
-    ch.setLevel(logging.INFO)
-
-    # Rotating file handler
-    fh = logging.handlers.RotatingFileHandler(
-        log_path, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
-    )
-    fh.setFormatter(formatter)
-    fh.setLevel(logging.INFO)
-
-    root.handlers.clear()
-    root.addHandler(ch)
-    root.addHandler(fh)
+logger = structlog.get_logger()
 
 
-def main() -> None:
-    # Ensure directories exist
-    config.ensure_directories_exist()
+class TrebekPipelineOrchestrator:
+    def __init__(self, db_path: str, output_dir: str) -> None:
+        self.db_path = db_path
+        self.output_dir = output_dir
+        self.db_writer = DatabaseWriter(db_path)
+        self.gpu_orchestrator = GPUOrchestrator(output_dir)
+        self.running = False
+        self.tasks: List[asyncio.Task[Any]] = []
 
-    # Initialize logging
-    _setup_logging()
-    logging.info("Starting Jeopardy! Transcription Service")
+    async def initialize(self) -> None:
+        # Create schema if it doesn't exist using safe relative path
+        schema_path = Path(__file__).parent / "schema.sql"
+        with sqlite3.connect(self.db_path) as conn:
+            with open(schema_path, "r", encoding="utf-8") as f:
+                conn.executescript(f.read())
 
-    # Shared queue for file paths to process
-    file_queue: "queue.Queue[str]" = queue.Queue()
+        await self.db_writer.start()
 
-    # Initialize components
-    from config import WhisperCppConfig
-    transcriber = Transcriber(WhisperCppConfig())
-    watcher = DirectoryWatcher(file_queue, DirectoryWatcherConfig(config.RECORDINGS_DIR, recursive=True))
+    async def shutdown(self) -> None:
+        self.running = False
+        for task in self.tasks:
+            task.cancel()
+        await asyncio.gather(*self.tasks, return_exceptions=True)
+        self.gpu_orchestrator.shutdown()
+        await self.db_writer.stop()
+        logger.info("Pipeline Orchestrator shut down cleanly.")
 
-    # Start the watcher in a background thread. The observer manages its own threads,
-    # but we call start/stop from the main thread for lifecycle control.
-    watcher_thread = threading.Thread(target=watcher.start, name="WatcherThread", daemon=True)
-    watcher_thread.start()
-    logging.info("Watching for new recordings in: %s", config.RECORDINGS_DIR)
+    async def _ingestion_worker(self) -> None:
+        """Polls input_dir for new videos and adds them to DB."""
+        while self.running:
+            input_dir = settings.input_dir
+            if os.path.exists(input_dir):
+                for video_file in glob.glob(os.path.join(input_dir, "*.mp4")):
+                    episode_id = os.path.splitext(os.path.basename(video_file))[0]
+                    await self.db_writer.execute(
+                        "INSERT OR IGNORE INTO pipeline_state (episode_id, status) VALUES (?, ?)",
+                        (episode_id, "PENDING")
+                    )
+            await asyncio.sleep(5)
+
+    async def _extractor_worker(self) -> None:
+        """Polls for new files (PENDING) and sends to GPU."""
+        while self.running:
+            episode_id = await self.db_writer.poll_for_work("PENDING", "TRANSCRIBING")
+            if episode_id:
+                logger.info("Extractor: Processing episode", episode_id=episode_id)
+                video_filepath = os.path.join(settings.input_dir, f"{episode_id}.mp4")
+                if not os.path.exists(video_filepath):
+                    logger.error("Video file not found", filepath=video_filepath)
+                    await self.db_writer.execute(
+                        "UPDATE pipeline_state SET status = 'FAILED' WHERE episode_id = ?", (episode_id,)
+                    )
+                    continue
+
+                try:
+                    transcript_path = await self.gpu_orchestrator.execute_gpu_work(video_filepath)
+                    await self.db_writer.execute(
+                        "UPDATE pipeline_state SET status = 'TRANSCRIPT_READY', transcript_path = ? WHERE episode_id = ?",
+                        (transcript_path, episode_id),
+                    )
+                except Exception as e:
+                    logger.error("GPU Orchestrator failed", error=str(e))
+                    await self.db_writer.execute(
+                        "UPDATE pipeline_state SET status = 'FAILED' WHERE episode_id = ?", (episode_id,)
+                    )
+            else:
+                await asyncio.sleep(2)
+
+    async def _llm_worker(self) -> None:
+        """Polls for TRANSCRIPT_READY, extracts data, and saves to state."""
+        while self.running:
+            episode_id = await self.db_writer.poll_for_work("TRANSCRIPT_READY", "CLEANED")
+            if episode_id:
+                logger.info("LLM Worker: Processing episode", episode_id=episode_id)
+                try:
+                    rows = await self.db_writer.execute(
+                        "SELECT transcript_path FROM pipeline_state WHERE episode_id = ?", (episode_id,)
+                    )
+                    if rows and rows[0][0]:
+                        transcript_path = rows[0][0]
+                        with gzip.open(transcript_path, "rt", encoding="utf-8") as f:
+                            gpu_data = json.load(f)
+                        
+                        transcript_data = gpu_data.get("transcript", {})
+                        full_transcript = json.dumps(transcript_data)
+                        host_interview_segment = full_transcript[:1000]
+
+                        speaker_mapping = await execute_pass_1_speaker_anchoring(host_interview_segment)
+                        data = await execute_pass_2_data_extraction(full_transcript, speaker_mapping)
+                        
+                        episode_data_path = os.path.join(self.output_dir, f"episode_{episode_id}.json")
+                        with open(episode_data_path, "w", encoding="utf-8") as f:
+                            f.write(data.model_dump_json())
+
+                        await self.db_writer.execute(
+                            "UPDATE pipeline_state SET status = 'SAVING' WHERE episode_id = ?", (episode_id,)
+                        )
+                    else:
+                        raise ValueError("Transcript path not found in database")
+                except Exception as e:
+                    logger.error("LLM Pipeline failed", error=str(e))
+                    await self.db_writer.execute(
+                        "UPDATE pipeline_state SET status = 'FAILED' WHERE episode_id = ?", (episode_id,)
+                    )
+            else:
+                await asyncio.sleep(2)
+
+    async def _state_machine_worker(self) -> None:
+        """Polls for SAVING, verifies game state, and inserts to DB."""
+        while self.running:
+            episode_id = await self.db_writer.poll_for_work("SAVING", "VECTORIZING")
+            if episode_id:
+                logger.info("State Machine: Verifying game state for episode", episode_id=episode_id)
+                try:
+                    episode_data_path = os.path.join(self.output_dir, f"episode_{episode_id}.json")
+                    if os.path.exists(episode_data_path):
+                        with open(episode_data_path, "r", encoding="utf-8") as f:
+                            episode_json = f.read()
+                        episode_data = Episode.model_validate_json(episode_json)
+
+                        state_machine = TrebekStateMachine()
+                        state_machine.load_adjustments(episode_data.score_adjustments)
+                        for clue in episode_data.clues:
+                            state_machine.process_clue(clue)
+                        
+                        # Assuming state machine passes without error, we mark as COMPLETED
+                        await self.db_writer.execute(
+                            "UPDATE pipeline_state SET status = 'COMPLETED' WHERE episode_id = ?", (episode_id,)
+                        )
+                    else:
+                        raise ValueError(f"Episode data file not found: {episode_data_path}")
+                except Exception as e:
+                    logger.error("State Machine Verification failed", error=str(e))
+                    await self.db_writer.execute(
+                        "UPDATE pipeline_state SET status = 'FAILED' WHERE episode_id = ?", (episode_id,)
+                    )
+            else:
+                await asyncio.sleep(2)
+
+    async def start_workers(self) -> None:
+        self.running = True
+        self.tasks.append(asyncio.create_task(self._ingestion_worker()))
+        self.tasks.append(asyncio.create_task(self._extractor_worker()))
+        self.tasks.append(asyncio.create_task(self._llm_worker()))
+        self.tasks.append(asyncio.create_task(self._state_machine_worker()))
+
+
+async def main() -> None:
+    orchestrator = TrebekPipelineOrchestrator(db_path=settings.db_path, output_dir=settings.output_dir)
+
+    await orchestrator.initialize()
+    await orchestrator.start_workers()
+
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+
+    def signal_handler() -> None:
+        logger.info("Received shutdown signal.")
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, signal_handler)
+
+    logger.info("Trebek is running...")
 
     try:
-        while True:
-            try:
-                # Wait for next file path (blocking with timeout to allow graceful loop)
-                video_path = file_queue.get(timeout=1.0)
-            except queue.Empty:
-                continue
-
-            try:
-                logging.info("Processing started: %s", video_path)
-
-                wav_path, duration_seconds = extract_audio(video_path)
-                logging.info("Audio extracted: %s (%.1fs)", wav_path, duration_seconds)
-
-                result = transcriber.transcribe(wav_path)
-                logging.info("Transcription complete (%s)", result.get("language", "unknown"))
-
-                output_path = save_transcription(video_path, result)
-                logging.info("Saved transcription: %s", output_path)
-
-            except Exception as e:
-                logging.exception("Failed to process %s: %s", video_path, e)
-            finally:
-                # Clean up temporary audio file if present
-                try:
-                    if 'wav_path' in locals() and os.path.exists(wav_path):
-                        os.remove(wav_path)
-                        logging.info("Cleaned up temporary audio: %s", wav_path)
-                except Exception:
-                    logging.warning("Failed to remove temporary audio: %s", locals().get('wav_path'))
-
-            # Mark the queue task as done
-            file_queue.task_done()
-
-    except KeyboardInterrupt:
-        logging.info("Shutting down (KeyboardInterrupt)")
+        await stop_event.wait()
     finally:
-        try:
-            watcher.stop()
-        except Exception:
-            logging.warning("Watcher stop encountered an issue during shutdown.")
+        await orchestrator.shutdown()
 
 
 if __name__ == "__main__":
-    main()
-
-
+    asyncio.run(main())
