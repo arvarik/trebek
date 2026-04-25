@@ -1,3 +1,4 @@
+import ast
 import json
 import structlog
 import asyncio
@@ -106,7 +107,8 @@ async def execute_pass_1_speaker_anchoring(host_interview_segment: str) -> "tupl
     system_prompt = (
         "You are a strict data extractor. Analyze the Jeopardy host interview segment. "
         "Return a pure JSON dictionary mapping Diarization Speaker IDs to Contestant/Host Names. "
-        "Format: {'SPEAKER_00': 'Ken Jennings', 'SPEAKER_01': 'Matt Amodio'}."
+        'Format: {"SPEAKER_00": "Ken Jennings", "SPEAKER_01": "Matt Amodio"}. '
+        "Use double quotes only. Return ONLY the JSON object, no markdown."
     )
 
     try:
@@ -116,7 +118,16 @@ async def execute_pass_1_speaker_anchoring(host_interview_segment: str) -> "tupl
             prompt=f"Segment:\n{host_interview_segment}",
             system_instruction=system_prompt,
         )
-        mapping: Dict[str, str] = json.loads(response_text)
+        # Clean markdown fences if present
+        clean = response_text.replace("```json", "").replace("```", "").strip()
+        if not clean:
+            logger.warning("Pass 1 returned empty response, using empty mapping")
+            return {}, usage
+        # Try json.loads first, fall back to ast.literal_eval for single-quoted dicts
+        try:
+            mapping: Dict[str, str] = json.loads(clean)
+        except json.JSONDecodeError:
+            mapping = dict(ast.literal_eval(clean))
         logger.info("Pass 1 Speaker Anchor resolved", mapping=mapping)
         return mapping, usage
     except Exception as e:
@@ -153,10 +164,10 @@ async def execute_pass_2_data_extraction(
                 model="gemini-3.1-pro-preview", prompt=current_prompt, system_instruction=system_prompt
             )
 
-            total_usage["input_tokens"] += usage.get("input_tokens", 0.0)
-            total_usage["output_tokens"] += usage.get("output_tokens", 0.0)
-            total_usage["cached_tokens"] += usage.get("cached_tokens", 0.0)
-            total_usage["latency_ms"] += usage.get("latency_ms", 0.0)
+            total_usage["input_tokens"] += usage.get("input_tokens") or 0.0
+            total_usage["output_tokens"] += usage.get("output_tokens") or 0.0
+            total_usage["cached_tokens"] += usage.get("cached_tokens") or 0.0
+            total_usage["latency_ms"] += usage.get("latency_ms") or 0.0
 
             clean_json = response_text.replace("```json", "").replace("```", "").strip()
 

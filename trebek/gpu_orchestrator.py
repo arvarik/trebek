@@ -15,7 +15,9 @@ from concurrent.futures import ProcessPoolExecutor
 logger = structlog.get_logger()
 
 
-def gpu_worker_task(video_filepath: str, output_dir: str) -> tuple[str, float, float]:
+def gpu_worker_task(
+    video_filepath: str, output_dir: str, batch_size: int = 8, compute_type: str = "float16"
+) -> tuple[str, float, float]:
     """
     Executes the GPU processing task (Stage 3) and writes results to disk to avoid
     IPC serialization bottleneck of massive JSON structures.
@@ -70,13 +72,34 @@ def gpu_worker_task(video_filepath: str, output_dir: str) -> tuple[str, float, f
         detail = "\n".join(err_msg[-3:]) if err_msg else f"exit code {result.returncode}"
         raise RuntimeError(f"ffmpeg failed for {video_filepath}: {detail}")
 
-    # 2. WhisperX / Pyannote
-    subprocess.run(
-        ["whisperx", audio_path, "--output_dir", output_dir, "--output_format", "json", "--compute_type", "float16"],
-        check=True,
+    # 2. WhisperX / Pyannote — large-v3 on CUDA for high-quality transcription
+    whisperx_result = subprocess.run(
+        [
+            "whisperx",
+            audio_path,
+            "--model",
+            "large-v3",
+            "--device",
+            "cuda",
+            "--batch_size",
+            str(batch_size),
+            "--compute_type",
+            compute_type,
+            "--language",
+            "en",
+            "--output_dir",
+            output_dir,
+            "--output_format",
+            "json",
+        ],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
     )
+    if whisperx_result.returncode != 0:
+        err_msg = (whisperx_result.stderr or "").strip().splitlines()
+        detail = "\n".join(err_msg[-5:]) if err_msg else f"exit code {whisperx_result.returncode}"
+        raise RuntimeError(f"whisperx failed: {detail}")
 
     # Read the JSON from WhisperX
     with open(whisperx_output_json, "r", encoding="utf-8") as f:
@@ -116,8 +139,10 @@ class GPUOrchestrator:
     strict cleanup on crashes via SIGKILL.
     """
 
-    def __init__(self, output_dir: str, max_workers: int = 1):
+    def __init__(self, output_dir: str, batch_size: int = 8, compute_type: str = "float16", max_workers: int = 1):
         self.output_dir = output_dir
+        self.batch_size = batch_size
+        self.compute_type = compute_type
         os.makedirs(output_dir, exist_ok=True)
 
         # 'spawn' is required for CUDA to prevent driver initialization collisions
@@ -132,9 +157,10 @@ class GPUOrchestrator:
         Dispatches video filepath to the worker pool and awaits the resulting filepath.
         """
         loop = asyncio.get_running_loop()
-        filepath, peak_vram, avg_util = await loop.run_in_executor(
-            self.executor, gpu_worker_task, video_filepath, self.output_dir
-        )
+        import functools
+
+        fn = functools.partial(gpu_worker_task, video_filepath, self.output_dir, self.batch_size, self.compute_type)
+        filepath, peak_vram, avg_util = await loop.run_in_executor(self.executor, fn)
         return filepath, peak_vram, avg_util
 
     def shutdown(self) -> None:

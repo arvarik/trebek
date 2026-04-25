@@ -58,7 +58,11 @@ class TrebekPipelineOrchestrator:
         self.output_dir = output_dir
         self.mode = mode
         self.db_writer = DatabaseWriter(db_path)
-        self.gpu_orchestrator = GPUOrchestrator(output_dir)
+        self.gpu_orchestrator = GPUOrchestrator(
+            output_dir,
+            batch_size=settings.whisper_batch_size,
+            compute_type=settings.whisper_compute_type,
+        )
         self.running = False
         self.tasks: List[asyncio.Task[Any]] = []
 
@@ -142,6 +146,11 @@ class TrebekPipelineOrchestrator:
                 # In once mode, stop polling after first scan
                 break
             await asyncio.sleep(5)
+
+    async def _get_total_episodes(self) -> int:
+        """Returns the total number of episodes in the pipeline."""
+        result = await self.db_writer.execute("SELECT COUNT(*) FROM pipeline_state")
+        return result[0][0] if result else 0
 
     async def _extractor_worker(self, progress: Any, task_id: Any) -> None:
         """Polls for PENDING episodes and sends to GPU for transcription."""
@@ -367,6 +376,11 @@ class TrebekPipelineOrchestrator:
 
     async def start_workers(self, input_dir: str, progress: Any, task_id: Any) -> None:
         self.running = True
+        # Run ingestion first so we know the total count
+        await self._ingestion_worker(input_dir)
+        total = await self._get_total_episodes()
+        progress.update(task_id, total=total)
+
         self.tasks.append(asyncio.create_task(self._ingestion_worker(input_dir)))
         self.tasks.append(asyncio.create_task(self._extractor_worker(progress, task_id)))
         self.tasks.append(asyncio.create_task(self._llm_worker(progress, task_id)))
