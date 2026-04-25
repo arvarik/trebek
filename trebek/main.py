@@ -242,7 +242,19 @@ class TrebekPipelineOrchestrator:
                             gpu_data = json.load(f)
 
                         transcript_data = gpu_data.get("transcript", {})
-                        full_transcript = json.dumps(transcript_data, indent=2)
+                        
+                        # Convert raw JSON to a compact, token-efficient text format
+                        # This prevents JSON syntax breakage during semantic chunking and massively reduces token usage
+                        formatted_lines = []
+                        for seg in transcript_data.get("segments", []):
+                            start = seg.get("start", 0.0)
+                            end = seg.get("end", 0.0)
+                            text = seg.get("text", "").strip()
+                            speaker = seg.get("speaker", "UNKNOWN")
+                            # Keep it very precise and parseable
+                            formatted_lines.append(f"[{start:.2f}s - {end:.2f}s] {speaker}: {text}")
+                        
+                        full_transcript = "\n".join(formatted_lines)
 
                         # Use diarization speaker boundaries to locate interview segment
                         segments = transcript_data.get("segments", [])

@@ -486,7 +486,7 @@ async def execute_pass_2_data_extraction(
         f"CRITICAL CONSTRAINT: Map speakers using this exact dictionary: {json.dumps(speaker_mapping)}. "
         "Do NOT hallucinate names outside this mapping. "
         "Do NOT perform any running score math — extract only observable facts. "
-        "Every timestamp must be copied verbatim from the transcript's WhisperX alignment data."
+        "Timestamps in the transcript are in seconds (e.g., [1.50s - ...]). You MUST multiply them by 1000 to convert to milliseconds (e.g., 1500.0) for the JSON output."
     )
 
     total_usage: dict[str, float] = {"input_tokens": 0.0, "output_tokens": 0.0, "cached_tokens": 0.0, "latency_ms": 0.0}
