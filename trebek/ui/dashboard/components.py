@@ -8,7 +8,7 @@ from trebek.ui.progress import PIPELINE_STAGES
 
 def generate_health_panel(conn: sqlite3.Connection) -> Panel:
     health_table = Table(box=None, show_header=False, padding=(0, 2))
-    health_table.add_column("Metric", style="dim white", width=18)
+    health_table.add_column("Metric", style="dim white", width=24)
     health_table.add_column("Value", style="bold", justify="right", width=10)
 
     status_counts: Dict[str, int] = {}
@@ -20,15 +20,26 @@ def generate_health_panel(conn: sqlite3.Connection) -> Panel:
 
     total = sum(status_counts.values())
     completed = status_counts.get("COMPLETED", 0)
-    failed = status_counts.get("FAILED", 0)
-    in_progress = total - completed - failed
 
     health_table.add_row("Total Episodes", f"[bold]{total}[/bold]")
-    health_table.add_row("Completed", f"[green]{completed}[/green]")
-    if failed > 0:
-        health_table.add_row("Failed", f"[red]{failed}[/red]")
-    if in_progress > 0:
-        health_table.add_row("In Progress", f"[yellow]{in_progress}[/yellow]")
+
+    # Show per-status breakdown
+    status_display_order = [
+        ("PENDING", "⏳ Pending", "dim white"),
+        ("TRANSCRIBING", "🎤 Transcribing", "yellow"),
+        ("TRANSCRIPT_READY", "📝 Transcript Ready", "cyan"),
+        ("CLEANED", "🧹 Extracting", "blue"),
+        ("SAVING", "💾 Saving", "magenta"),
+        ("MULTIMODAL_PROCESSING", "🔬 Multimodal", "bright_magenta"),
+        ("MULTIMODAL_DONE", "🔬 Multimodal Done", "cyan"),
+        ("VECTORIZING", "🧠 Committing", "green"),
+        ("COMPLETED", "✅ Completed", "green"),
+        ("FAILED", "❌ Failed", "red"),
+    ]
+    for status_key, label, color in status_display_order:
+        count = status_counts.get(status_key, 0)
+        if count > 0:
+            health_table.add_row(f"  {label}", f"[{color}]{count}[/{color}]")
 
     success_rate = (completed / total * 100) if total > 0 else 0
     health_table.add_row("Success Rate", f"[cyan]{success_rate:.0f}%[/cyan]")
@@ -145,18 +156,29 @@ def generate_recent_panel(conn: sqlite3.Connection) -> Panel:
     recent_table.add_column("#", style="dim", width=4, justify="right")
     recent_table.add_column("Episode", style="white", min_width=20)
     recent_table.add_column("Status", justify="center", width=14)
+    recent_table.add_column("Retries", style="dim", width=8, justify="center")
+    recent_table.add_column("Last Error", style="dim red", min_width=20, max_width=40)
     recent_table.add_column("Updated", style="dim", width=20)
 
     try:
         recent_rows = conn.execute(
-            "SELECT episode_id, status, updated_at FROM pipeline_state ORDER BY updated_at DESC LIMIT 10"
+            "SELECT episode_id, status, updated_at, retry_count, last_error "
+            "FROM pipeline_state ORDER BY updated_at DESC LIMIT 10"
         ).fetchall()
         for i, rrow in enumerate(recent_rows, 1):
             stage_label, stage_style = PIPELINE_STAGES.get(rrow[1], (rrow[1], "white"))
+            retry_count = rrow[3] or 0
+            last_error = rrow[4] or ""
+            # Truncate long error messages
+            if len(last_error) > 40:
+                last_error = last_error[:37] + "..."
+            retry_text = f"{retry_count}/3" if retry_count > 0 else "—"
             recent_table.add_row(
                 str(i),
                 rrow[0],
                 f"[{stage_style}]{stage_label}[/{stage_style}]",
+                retry_text,
+                last_error or "—",
                 str(rrow[2] or "—"),
             )
     except sqlite3.OperationalError:

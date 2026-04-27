@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
     status TEXT NOT NULL,
     source_filename TEXT,
     transcript_path TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

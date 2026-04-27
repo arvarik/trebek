@@ -33,8 +33,8 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                         raise ValueError(f"Episode data file not found: {episode_data_path}")
 
                     # Offload heavy Pydantic validation to a thread to protect the event loop
-                    with open(episode_data_path, "r", encoding="utf-8") as f:
-                        episode_json = f.read()
+                    from pathlib import Path
+                    episode_json = await asyncio.to_thread(Path(episode_data_path).read_text, encoding="utf-8")
                     episode_data = await asyncio.to_thread(Episode.model_validate_json, episode_json)
 
                     # Run the deterministic state machine verification
@@ -69,12 +69,12 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
 
                 except Exception as e:
                     logger.error("State Machine Verification failed", error=str(e))
-                    await orchestrator.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'FAILED', updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
-                        (episode_id,),
+                    permanently_failed = await orchestrator.db_writer.fail_episode_with_retry(
+                        episode_id, "MULTIMODAL_DONE", str(e)
                     )
                     current_episode_id = None
-                    orchestrator.stats["failed"] += 1
+                    if permanently_failed:
+                        orchestrator.stats["failed"] += 1
                     progress.advance(task_id)
             else:
                 current_episode_id = None

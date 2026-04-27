@@ -1,3 +1,15 @@
+"""
+Pass 2: Map-Reduce structured data extraction from Jeopardy transcripts.
+
+Orchestrates the full extraction pipeline:
+1. Episode metadata extraction (contestants, FJ, score adjustments)
+2. Semantic chunking by round boundaries
+3. Semaphore-bounded concurrent clue extraction per chunk (Line-Indexed)
+4. Timestamp reconstruction from parsed WhisperX JSON
+5. Composite-key deduplication for overlapping chunk regions
+6. Deterministic integrity validation encoding Jeopardy domain rules
+"""
+
 import json
 import structlog
 import asyncio
@@ -8,155 +20,22 @@ from trebek.llm.schemas import PartialEpisodeMeta, PartialClues
 from trebek.llm.chunking import _chunk_by_semantic_boundaries
 from trebek.llm.validation import _validate_extraction_integrity, _deduplicate_clues
 from trebek.llm.utils import _extract_part
+from trebek.llm.transcript import _abbreviate_speaker, _format_transcript_compressed
+from trebek.llm.speaker_normalization import _normalize_speaker_names
+from trebek.config import MODEL_PRO
 
 logger = structlog.get_logger()
 GEMINI_CONCURRENCY = 3
 
 
-def _normalize_speaker_names(
-    clues: "list[Clue]",
-    speaker_mapping: "Dict[str, str]",
-    contestant_names: "list[str]",
-    host_name: str = "",
-    score_adjustments: "Optional[list[Any]]" = None,
-    fj_wagers: "Optional[list[Any]]" = None,
-) -> None:
-    """
-    Post-extraction normalization: maps all speaker name variants in buzz attempts
-    to canonical contestant full names from the episode metadata.
-
-    The LLM inconsistently uses:
-      - Raw diarization IDs: SPEAKER_00, SPEAKER_02
-      - Pass 1 mapped names: Rachel, Lawrence, Kamau
-      - Full names: Harrison Whitaker
-
-    This function resolves them all to the canonical full names (e.g. Rachel Bernstein)
-    to prevent FK constraint failures in the relational DB commit.
-    """
-    if score_adjustments is None:
-        score_adjustments = []
-    if fj_wagers is None:
-        fj_wagers = []
-
-    # Build a comprehensive lookup: variant → canonical full name
-    variant_map: Dict[str, str] = {}
-
-    # 1. Exact matches (case-insensitive)
-    for name in contestant_names:
-        variant_map[name.lower()] = name
-
-    # 2. Every individual word in the name → canonical name
-    #    Handles: "Kamau" → "W. Kamau Bell", "Rachel" → "Rachel Bernstein",
-    #    "Subba" → "Lawrence Subba", "DeFrank" → "Alex DeFrank"
-    for name in contestant_names:
-        for part in name.split():
-            part_lower = part.lower().rstrip(".")  # strip trailing dots from initials like "W."
-            # Skip very short parts (initials like "W") to avoid false positives
-            if len(part_lower) <= 1:
-                continue
-            if part_lower in variant_map and variant_map[part_lower] != name:
-                # Name part collision — two contestants share a name part (e.g. two "James")
-                # Remove the ambiguous mapping so the LLM must use full names
-                logger.warning(
-                    "Speaker normalization: ambiguous name part, requiring full name",
-                    part=part_lower,
-                    contestant_a=variant_map[part_lower],
-                    contestant_b=name,
-                )
-                del variant_map[part_lower]
-            elif part_lower not in variant_map:
-                variant_map[part_lower] = name
-
-    # 3. SPEAKER_XX → Pass 1 name → contestant full name
-    #    Skip the host — they shouldn't appear in buzz attempts
-    host_lower = host_name.lower().strip() if host_name else ""
-    for speaker_id, mapped_name in speaker_mapping.items():
-        sid = speaker_id.lower()
-        # Skip the host entirely — they don't buzz in
-        if mapped_name.lower().strip() == host_lower:
-            continue
-        # Try to resolve the Pass 1 name to a full contestant name
-        resolved = variant_map.get(mapped_name.lower())
-        if not resolved:
-            # Try each word of the mapped name
-            for part in mapped_name.split():
-                part_lower = part.lower().rstrip(".")
-                if len(part_lower) > 1:
-                    resolved = variant_map.get(part_lower)
-                    if resolved:
-                        break
-        if not resolved:
-            # Substring containment: does the mapped name appear IN any contestant name?
-            mapped_lower = mapped_name.lower()
-            for cname in contestant_names:
-                if mapped_lower in cname.lower():
-                    resolved = cname
-                    break
-        if resolved:
-            variant_map[sid] = resolved
-            # Also map the Pass 1 name itself
-            if mapped_name.lower() not in variant_map:
-                variant_map[mapped_name.lower()] = resolved
-        else:
-            # Pass 1 name doesn't match any contestant — map SPEAKER_XX to it directly
-            variant_map[sid] = mapped_name
-
-    unmapped: set[str] = set()
-
-    # Normalize buzz attempt speakers
-    for clue in clues:
-        for attempt in clue.attempts:
-            canonical = variant_map.get(attempt.speaker.lower())
-            if not canonical:
-                # Last resort: substring containment check
-                speaker_lower = attempt.speaker.lower()
-                for cname in contestant_names:
-                    if speaker_lower in cname.lower() or cname.lower().startswith(speaker_lower):
-                        canonical = cname
-                        break
-            if canonical:
-                attempt.speaker = canonical
-            else:
-                unmapped.add(attempt.speaker)
-
-        # Also normalize wagerer_name on daily doubles
-        if clue.wagerer_name:
-            canonical = variant_map.get(clue.wagerer_name.lower())
-            if canonical:
-                clue.wagerer_name = canonical
-
-    # Normalize score_adjustment contestant names (they also build FK contestant_ids)
-    for adj in score_adjustments:
-        if hasattr(adj, "contestant") and adj.contestant:
-            canonical = variant_map.get(adj.contestant.lower())
-            if canonical:
-                adj.contestant = canonical
-
-    # Normalize FinalJeopardyWager contestant names (for future FK safety)
-    for wager in fj_wagers:
-        if hasattr(wager, "contestant") and wager.contestant:
-            canonical = variant_map.get(wager.contestant.lower())
-            if canonical:
-                wager.contestant = canonical
-
-    if unmapped:
-        logger.warning(
-            "Speaker normalization: unmapped speakers remain",
-            unmapped=unmapped,
-            variant_map={k: v for k, v in variant_map.items() if not k.startswith("speaker_")},
-        )
-    else:
-        logger.info(
-            "Speaker normalization complete — all speakers mapped to contestant full names",
-            total_attempts=sum(len(c.attempts) for c in clues),
-        )
-
-
 async def execute_pass_2_data_extraction(
-    segments: list[Dict[str, Any]], speaker_mapping: Dict[str, str], max_retries: int = 4
+    segments: list[Dict[str, Any]],
+    speaker_mapping: Dict[str, str],
+    max_retries: int = 4,
+    model: str = MODEL_PRO,
 ) -> "tuple[Episode, dict[str, float], int]":
     """
-    Pass 2: Production-grade map-reduce extraction (Gemini 3.1 Pro).
+    Pass 2: Production-grade map-reduce extraction.
 
     Architecture:
     1. Extract Episode Meta (contestants, FJ, score adjustments) — full transcript
@@ -165,35 +44,43 @@ async def execute_pass_2_data_extraction(
     4. Reconstruct clue texts and timestamps directly from parsed WhisperX JSON
     5. Composite-key deduplication for overlapping chunk regions
     6. Deterministic integrity validation encoding Jeopardy domain rules
+
+    Cost optimizations:
+    - Prompt compression: timestamps stripped, speaker IDs abbreviated
+    - Inline chunk extraction: each chunk sent independently to avoid
+      the 2.5x cost penalty of context caching in map-reduce patterns
     """
     logger.info(
         "Starting Map-Reduce extraction pipeline",
         total_segments=len(segments),
         speaker_mapping=speaker_mapping,
         max_retries=max_retries,
+        model=model,
     )
 
-    formatted_lines = []
-    for i, seg in enumerate(segments):
-        start = seg.get("start", 0.0)
-        text = seg.get("text", "").strip()
-        speaker = seg.get("speaker", "UNKNOWN")
-        formatted_lines.append(f"[L{i}] [{start:.2f}s] {speaker}: {text}")
+    # ── Prompt Compression ───────────────────────────────────────────
+    # Build compressed speaker mapping for the system prompt
+    compressed_mapping: Dict[str, str] = {}
+    for speaker_id, name in speaker_mapping.items():
+        compressed_mapping[_abbreviate_speaker(speaker_id)] = name
 
-    full_transcript = "\n".join(formatted_lines)
+    full_transcript = _format_transcript_compressed(segments)
     logger.info(
-        "Transcript formatted for extraction",
-        total_lines=len(formatted_lines),
+        "Transcript formatted (compressed)",
+        total_lines=len(segments),
         transcript_chars=len(full_transcript),
+        compression="timestamps_removed, speakers_abbreviated",
     )
 
     base_system = (
         "You are Trebek, an expert data extraction pipeline for Jeopardy game transcripts. "
         "Extract game events into the provided JSON schema with surgical precision. "
-        f"CRITICAL CONSTRAINT: Map speakers using this exact dictionary: {json.dumps(speaker_mapping)}. "
+        f"CRITICAL CONSTRAINT: Map speakers using this exact dictionary: {json.dumps(compressed_mapping)}. "
+        "Speaker IDs are abbreviated (e.g., S0 = SPEAKER_00, S1 = SPEAKER_01). "
         "Do NOT hallucinate names outside this mapping. "
         "Do NOT perform any running score math — extract only observable facts. "
-        "Timestamps in the transcript are in seconds (e.g., [1.50s - ...]). You MUST multiply them by 1000 to convert to milliseconds (e.g., 1500.0) for the JSON output."
+        "Line IDs (e.g., L0, L105) reference exact transcript positions. "
+        "Use Line IDs for all timestamp-related fields."
     )
 
     total_usage: dict[str, float] = {"input_tokens": 0.0, "output_tokens": 0.0, "cached_tokens": 0.0, "latency_ms": 0.0}
@@ -202,7 +89,6 @@ async def execute_pass_2_data_extraction(
     def _accumulate_usage(usage: dict[str, float]) -> None:
         for k in total_usage:
             total_usage[k] += usage.get(k, 0.0)
-
     # ── Stage 1: Meta Extraction (Full Transcript) ──────────────────
     logger.info("Extracting Episode Metadata...")
     meta_prompt = (
@@ -216,6 +102,8 @@ async def execute_pass_2_data_extraction(
         base_system,
         PartialEpisodeMeta,
         max_retries,
+        model=model,
+        invocation_context="Pass 2 Meta",
     )
     _accumulate_usage(meta_usage)
     max_attempt_reached = max(max_attempt_reached, meta_att)
@@ -235,6 +123,7 @@ async def execute_pass_2_data_extraction(
         "Chunked transcript for concurrent clue extraction",
         num_chunks=len(chunks),
         strategy="semantic_round_boundaries",
+        mode="inline_chunks",
     )
 
     # ── Stage 3: Semaphore-Bounded Concurrent Clue Extraction ──────
@@ -242,8 +131,12 @@ async def execute_pass_2_data_extraction(
 
     async def extract_chunk(chunk_idx: int, chunk_text: str) -> "tuple[PartialClues, dict[str, float], int]":
         async with semaphore:
-            chunk_lines = chunk_text.count("\n") + 1
-            logger.info(f"Extracting clues from chunk {chunk_idx + 1}/{len(chunks)}", lines=chunk_lines)
+            chunk_lines_list = chunk_text.split("\n")
+            chunk_line_count = len(chunk_lines_list)
+
+            ctx_label = f"Pass 2 Chunk {chunk_idx + 1}/{len(chunks)}"
+            logger.info(f"Extracting clues from chunk {chunk_idx + 1}/{len(chunks)}", lines=chunk_line_count)
+
             prompt = (
                 f"Transcript Chunk ({chunk_idx + 1} of {len(chunks)}):\n{chunk_text}\n\n"
                 "Extract ALL Jeopardy and Double Jeopardy clues found in this chunk. "
@@ -259,6 +152,8 @@ async def execute_pass_2_data_extraction(
                 base_system,
                 PartialClues,
                 max_retries,
+                model=model,
+                invocation_context=ctx_label,
             )
 
     chunk_tasks = [extract_chunk(idx, chunk) for idx, chunk in enumerate(chunks)]
@@ -424,5 +319,6 @@ async def execute_pass_2_data_extraction(
         total_clues_extracted=len(sorted_clues),
         chunks_processed=len(chunks),
         max_retries_used=max_attempt_reached,
+        model=model,
     )
     return episode, total_usage, max_attempt_reached

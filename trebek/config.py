@@ -1,3 +1,10 @@
+"""
+Application configuration — environment-driven settings with Pydantic validation.
+
+Reads from ``.env`` files and environment variables. Provides model constants,
+pricing data, and supported video format definitions.
+"""
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
 from typing import Tuple
@@ -18,6 +25,23 @@ SUPPORTED_VIDEO_EXTENSIONS: Tuple[str, ...] = (
     ".m2ts",
     ".vob",
 )
+
+
+# ── Model Constants ──────────────────────────────────────────────
+MODEL_FLASH = "gemini-3-flash-preview"
+MODEL_PRO = "gemini-3.1-pro-preview"
+
+# CLI alias → canonical model name
+MODEL_ALIASES: dict[str, str] = {
+    "flash": MODEL_FLASH,
+    "pro": MODEL_PRO,
+}
+
+# Per-million-token pricing (USD)
+MODEL_PRICING: dict[str, dict[str, float]] = {
+    MODEL_FLASH: {"input": 0.075, "output": 0.30},
+    MODEL_PRO: {"input": 1.25, "output": 5.00},
+}
 
 
 class Settings(BaseSettings):

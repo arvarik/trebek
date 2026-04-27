@@ -1,3 +1,11 @@
+"""
+Core Pydantic schemas for Jeopardy! episode data.
+
+Defines the canonical data model for episodes, clues, contestants,
+buzz attempts, score adjustments, Final Jeopardy, and job telemetry.
+These schemas are used throughout the pipeline for validation and serialization.
+"""
+
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional, Union
 

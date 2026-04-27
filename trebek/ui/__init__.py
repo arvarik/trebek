@@ -1,5 +1,13 @@
+"""
+UI package — Rich-based console output, progress tracking, and dashboard rendering.
+
+All visual output in the Trebek pipeline flows through this package to ensure
+a consistent, premium experience with branded panels and status indicators.
+"""
+
 from trebek.ui.core import console
-from trebek.ui.banner import render_startup_banner, render_system_diagnostics
+from trebek.ui.banner import render_startup_banner
+from trebek.ui.diagnostics import render_system_diagnostics
 from trebek.ui.progress import create_pipeline_progress, get_stage_display, PIPELINE_STAGES
 from trebek.ui.tables import render_dry_run_table, render_episode_status_table, render_episode_completion_summary
 from trebek.ui.dashboard.summary import render_shutdown_summary

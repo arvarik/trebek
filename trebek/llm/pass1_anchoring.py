@@ -36,6 +36,7 @@ async def execute_pass_1_speaker_anchoring(audio_file_path: str) -> "tuple[Dict[
             prompt=prompt,
             system_instruction=system_prompt,
             max_output_tokens=2048,
+            invocation_context="Pass 1 Speaker Anchoring",
         )
 
         await client.delete_file(uploaded_file.name)

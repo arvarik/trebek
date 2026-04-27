@@ -1,4 +1,12 @@
-import uuid
+"""
+Relational data commit operations for episode data.
+
+Transforms Pydantic episode models into normalized relational rows
+and commits them to the analytical database tables (episodes, contestants,
+clues, buzz_attempts, final_jeopardy, score_adjustments) within a
+single atomic transaction.
+"""
+
 import structlog
 from typing import TYPE_CHECKING, Any, Tuple
 
@@ -28,7 +36,7 @@ async def commit_episode_to_relational_tables(
 
     payload.append(
         (
-            "INSERT OR IGNORE INTO episodes (episode_id, air_date, host_name, is_tournament) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO episodes (episode_id, air_date, host_name, is_tournament) VALUES (?, ?, ?, ?)",
             (episode_id, episode_data.episode_date, episode_data.host_name, episode_data.is_tournament),
         )
     )
@@ -38,7 +46,7 @@ async def commit_episode_to_relational_tables(
         contestant_id = f"{episode_id}_{contestant.name.replace(' ', '_').lower()}"
         payload.append(
             (
-                "INSERT OR IGNORE INTO contestants "
+                "INSERT OR REPLACE INTO contestants "
                 "(contestant_id, name, occupational_category, is_returning_champion) VALUES (?, ?, ?, ?)",
                 (contestant_id, contestant.name, contestant.occupational_category, contestant.is_returning_champion),
             )
@@ -48,7 +56,7 @@ async def commit_episode_to_relational_tables(
         final_score = state_machine.scores.get(contestant.name, 0)
         payload.append(
             (
-                "INSERT OR IGNORE INTO episode_performances "
+                "INSERT OR REPLACE INTO episode_performances "
                 "(episode_id, contestant_id, podium_position, final_score) VALUES (?, ?, ?, ?)",
                 (episode_id, contestant_id, contestant.podium_position, final_score),
             )
@@ -63,7 +71,7 @@ async def commit_episode_to_relational_tables(
 
         payload.append(
             (
-                "INSERT OR IGNORE INTO clues "
+                "INSERT OR REPLACE INTO clues "
                 "(clue_id, episode_id, round, category, board_row, board_col, selection_order, "
                 "clue_text, correct_response, is_daily_double, is_triple_stumper, "
                 "daily_double_wager, wagerer_name, requires_visual_context, "
@@ -93,11 +101,11 @@ async def commit_episode_to_relational_tables(
 
         # Insert buzz_attempts for this clue
         for attempt in clue.attempts:
-            attempt_id = f"{clue_id}_a{attempt.attempt_order}_{uuid.uuid4().hex[:8]}"
+            attempt_id = f"{clue_id}_a{attempt.attempt_order}"
             contestant_id = f"{episode_id}_{attempt.speaker.replace(' ', '_').lower()}"
             payload.append(
                 (
-                    "INSERT OR IGNORE INTO buzz_attempts "
+                    "INSERT OR REPLACE INTO buzz_attempts "
                     "(attempt_id, clue_id, contestant_id, attempt_order, buzz_timestamp_ms, "
                     "response_given, is_correct, response_start_timestamp_ms, is_lockout_inferred) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -117,11 +125,11 @@ async def commit_episode_to_relational_tables(
 
     # 5. Insert score_adjustments
     for adj in episode_data.score_adjustments:
-        adjustment_id = f"{episode_id}_adj_{adj.effective_after_clue_selection_order}_{uuid.uuid4().hex[:8]}"
+        adjustment_id = f"{episode_id}_adj_{adj.effective_after_clue_selection_order}_{adj.contestant.replace(' ', '_').lower()}"
         contestant_id = f"{episode_id}_{adj.contestant.replace(' ', '_').lower()}"
         payload.append(
             (
-                "INSERT OR IGNORE INTO score_adjustments "
+                "INSERT OR REPLACE INTO score_adjustments "
                 "(adjustment_id, episode_id, contestant_id, points_adjusted, reason, "
                 "effective_after_clue_selection_order) VALUES (?, ?, ?, ?, ?, ?)",
                 (

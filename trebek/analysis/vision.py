@@ -1,7 +1,12 @@
-import math
+"""
+Gemini Vision API client and podium illumination timestamp extraction.
+
+Uses the Gemini Files API to upload video segments and analyze them
+for precise visual cues like contestant podium indicator lights.
+"""
+
 import structlog
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel
+from typing import Optional
 
 logger = structlog.get_logger()
 
@@ -76,70 +81,3 @@ async def extract_podium_illumination_timestamp(video_path: str, host_finish_tim
     except Exception as e:
         logger.error("Vision model failed", error=str(e))
         return host_finish_timestamp + 0.1  # Fallback estimation
-
-
-def calculate_true_buzzer_latency(buzz_timestamp: float, podium_light_timestamp: float) -> float:
-    """
-    Calculates the true physical reaction time, removing the host's cadence variance.
-    """
-    return round(buzz_timestamp - podium_light_timestamp, 3)
-
-
-class WhisperXWordSegment(BaseModel):
-    word: str
-    start: float
-    end: float
-    prob: float
-
-
-def calculate_true_acoustic_metrics(
-    buzz_start_time: float, buzz_end_time: float, whisper_words: List[WhisperXWordSegment]
-) -> Dict[str, Any]:
-    """
-    Cross-references LLM semantic boundaries with raw WhisperX word-level `.prob`
-    logprobs to calculate true acoustic confidence and deterministic disfluency counts.
-    """
-    relevant_probs: List[float] = []
-    disfluency_count = 0
-    disfluency_markers = {"um", "uh", "er", "ah", "hmm"}
-
-    for segment in whisper_words:
-        if segment.start >= buzz_start_time and segment.end <= buzz_end_time:
-            relevant_probs.append(segment.prob)
-            cleaned_word = segment.word.lower().strip(",.?!")
-            if cleaned_word in disfluency_markers:
-                disfluency_count += 1
-
-    if not relevant_probs:
-        return {"true_acoustic_confidence_score": 0.0, "disfluency_count": 0}
-
-    avg_confidence = sum(relevant_probs) / len(relevant_probs)
-    return {"true_acoustic_confidence_score": round(avg_confidence, 4), "disfluency_count": disfluency_count}
-
-
-def cosine_distance(vec_a: List[float], vec_b: List[float]) -> float:
-    """
-    Calculates the cosine distance between two floating-point vectors.
-    """
-    if len(vec_a) != len(vec_b):
-        raise ValueError("Embeddings must have the same dimensionality.")
-
-    dot_product = sum(a * b for a, b in zip(vec_a, vec_b))
-    norm_a = math.sqrt(sum(a * a for a in vec_a))
-    norm_b = math.sqrt(sum(b * b for b in vec_b))
-
-    if norm_a == 0.0 or norm_b == 0.0:
-        return 1.0  # Max distance if one vector is empty
-
-    similarity = dot_product / (norm_a * norm_b)
-    return max(0.0, min(1.0, 1.0 - similarity))
-
-
-def process_semantic_lateral_distance(clue_embedding: List[float], response_embedding: List[float]) -> float:
-    """
-    Calculates the lateral semantic distance between a clue and the correct response.
-    High distance = wordplay/lateral thinking. Low distance = direct factual recall.
-    """
-    distance = cosine_distance(clue_embedding, response_embedding)
-    logger.info("Calculated Semantic Lateral Distance", distance=round(distance, 4))
-    return distance

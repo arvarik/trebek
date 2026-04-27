@@ -1,18 +1,32 @@
+"""
+Pipeline orchestrator — coordinates all worker stages, manages lifecycle,
+and provides the ``run_pipeline()`` entry point called by the CLI.
+
+Worker dispatch, event-driven coordination, and shutdown sequencing
+are all managed here. Stage definitions and logging configuration
+are imported from their dedicated modules.
+"""
+
 import asyncio
 import sqlite3
 import signal
 import structlog
 import os
-import sys
 from pathlib import Path
 from typing import Any, List, Optional
 
 from trebek.database import DatabaseWriter
 from trebek.gpu import GPUOrchestrator
-from trebek.config import settings
+from trebek.config import settings, MODEL_PRO
 from trebek.ui import (
     console,
     create_pipeline_progress,
+)
+from trebek.pipeline.logging import configure_logging
+from trebek.pipeline.stages import (
+    ACTIVE_STAGES,
+    UPSTREAM_MAP_FULL,
+    UPSTREAM_MAP_ISOLATED,
 )
 
 from trebek.pipeline.workers.ingestion import ingestion_worker, run_ingestion_pass
@@ -21,41 +35,26 @@ from trebek.pipeline.workers.llm import llm_worker
 from trebek.pipeline.workers.multimodal import multimodal_worker
 from trebek.pipeline.workers.state_machine import state_machine_worker
 
-# ──────────────────────────────────────────────────────────────
-# Structlog Configuration — Rich in TTY, JSON when piped
-# ──────────────────────────────────────────────────────────────
-
-
-def _configure_logging() -> None:
-    """Configures structlog with Rich ConsoleRenderer for TTY, JSONRenderer for piped output."""
-    shared_processors = [
-        structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-    ]
-
-    if sys.stderr.isatty():
-        # Interactive terminal — beautiful Rich output
-        renderer = structlog.dev.ConsoleRenderer(
-            colors=True,
-        )
-    else:
-        # Piped / redirected — machine-parseable JSON lines
-        renderer = structlog.processors.JSONRenderer()  # type: ignore[assignment]
-
-    processors: list[Any] = [*shared_processors, renderer]
-    structlog.configure(processors=processors)
-
-
-_configure_logging()
+configure_logging()
 logger = structlog.get_logger()
 
 
 class TrebekPipelineOrchestrator:
-    def __init__(self, db_path: str, output_dir: str, mode: str = "daemon", nollm: bool = False) -> None:
+    def __init__(
+        self,
+        db_path: str,
+        output_dir: str,
+        mode: str = "daemon",
+        stage: str = "all",
+        llm_model: str = MODEL_PRO,
+        max_retries: int = 3,
+    ) -> None:
         self.db_path = db_path
         self.output_dir = output_dir
         self.mode = mode
-        self.nollm = nollm
+        self.stage = stage
+        self.llm_model = llm_model
+        self.max_retries = max_retries
         self.db_writer = DatabaseWriter(db_path)
         self.gpu_orchestrator = GPUOrchestrator(
             output_dir,
@@ -73,6 +72,10 @@ class TrebekPipelineOrchestrator:
 
         # Stats for shutdown summary
         self.stats = {"total": 0, "completed": 0, "failed": 0}
+
+    def is_stage_active(self, stage_name: str) -> bool:
+        """Check if a logical stage is active for the current --stage configuration."""
+        return stage_name in ACTIVE_STAGES.get(self.stage, set())
 
     async def initialize(self, input_dir: str) -> None:
         # Ensure input/output directories exist
@@ -157,33 +160,16 @@ class TrebekPipelineOrchestrator:
         return result[0][0] if result else 0
 
     async def _no_work_remaining(self, target_status: str) -> bool:
-        """Check if there are no more items in the target status OR any upstream/in-flight status (for --once mode).
+        """Check if there are no more items in the target status or upstream (for --once mode).
 
-        Each worker must wait not only for its own input status, but also for ALL
-        upstream stages that feed into it AND its own output transitional status.
-        Without this, a worker exits while episodes are still mid-flight.
+        When running all stages, uses full upstream checking (waits for upstream workers).
+        When running a single stage, uses isolated checking (only own statuses).
         """
-        upstream_map = {
-            "PENDING": ["PENDING"],
-            "TRANSCRIPT_READY": ["PENDING", "TRANSCRIBING", "TRANSCRIPT_READY", "CLEANED"],
-            "SAVING": [
-                "PENDING",
-                "TRANSCRIBING",
-                "TRANSCRIPT_READY",
-                "CLEANED",
-                "SAVING",
-            ],
-            "MULTIMODAL_DONE": [
-                "PENDING",
-                "TRANSCRIBING",
-                "TRANSCRIPT_READY",
-                "CLEANED",
-                "SAVING",
-                "MULTIMODAL_PROCESSING",
-                "MULTIMODAL_DONE",
-                "VECTORIZING",
-            ],
-        }
+        if self.stage == "all":
+            upstream_map = UPSTREAM_MAP_FULL
+        else:
+            upstream_map = UPSTREAM_MAP_ISOLATED
+
         statuses_to_check = upstream_map.get(target_status, [target_status])
 
         placeholders = ",".join(["?"] * len(statuses_to_check))
@@ -194,45 +180,110 @@ class TrebekPipelineOrchestrator:
     async def start_workers(self, input_dir: str, progress: Any, task_id: Any) -> None:
         self.running = True
 
-        # Wake up GPU worker for an initial database poll in case there's backlogged work
-        self.gpu_work_ready.set()
+        active_stages: list[str] = []
 
-        if not self.nollm:
+        # ── Auto-reset FAILED episodes for stage-targeted re-runs ────
+        # When running a specific stage, reset FAILED episodes back to the
+        # status that makes them visible to that stage's worker.
+        # This ensures `trebek run --stage transcribe --once` picks up
+        # previously failed files without needing `trebek retry` first.
+        _STAGE_RESET_STATUS: dict[str, str] = {
+            "transcribe": "PENDING",
+            "extract": "TRANSCRIPT_READY",
+            "augment": "SAVING",
+            "verify": "MULTIMODAL_DONE",
+        }
+        if self.stage != "all" and self.stage in _STAGE_RESET_STATUS:
+            reset_to = _STAGE_RESET_STATUS[self.stage]
+            reset_result = await self.db_writer.execute(
+                "UPDATE pipeline_state SET status = ?, retry_count = 0, "
+                "last_error = NULL, updated_at = CURRENT_TIMESTAMP "
+                "WHERE status = 'FAILED' RETURNING episode_id",
+                (reset_to,),
+            )
+            reset_count = len(reset_result) if isinstance(reset_result, list) else 0
+            if reset_count > 0:
+                logger.info(
+                    "Auto-reset FAILED episodes for stage re-run",
+                    count=reset_count,
+                    stage=self.stage,
+                    reset_to=reset_to,
+                )
+
+        # ── Transcription stage (ingestion + GPU) ────────────────────
+        if self.is_stage_active("transcribe"):
+            self.gpu_work_ready.set()
+            await run_ingestion_pass(self, input_dir)
+            total = await self._get_total_episodes()
+            progress.update(task_id, total=total)
+            self.tasks.append(asyncio.create_task(ingestion_worker(self, input_dir)))
+            self.tasks.append(asyncio.create_task(extractor_worker(self, progress, task_id)))
+            active_stages.append("transcribe")
+
+        # ── LLM extraction stage ────────────────────────────────────
+        if self.is_stage_active("extract"):
             self.llm_work_ready.set()
-            self.multimodal_work_ready.set()
-            self.state_machine_work_ready.set()
-
-        # Run ingestion first so we know the total count
-        await run_ingestion_pass(self, input_dir)
-        total = await self._get_total_episodes()
-        progress.update(task_id, total=total)
-
-        self.tasks.append(asyncio.create_task(ingestion_worker(self, input_dir)))
-        self.tasks.append(asyncio.create_task(extractor_worker(self, progress, task_id)))
-
-        if not self.nollm:
+            # When running extract without transcribe, count episodes with work available
+            if not self.is_stage_active("transcribe"):
+                total = await self._get_total_episodes()
+                progress.update(task_id, total=total)
             self.tasks.append(asyncio.create_task(llm_worker(self, progress, task_id)))
+            active_stages.append("extract")
+
+        # ── Multimodal augmentation stage ────────────────────────────
+        if self.is_stage_active("augment"):
+            self.multimodal_work_ready.set()
+            if not self.is_stage_active("transcribe") and not self.is_stage_active("extract"):
+                total = await self._get_total_episodes()
+                progress.update(task_id, total=total)
             self.tasks.append(asyncio.create_task(multimodal_worker(self, progress, task_id)))
+            active_stages.append("augment")
+
+        # ── State machine verification stage ─────────────────────────
+        if self.is_stage_active("verify"):
+            self.state_machine_work_ready.set()
+            if len(active_stages) == 0:
+                total = await self._get_total_episodes()
+                progress.update(task_id, total=total)
             self.tasks.append(asyncio.create_task(state_machine_worker(self, progress, task_id)))
-        else:
-            logger.info("🚫 --nollm mode: LLM, multimodal, and state machine workers DISABLED")
+            active_stages.append("verify")
+
+        logger.info(
+            "Pipeline workers started",
+            stage=self.stage,
+            active_stages=active_stages,
+            mode=self.mode,
+            llm_model=self.llm_model,
+        )
+
+        if not active_stages:
+            logger.warning("No stages are active — nothing to do")
 
 
-async def run_pipeline(mode: str = "daemon", input_dir_override: Optional[str] = None, nollm: bool = False) -> None:
+async def run_pipeline(
+    mode: str = "daemon",
+    input_dir_override: Optional[str] = None,
+    stage: str = "all",
+    llm_model: str = MODEL_PRO,
+    max_retries: int = 3,
+) -> None:
     """Main pipeline entry point, called by cli.py."""
     from trebek.ui import render_startup_banner, render_system_diagnostics
 
     input_dir = input_dir_override or settings.input_dir
 
     # ── Branded startup ──
-    render_startup_banner(mode=mode)
+    stage_label = f"{mode} • stage={stage}" if stage != "all" else mode
+    render_startup_banner(mode=stage_label)
     render_system_diagnostics(settings)
 
     orchestrator = TrebekPipelineOrchestrator(
         db_path=settings.db_path,
         output_dir=settings.output_dir,
         mode=mode,
-        nollm=nollm,
+        stage=stage,
+        llm_model=llm_model,
+        max_retries=max_retries,
     )
 
     await orchestrator.initialize(input_dir)

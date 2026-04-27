@@ -31,6 +31,73 @@ class GeminiClient:
     async def delete_file(self, file_name: str) -> None:
         await asyncio.to_thread(self.client.files.delete, name=file_name)
 
+    # ── Context Caching Lifecycle ────────────────────────────────────
+
+    async def create_cache(
+        self,
+        model: str,
+        system_instruction: str,
+        contents: list[Any],
+        ttl: str = "1800s",
+    ) -> Optional[str]:
+        """
+        Creates a Gemini cached content object for the given model, system prompt,
+        and contents. Returns the cache name on success, or None if caching cannot
+        be used (e.g. content below minimum token threshold).
+
+        TTL defaults to 30 minutes — long enough for a full episode extraction.
+        """
+        from google.genai import types
+
+        try:
+            logger.info(
+                "Gemini cache: creating",
+                model=model,
+                ttl=ttl,
+                content_parts=len(contents),
+            )
+            cache = await asyncio.to_thread(
+                self.client.caches.create,
+                model=model,
+                config=types.CreateCachedContentConfig(
+                    system_instruction=system_instruction,
+                    contents=contents,
+                    ttl=ttl,
+                ),
+            )
+            cached_token_count = getattr(
+                getattr(cache, "usage_metadata", None), "total_token_count", "unknown"
+            )
+            logger.info(
+                "Gemini cache: created successfully",
+                cache_name=cache.name,
+                cached_tokens=cached_token_count,
+            )
+            return str(cache.name)
+        except Exception as e:
+            err_str = str(e)
+            if "too few tokens" in err_str.lower() or "minimum" in err_str.lower():
+                logger.info(
+                    "Gemini cache: content below minimum token threshold, falling back to non-cached mode",
+                    error=err_str[:200],
+                )
+            else:
+                logger.warning(
+                    "Gemini cache: creation failed, falling back to non-cached mode",
+                    error=err_str[:200],
+                )
+            return None
+
+    async def delete_cache(self, cache_name: str) -> None:
+        """Deletes a previously created cached content object. Logs but does not raise on failure."""
+        try:
+            await asyncio.to_thread(self.client.caches.delete, name=cache_name)
+            logger.info("Gemini cache: deleted", cache_name=cache_name)
+        except Exception as e:
+            logger.warning("Gemini cache: deletion failed", cache_name=cache_name, error=str(e)[:200])
+
+    # ── Content Generation ───────────────────────────────────────────
+
     async def generate_content(
         self,
         model: str,
@@ -39,7 +106,15 @@ class GeminiClient:
         response_schema: Optional[type[BaseModel]] = None,
         max_output_tokens: int = 65536,
         cached_content_name: Optional[str] = None,
+        invocation_context: str = "",
     ) -> "tuple[Any, dict[str, float]]":
+        """
+        Generates content via the Gemini API with structured invocation logging.
+
+        Args:
+            invocation_context: A human-readable label for this call (e.g. "Pass 2 Meta",
+                "Pass 2 Chunk 3/5") used in structured logs for traceability.
+        """
         import re
         import random
         import time
@@ -57,10 +132,19 @@ class GeminiClient:
             kwargs["cached_content"] = cached_content_name
         config = types.GenerateContentConfig(**kwargs)
 
+        ctx = invocation_context or "unnamed"
         max_retries = 10
         base_delay = 5.0
         for attempt in range(max_retries + 1):
             try:
+                logger.info(
+                    "Gemini API: invoking",
+                    context=ctx,
+                    model=model,
+                    attempt=attempt + 1,
+                    max_output_tokens=max_output_tokens,
+                    cached=cached_content_name is not None,
+                )
                 start_t = time.perf_counter()
                 response = await self.client.aio.models.generate_content(model=model, contents=prompt, config=config)
                 latency_ms = (time.perf_counter() - start_t) * 1000
@@ -74,27 +158,48 @@ class GeminiClient:
                     }
                 else:
                     usage = {"input_tokens": 0.0, "output_tokens": 0.0, "cached_tokens": 0.0, "latency_ms": latency_ms}
+
+                logger.info(
+                    "Gemini API: success",
+                    context=ctx,
+                    model=model,
+                    attempt=attempt + 1,
+                    input_tokens=int(usage["input_tokens"]),
+                    output_tokens=int(usage["output_tokens"]),
+                    cached_tokens=int(usage["cached_tokens"]),
+                    latency_ms=round(latency_ms, 0),
+                )
                 return response, usage
             except Exception as e:
                 err_str = str(e)
-                if (
-                    not (
-                        "429" in err_str
-                        or "RESOURCE_EXHAUSTED" in err_str
-                        or "500" in err_str
-                        or "503" in err_str
-                        or "UNAVAILABLE" in err_str
+                is_retryable = (
+                    "429" in err_str
+                    or "RESOURCE_EXHAUSTED" in err_str
+                    or "500" in err_str
+                    or "503" in err_str
+                    or "UNAVAILABLE" in err_str
+                )
+                if not is_retryable or attempt == max_retries:
+                    logger.error(
+                        "Gemini API: failed (non-retryable or exhausted retries)",
+                        context=ctx,
+                        model=model,
+                        attempt=attempt + 1,
+                        error=err_str[:300],
                     )
-                    or attempt == max_retries
-                ):
                     raise
                 retry_match = re.search(r"retry.*?(\d+\.?\d*)\s*s", err_str, re.IGNORECASE)
                 if retry_match:
                     delay = float(retry_match.group(1)) + random.uniform(1.0, 3.0)
                 else:
                     delay = min(base_delay * (2**attempt), 120.0) + random.uniform(0.5, 2.0)
-                logger.warning("Rate limited, retrying", attempt=attempt + 1, delay_s=round(delay, 1), model=model)
-                import asyncio
-
+                logger.warning(
+                    "Gemini API: retryable error",
+                    context=ctx,
+                    model=model,
+                    attempt=attempt + 1,
+                    delay_s=round(delay, 1),
+                    error=err_str[:200],
+                )
                 await asyncio.sleep(delay)
         raise RuntimeError("Unreachable")

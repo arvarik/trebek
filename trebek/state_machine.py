@@ -1,3 +1,12 @@
+"""
+Deterministic game state machine for Jeopardy! episode verification.
+
+Processes extracted clues sequentially, tracking running scores,
+board control, Daily Double wager resolution, and chronologically
+anchored score adjustments. Used as the final verification step
+before committing relational data to the database.
+"""
+
 import structlog
 from typing import Dict, List, Optional
 from trebek.schemas import Clue, ScoreAdjustment

@@ -67,12 +67,14 @@ def render_dry_run_table(files: List[Dict[str, Any]]) -> None:
         - filepath: str
         - format: str (extension)
         - size_bytes: int
-        - status: str ("New" or "Already Queued")
+        - status: str (pipeline status or "New")
+        - retry_count: int (optional)
+        - last_error: str | None (optional)
     """
     if not files:
         console.print(
             Panel(
-                "[yellow]No video files found in input directory.[/yellow]\n"
+                "[yellow]No video files found matching criteria.[/yellow]\n"
                 "Place video files (.mp4, .ts, .mkv, etc.) in the input directory to begin.",
                 title="📂 Discovery Results",
                 border_style="yellow",
@@ -98,21 +100,31 @@ def render_dry_run_table(files: List[Dict[str, Any]]) -> None:
     table.add_column("Format", style="magenta", justify="center", width=8)
     table.add_column("Size", style="green", justify="right", width=10)
     table.add_column("Duration", style="cyan", justify="center", width=10)
-    table.add_column("Status", justify="center", width=14)
+    table.add_column("Pipeline Status", justify="center", width=26)
 
     total_size = 0
-    new_count = 0
+    status_counts: Dict[str, int] = {}
 
     for i, f in enumerate(files, 1):
         duration = _get_video_duration(f["filepath"])
         size_str = _format_file_size(f["size_bytes"])
         total_size += f["size_bytes"]
 
-        if f["status"] == "New":
+        raw_status = str(f.get("status", "New"))
+        retry_count = int(f.get("retry_count", 0) or 0)
+
+        # Track counts per status
+        status_counts[raw_status] = status_counts.get(raw_status, 0) + 1
+
+        # Format the status display
+        if raw_status == "New":
             status_text = Text("● New", style="bold green")
-            new_count += 1
+        elif raw_status == "FAILED":
+            retry_label = f" (retry {retry_count}/3)" if retry_count > 0 else ""
+            status_text = Text(f"❌ Failed{retry_label}", style="bold red")
         else:
-            status_text = Text("○ Queued", style="dim yellow")
+            stage_label, stage_style = PIPELINE_STAGES.get(raw_status, (raw_status, "white"))
+            status_text = Text(stage_label, style=stage_style)
 
         table.add_row(
             str(i),
@@ -126,21 +138,37 @@ def render_dry_run_table(files: List[Dict[str, Any]]) -> None:
     console.print()
     console.print(table)
 
-    # Summary line
-    summary = (
-        f"\n  [bold]{len(files)}[/bold] files discovered  ·  "
-        f"[bold green]{new_count}[/bold green] new  ·  "
-        f"[bold]{_format_file_size(total_size)}[/bold] total size"
-    )
-    console.print(summary)
+    # Summary line with per-status breakdown
+    new_count = status_counts.get("New", 0)
+    completed_count = status_counts.get("COMPLETED", 0)
+    failed_count = status_counts.get("FAILED", 0)
+    in_progress = len(files) - new_count - completed_count - failed_count
+
+    parts = [f"[bold]{len(files)}[/bold] files"]
+    if completed_count > 0:
+        parts.append(f"[bold green]{completed_count}[/bold green] completed")
+    if in_progress > 0:
+        parts.append(f"[bold cyan]{in_progress}[/bold cyan] in progress")
+    if failed_count > 0:
+        parts.append(f"[bold red]{failed_count}[/bold red] failed")
+    if new_count > 0:
+        parts.append(f"[bold green]{new_count}[/bold green] new")
+    parts.append(f"[bold]{_format_file_size(total_size)}[/bold] total size")
+
+    console.print(f"\n  {' · '.join(parts)}")
 
     if new_count > 0:
         console.print(
-            "\n  [dim]Run [bold]trebek --once[/bold] to process these files, "
-            "or [bold]trebek[/bold] for continuous daemon mode.[/dim]\n"
+            "\n  [dim]Run [bold]trebek run --once[/bold] to process new files, "
+            "or [bold]trebek run[/bold] for continuous daemon mode.[/dim]\n"
+        )
+    elif failed_count > 0:
+        console.print(
+            "\n  [dim]Run [bold]trebek run --stage <stage> --once[/bold] to retry failed files, "
+            "or [bold]trebek retry[/bold] to reset all failures.[/dim]\n"
         )
     else:
-        console.print("\n  [dim]All discovered files are already queued for processing.[/dim]\n")
+        console.print("\n  [dim]All discovered files have been processed or are in progress.[/dim]\n")
 
 
 def render_episode_status_table(episodes: List[Dict[str, str]]) -> Table:

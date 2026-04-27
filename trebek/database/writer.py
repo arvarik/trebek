@@ -1,12 +1,25 @@
+"""
+DatabaseWriter — Actor-pattern SQLite write serializer.
+
+Provides a single-threaded, queue-based actor that serializes all database
+writes to prevent SQLite concurrency issues. Supports individual queries,
+batch operations (``executemany``), and atomic multi-query transactions.
+
+Pipeline-specific query operations (polling, retries, telemetry) are
+provided by the ``PipelineQueryMixin`` in ``trebek.database.pipeline_queries``.
+"""
+
 import asyncio
 import structlog
 import sqlite3
 from typing import Any, List, Optional, Tuple
 
+from trebek.database.pipeline_queries import PipelineQueryMixin
+
 logger = structlog.get_logger()
 
 
-class DatabaseWriter:
+class DatabaseWriter(PipelineQueryMixin):
     """
     Actor Pattern for SQLite write-operations, serializing concurrent requests
     while guaranteeing that waiting coroutines never deadlock.
@@ -144,101 +157,18 @@ class DatabaseWriter:
 
     async def _background_incremental_vacuum(self, interval_seconds: int = 300) -> None:
         """
-        Background asyncio task that triggers PRAGMA incremental_vacuum periodically
-        to free pages without blocking pipeline throughput.
+        Background asyncio task that triggers PRAGMA incremental_vacuum and
+        wal_checkpoint periodically to free pages and prevent WAL file bloat
+        without blocking pipeline throughput.
         """
         while True:
             try:
                 await asyncio.sleep(interval_seconds)
-                logger.info("Triggering background SQLite PRAGMA incremental_vacuum...")
+                logger.info("Triggering background SQLite maintenance (vacuum + WAL checkpoint)...")
                 await self.execute("PRAGMA incremental_vacuum;", (), timeout=30.0)
+                await self.execute("PRAGMA wal_checkpoint(PASSIVE);", (), timeout=30.0)
             except asyncio.CancelledError:
                 logger.info("Vacuum background task cancelled.")
                 break
             except Exception as e:
                 logger.error("Incremental vacuum background task failed", error=str(e))
-
-    async def poll_for_work(self, from_status: str, to_status: str) -> Optional[str]:
-        """
-        Atomic polling query to avoid race conditions between workers.
-        Requires SQLite 3.35+ for RETURNING.
-        """
-        query = """
-        UPDATE pipeline_state 
-        SET status = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE episode_id = (
-            SELECT episode_id 
-            FROM pipeline_state 
-            WHERE status = ? 
-            ORDER BY created_at ASC
-            LIMIT 1
-        ) 
-        RETURNING episode_id;
-        """
-        try:
-            # Execute will return the lastrowid or the fetchall output depending on RETURNING clause support
-            result = await self.execute(query, (to_status, from_status), timeout=5.0)
-            if result and isinstance(result, list) and len(result) > 0:
-                return result[0][0]  # extract RETURNING clause
-            return None
-        except Exception as e:
-            logger.error("Error polling for work", error=str(e))
-            return None
-
-    async def update_job_telemetry(self, episode_id: str, **kwargs: Any) -> None:
-        """
-        Upserts job telemetry fields for a given episode.
-        """
-        if not kwargs:
-            return
-
-        # First ensure a row exists
-        await self.execute("INSERT OR IGNORE INTO job_telemetry (episode_id) VALUES (?)", (episode_id,))
-
-        # Then update the provided fields
-        set_clauses = []
-        params = []
-        for k, v in kwargs.items():
-            set_clauses.append(f"{k} = ?")
-            params.append(v)
-
-        params.append(episode_id)
-
-        query = f"UPDATE job_telemetry SET {', '.join(set_clauses)} WHERE episode_id = ?"
-        await self.execute(query, tuple(params))
-
-    async def insert_job_telemetry(self, telemetry: Any) -> None:
-        """
-        Inserts a job telemetry record into the database.
-        """
-        query = """
-        INSERT INTO job_telemetry (
-            episode_id, peak_vram_mb, avg_gpu_utilization_pct,
-            stage_ingestion_ms, stage_gpu_extraction_ms,
-            stage_commercial_filtering_ms, stage_structured_extraction_ms,
-            stage_multimodal_ms, stage_vectorization_ms,
-            gemini_total_input_tokens, gemini_total_output_tokens,
-            gemini_total_cached_tokens, gemini_total_cost_usd,
-            gemini_api_latency_ms, pydantic_retry_count
-        ) VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        )
-        """
-        params = (
-            telemetry.episode_id,
-            telemetry.peak_vram_mb,
-            telemetry.avg_gpu_utilization_pct,
-            telemetry.stage_ingestion_ms,
-            telemetry.stage_gpu_extraction_ms,
-            telemetry.stage_commercial_filtering_ms,
-            telemetry.stage_structured_extraction_ms,
-            telemetry.stage_multimodal_ms,
-            telemetry.stage_vectorization_ms,
-            telemetry.gemini_total_input_tokens,
-            telemetry.gemini_total_output_tokens,
-            telemetry.gemini_total_cached_tokens,
-            telemetry.gemini_total_cost_usd,
-            telemetry.gemini_api_latency_ms,
-            telemetry.pydantic_retry_count,
-        )
-        await self.execute(query, params)

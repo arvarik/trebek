@@ -3,13 +3,14 @@ import asyncio
 import structlog
 from trebek.schemas import Episode, Clue
 from trebek.llm.client import _get_client
+from trebek.config import MODEL_PRO
 
 logger = structlog.get_logger()
 GEMINI_CONCURRENCY = 3
 
 
 async def execute_pass_3_multimodal_augmentation(
-    episode: Episode, video_filepath: str, output_dir: str
+    episode: Episode, video_filepath: str, output_dir: str, model: str = MODEL_PRO
 ) -> "tuple[Episode, dict[str, float]]":
     """
     Pass 3: Multimodal Vision Augmentation (Gemini 3.1 Pro Preview).
@@ -73,10 +74,11 @@ async def execute_pass_3_multimodal_augmentation(
                             uploaded_file,
                         ]
                         response, usage = await client.generate_content(
-                            model="gemini-3.1-pro-preview",
+                            model=model,
                             prompt=prompt,
                             system_instruction="You are a precise temporal grounding model. Return ONLY a float.",
                             max_output_tokens=64,
+                            invocation_context=f"Pass 3 Temporal Sniping (clue {clue.selection_order})",
                         )
                         for k in total_usage:
                             total_usage[k] += usage.get(k, 0.0)

@@ -36,11 +36,11 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
 
                 if not os.path.exists(video_filepath):
                     logger.error("Video file not found", filepath=video_filepath)
-                    await orchestrator.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'FAILED', updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
-                        (episode_id,),
+                    permanently_failed = await orchestrator.db_writer.fail_episode_with_retry(
+                        episode_id, "PENDING", f"Video file not found: {video_filepath}"
                     )
-                    orchestrator.stats["failed"] += 1
+                    if permanently_failed:
+                        orchestrator.stats["failed"] += 1
                     progress.advance(task_id)
                     continue
 
@@ -66,21 +66,21 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                         (transcript_path, episode_id),
                     )
                     current_episode_id = None
-                    if not orchestrator.nollm:
+                    if orchestrator.is_stage_active("extract"):
                         orchestrator.llm_work_ready.set()
                     else:
-                        # In --nollm mode, GPU is the final worker — advance the progress bar
+                        # Transcribe is the last active stage — advance progress
                         orchestrator.stats["completed"] += 1
                         progress.advance(task_id)
                     logger.info("Transcription complete", episode_id=episode_id)
                 except Exception as e:
                     logger.error("GPU Orchestrator failed", error=str(e))
-                    await orchestrator.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'FAILED', updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
-                        (episode_id,),
+                    permanently_failed = await orchestrator.db_writer.fail_episode_with_retry(
+                        episode_id, "PENDING", str(e)
                     )
                     current_episode_id = None
-                    orchestrator.stats["failed"] += 1
+                    if permanently_failed:
+                        orchestrator.stats["failed"] += 1
                     progress.advance(task_id)
             else:
                 current_episode_id = None

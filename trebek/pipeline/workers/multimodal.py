@@ -6,6 +6,7 @@ from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
 from trebek.schemas import Episode
 from trebek.llm import execute_pass_3_multimodal_augmentation
+from trebek.config import MODEL_PRICING
 
 if TYPE_CHECKING:
     from trebek.pipeline.orchestrator import TrebekPipelineOrchestrator
@@ -28,8 +29,8 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                 )
                 try:
                     episode_data_path = os.path.join(orchestrator.output_dir, f"episode_{episode_id}.json")
-                    with open(episode_data_path, "r", encoding="utf-8") as f:
-                        episode_json = f.read()
+                    from pathlib import Path
+                    episode_json = await asyncio.to_thread(Path(episode_data_path).read_text, encoding="utf-8")
                     episode_data = await asyncio.to_thread(Episode.model_validate_json, episode_json)
 
                     # Look up the actual source filename
@@ -42,7 +43,8 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
 
                     start_multi_t = time.perf_counter()
                     episode_data, multi_usage = await execute_pass_3_multimodal_augmentation(
-                        episode_data, video_filepath, orchestrator.output_dir
+                        episode_data, video_filepath, orchestrator.output_dir,
+                        model=orchestrator.llm_model,
                     )
                     stage_multimodal_ms = (time.perf_counter() - start_multi_t) * 1000
 
@@ -50,10 +52,13 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                     with open(episode_data_path, "w", encoding="utf-8") as f:
                         f.write(episode_data.model_dump_json())
 
-                    # Update telemetry (simplified cost additive)
+                    # Update telemetry (dynamic pricing from config)
+                    actual_model = orchestrator.llm_model
+                    model_pricing = MODEL_PRICING.get(actual_model, {"input": 1.25, "output": 5.00})
                     cost_3 = (
-                        multi_usage.get("input_tokens", 0) * 1.25 + multi_usage.get("output_tokens", 0) * 5.00
-                    ) / 1000000
+                        multi_usage.get("input_tokens", 0) * model_pricing["input"]
+                        + multi_usage.get("output_tokens", 0) * model_pricing["output"]
+                    ) / 1_000_000
 
                     await orchestrator.db_writer.execute(
                         "UPDATE job_telemetry SET "
@@ -77,16 +82,21 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                         (episode_id,),
                     )
                     current_episode_id = None
-                    orchestrator.state_machine_work_ready.set()
+                    if orchestrator.is_stage_active("verify"):
+                        orchestrator.state_machine_work_ready.set()
+                    else:
+                        # Augment is the last active stage — advance progress
+                        orchestrator.stats["completed"] += 1
+                        progress.advance(task_id)
                     logger.info("Multimodal extraction complete", episode_id=episode_id)
                 except Exception as e:
                     logger.error("Multimodal worker failed", error=str(e))
-                    await orchestrator.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'FAILED', updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
-                        (episode_id,),
+                    permanently_failed = await orchestrator.db_writer.fail_episode_with_retry(
+                        episode_id, "SAVING", str(e)
                     )
                     current_episode_id = None
-                    orchestrator.stats["failed"] += 1
+                    if permanently_failed:
+                        orchestrator.stats["failed"] += 1
                     progress.advance(task_id)
             else:
                 current_episode_id = None

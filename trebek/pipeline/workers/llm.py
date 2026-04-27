@@ -7,6 +7,7 @@ import structlog
 from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
 from trebek.llm import execute_pass_1_speaker_anchoring, execute_pass_2_data_extraction
+from trebek.config import MODEL_PRICING, MODEL_FLASH
 
 if TYPE_CHECKING:
     from trebek.pipeline.orchestrator import TrebekPipelineOrchestrator
@@ -34,8 +35,12 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                     if rows and rows[0][0]:
                         transcript_path = rows[0][0]
                         logger.info("Loading transcript", episode_id=episode_id, path=transcript_path)
-                        with gzip.open(transcript_path, "rt", encoding="utf-8") as f:
-                            gpu_data = json.load(f)
+
+                        def _load_transcript(path: str) -> dict[str, Any]:
+                            with gzip.open(path, "rt", encoding="utf-8") as f:
+                                return json.load(f)  # type: ignore[no-any-return]
+
+                        gpu_data: dict[str, Any] = await asyncio.to_thread(_load_transcript, transcript_path)
 
                         transcript_data = gpu_data.get("transcript", {})
                         segments = transcript_data.get("segments", [])
@@ -88,7 +93,9 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                         )
 
                         pass2_start = time.perf_counter()
-                        data, usage2, retries = await execute_pass_2_data_extraction(segments, speaker_mapping)
+                        data, usage2, retries = await execute_pass_2_data_extraction(
+                            segments, speaker_mapping, model=orchestrator.llm_model,
+                        )
                         pass2_ms = (time.perf_counter() - pass2_start) * 1000
 
                         stage_structured_extraction_ms = (time.perf_counter() - start_llm_t) * 1000
@@ -98,12 +105,18 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                         total_cached = int(usage1.get("cached_tokens", 0) + usage2.get("cached_tokens", 0))
                         total_latency = usage1.get("latency_ms", 0.0) + usage2.get("latency_ms", 0.0)
 
+                        # Dynamic cost calculation based on selected model
+                        flash_pricing = MODEL_PRICING[MODEL_FLASH]
+                        pass2_pricing = MODEL_PRICING.get(orchestrator.llm_model, MODEL_PRICING[orchestrator.llm_model])
+
                         cost_1 = (
-                            usage1.get("input_tokens", 0) * 0.075 + usage1.get("output_tokens", 0) * 0.30
-                        ) / 1000000
+                            usage1.get("input_tokens", 0) * flash_pricing["input"]
+                            + usage1.get("output_tokens", 0) * flash_pricing["output"]
+                        ) / 1_000_000
                         cost_2 = (
-                            usage2.get("input_tokens", 0) * 1.25 + usage2.get("output_tokens", 0) * 5.00
-                        ) / 1000000
+                            usage2.get("input_tokens", 0) * pass2_pricing["input"]
+                            + usage2.get("output_tokens", 0) * pass2_pricing["output"]
+                        ) / 1_000_000
                         total_cost = cost_1 + cost_2
 
                         logger.info(
@@ -116,6 +129,7 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                             total_output_tokens=total_output,
                             retries_used=retries,
                             cost_usd=round(total_cost, 6),
+                            model=orchestrator.llm_model,
                         )
 
                         await orchestrator.db_writer.update_job_telemetry(
@@ -139,18 +153,23 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                             (episode_id,),
                         )
                         current_episode_id = None
-                        orchestrator.multimodal_work_ready.set()
+                        if orchestrator.is_stage_active("augment"):
+                            orchestrator.multimodal_work_ready.set()
+                        else:
+                            # Extract is the last active stage — advance progress
+                            orchestrator.stats["completed"] += 1
+                            progress.advance(task_id)
                         logger.info("LLM extraction complete", episode_id=episode_id)
                     else:
                         raise ValueError("Transcript path not found in database")
                 except Exception as e:
                     logger.error("LLM Pipeline failed", error=str(e))
-                    await orchestrator.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'FAILED', updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
-                        (episode_id,),
+                    permanently_failed = await orchestrator.db_writer.fail_episode_with_retry(
+                        episode_id, "TRANSCRIPT_READY", str(e)
                     )
                     current_episode_id = None
-                    orchestrator.stats["failed"] += 1
+                    if permanently_failed:
+                        orchestrator.stats["failed"] += 1
                     progress.advance(task_id)
             else:
                 current_episode_id = None
