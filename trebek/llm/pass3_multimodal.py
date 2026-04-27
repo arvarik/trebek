@@ -96,7 +96,7 @@ async def execute_pass_3_multimodal_augmentation(
                             system_instruction="You are a precise temporal grounding model. Return ONLY a float.",
                             max_output_tokens=64,
                             invocation_context=f"Pass 3 Temporal Sniping (clue {clue.selection_order})",
-                            thinking_level="minimal",  # Perception task, not reasoning
+                            thinking_level="low",  # Perception task, minimal reasoning needed
                         )
                         for k in total_usage:
                             total_usage[k] += usage.get(k, 0.0)

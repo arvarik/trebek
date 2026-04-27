@@ -149,6 +149,35 @@ def gpu_worker_task(
             )
             # Fall through with the unaligned transcript_data
 
+        # 4. Speaker Diarization — assign SPEAKER_XX labels to each segment
+        # Requires HF_TOKEN env var for pyannote/speaker-diarization-3.1 (gated model).
+        # Without this step, segments lack the 'speaker' field and downstream
+        # LLM extraction cannot determine who said what.
+        hf_token = os.environ.get("HF_TOKEN", "")
+        if hf_token:
+            try:
+                diarize_model = whisperx.DiarizationPipeline(use_auth_token=hf_token, device="cuda")
+                diarize_segments = diarize_model(audio_path)
+                transcript_data = whisperx.assign_word_speakers(diarize_segments, transcript_data)
+                speaker_set = {s.get("speaker", "?") for s in transcript_data.get("segments", [])}
+                logger.info(
+                    "WhisperX diarization complete",
+                    speakers_found=len(speaker_set),
+                    speaker_ids=sorted(speaker_set),
+                )
+                del diarize_model
+            except Exception as diarize_err:
+                logger.warning(
+                    "WhisperX diarization failed, segments will lack speaker labels",
+                    error=str(diarize_err)[:200],
+                )
+        else:
+            logger.warning(
+                "HF_TOKEN not set — skipping speaker diarization. "
+                "Segments will lack 'speaker' field. Set HF_TOKEN env var "
+                "with a HuggingFace token that has access to pyannote/speaker-diarization-3.1"
+            )
+
         # Explicit Memory Management
         del audio
         gc.collect()

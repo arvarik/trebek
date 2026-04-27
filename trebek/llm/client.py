@@ -122,7 +122,7 @@ class GeminiClient:
         kwargs: dict[str, Any] = {"temperature": 0.0, "max_output_tokens": max_output_tokens}
         if not cached_content_name:
             kwargs["system_instruction"] = system_instruction
-        _VALID_THINKING_LEVELS = {"MINIMAL", "LOW", "MEDIUM", "HIGH"}
+        _VALID_THINKING_LEVELS = {"LOW", "MEDIUM", "HIGH"}
         if response_schema:
             kwargs["response_mime_type"] = "application/json"
             kwargs["response_json_schema"] = response_schema.model_json_schema()

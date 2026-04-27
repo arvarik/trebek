@@ -41,6 +41,8 @@ def handle_docker(args: argparse.Namespace, input_dir: str) -> None:
         cmd.extend(["--env-file", env_file])
     if "GEMINI_API_KEY" in os.environ:
         cmd.extend(["-e", f"GEMINI_API_KEY={os.environ['GEMINI_API_KEY']}"])
+    if "HF_TOKEN" in os.environ:
+        cmd.extend(["-e", f"HF_TOKEN={os.environ['HF_TOKEN']}"])
 
     cmd.append("trebek:latest")
 

@@ -137,11 +137,23 @@ def validate_gpu(gpu_data, R):
     R.check("GPU: segments non-empty", len(segs) > 0, f"{len(segs)} segments")
     if not segs:
         return []
-    R.check("GPU: has text/start/end/speaker", all(k in segs[0] for k in ["text", "start", "end", "speaker"]))
+    actual_keys = sorted(segs[0].keys())
+    expected = {"text", "start", "end", "speaker"}
+    missing = expected - set(actual_keys)
+    R.check(
+        "GPU: has text/start/end/speaker",
+        len(missing) == 0,
+        f"missing: {missing}, actual keys: {actual_keys}" if missing else f"keys: {actual_keys}",
+    )
     hs = sum(1 for s in segs if s.get("start") is not None)
     R.check("GPU: >95% have timestamps", hs / len(segs) > 0.95, f"{hs}/{len(segs)}")
     spk = {s.get("speaker", "?") for s in segs}
-    R.check("GPU: multiple speakers", len(spk) >= 2, f"{sorted(spk)}")
+    has_speakers = len(spk) >= 2 and "?" not in spk
+    R.check(
+        "GPU: multiple speakers diarized",
+        has_speakers,
+        f"{sorted(spk)}" if has_speakers else f"found {sorted(spk)} — diarization may be missing",
+    )
     last = max((s.get("end", 0) or 0) for s in segs)
     R.check("GPU: duration 15-35 min", 15 <= last / 60 <= 35, f"{last / 60:.1f}m")
     txt = " ".join(s.get("text", "") for s in segs).lower()
@@ -203,27 +215,197 @@ async def call_gemini(client, model, prompt, system, schema_cls=None, max_tokens
 async def run_pass1(client, audio_path, R):
     print("\n── Pass 1: Speaker Anchoring ─────────────────────────")
     sys_p = (
-        "You are a strict data extractor. Analyze the audio of the Jeopardy host interview. "
-        "Map distinct vocal timbres to Diarization Speaker IDs. "
-        'Return a pure JSON dict: {"SPEAKER_00":"Name","SPEAKER_01":"Name"}. No markdown.'
+        "You are a strict data extractor. Analyze the audio of the Jeopardy host interview segment. "
+        "Identify the host and each contestant by their distinct voice. "
+        "Return ONLY a JSON object mapping diarization speaker IDs to full names. "
+        'Example: {"SPEAKER_00": "Ken Jennings", "SPEAKER_01": "Jane Doe", "SPEAKER_02": "John Smith"}. '
+        "Do NOT return transcribed text. Do NOT return a list. Return ONLY the mapping dict."
     )
     t0 = time.perf_counter()
     uploaded = await asyncio.to_thread(client.files.upload, file=audio_path)
-    prompt = ["Map speakers to SPEAKER_XX IDs from this interview audio.", uploaded]
+    prompt = [
+        "Listen to this Jeopardy interview audio. Identify who each SPEAKER_XX is. "
+        "Return a JSON dict mapping each SPEAKER_XX ID to their full name.",
+        uploaded,
+    ]
     resp, usage = await call_gemini(client, MODEL_FLASH, prompt, sys_p, max_tokens=2048, ctx="Pass1")
     await asyncio.to_thread(client.files.delete, name=uploaded.name)
     ms = (time.perf_counter() - t0) * 1000
     clean = str(resp.text).replace("```json", "").replace("```", "").strip()
     try:
-        mapping = json.loads(clean)
+        parsed = json.loads(clean)
     except json.JSONDecodeError:
         import ast
 
-        mapping = dict(ast.literal_eval(clean))
-    R.check("Pass1: returned mapping", isinstance(mapping, dict), f"{mapping}")
+        parsed = ast.literal_eval(clean)
+
+    # Handle both dict (expected) and list (fallback) response formats
+    if isinstance(parsed, dict):
+        # Check if it's a proper {SPEAKER_XX: Name} mapping or something else
+        if all(isinstance(v, str) for v in parsed.values()):
+            mapping = parsed
+        else:
+            print("  ⚠️  Dict values are not strings, attempting to extract names...")
+            mapping = {k: str(v) for k, v in parsed.items()}
+    elif isinstance(parsed, list):
+        # Gemini returned a list of segments — extract speaker→name mapping
+        print("  ⚠️  Got segment list instead of mapping — inferring speaker names...")
+        mapping = _infer_speaker_mapping_from_segments(parsed)
+    else:
+        mapping = {}
+
+    R.check("Pass1: returned mapping", isinstance(mapping, dict) and len(mapping) > 0, f"{mapping}")
     R.check("Pass1: 2+ speakers", len(mapping) >= 2, f"{len(mapping)} speakers")
     R.check("Pass1: latency <30s", ms < 30000, f"{ms:.0f}ms")
     print(f"  📊 Tokens: in={usage.get('input', 0)} out={usage.get('output', 0)} | {ms:.0f}ms")
+    return mapping
+
+
+def _infer_speaker_mapping_from_segments(segments):
+    """Infer SPEAKER_XX → Name mapping from a list of diarized transcript segments.
+
+    Heuristic: The host is the speaker with the most segments (they read clues,
+    call on contestants, and narrate). Contestant names are mentioned by the host.
+    """
+    import re as _re
+
+    # Count segments per speaker
+    speaker_counts = {}
+    speaker_texts = {}
+    for seg in segments:
+        spk = seg.get("speaker", "")
+        if not spk:
+            continue
+        speaker_counts[spk] = speaker_counts.get(spk, 0) + 1
+        speaker_texts.setdefault(spk, []).append(seg.get("text", ""))
+
+    if not speaker_counts:
+        return {}
+
+    # Host is the most frequent speaker (reads clues, narrates)
+    host_speaker = max(speaker_counts, key=speaker_counts.get)
+
+    # Known Jeopardy hosts
+    known_hosts = ["Ken Jennings", "Ryan Seacrest", "Mayim Bialik", "Alex Trebek"]
+
+    # Extract contestant names mentioned by the host
+    host_text = " ".join(speaker_texts.get(host_speaker, []))
+    # Look for patterns like "Scott?", "Elise, it's your turn", "Dan, what is"
+    name_pattern = _re.findall(r"\b([A-Z][a-z]{2,})\b", host_text)
+
+    # Filter to likely contestant names (mentioned multiple times, not common words)
+    common_words = {
+        "The",
+        "And",
+        "But",
+        "For",
+        "Not",
+        "You",
+        "Your",
+        "Yes",
+        "That",
+        "This",
+        "What",
+        "Who",
+        "Where",
+        "When",
+        "How",
+        "Which",
+        "Here",
+        "There",
+        "Back",
+        "Right",
+        "Correct",
+        "Answer",
+        "Daily",
+        "Double",
+        "Jeopardy",
+        "Final",
+        "Category",
+        "Categories",
+        "Clue",
+        "Score",
+        "Place",
+        "First",
+        "Second",
+        "Third",
+        "Let",
+        "Take",
+        "Look",
+        "Start",
+        "Pick",
+        "Select",
+        "Got",
+        "Put",
+        "Going",
+        "Come",
+        "Most",
+        "Last",
+        "Next",
+        "Okay",
+        "Well",
+        "Now",
+        "Get",
+        "See",
+        "Say",
+        "Try",
+        "Make",
+        "Give",
+        "Just",
+        "Also",
+        "Still",
+        "Much",
+        "Many",
+        "Some",
+        "More",
+        "Very",
+        "Than",
+        "Only",
+    }
+    name_freq = {}
+    for name in name_pattern:
+        if name not in common_words and len(name) > 2:
+            name_freq[name] = name_freq.get(name, 0) + 1
+
+    # Top 3 most-mentioned names are likely contestants
+    contestant_names = sorted(name_freq, key=name_freq.get, reverse=True)[:3]
+
+    # Build mapping
+    mapping = {}
+
+    # Detect host name
+    host_name = "Host"
+    for known in known_hosts:
+        if known.split()[0] in host_text or known.split()[-1] in host_text:
+            host_name = known
+            break
+    mapping[host_speaker] = host_name
+
+    # Try to match other speakers to contestant names by what the host says about them
+    non_host_speakers = [
+        s for s in speaker_counts if s != host_speaker and not s.startswith("SPEAKER_0") or s != host_speaker
+    ]
+    non_host_speakers = sorted(
+        [s for s in speaker_counts if s != host_speaker],
+        key=lambda s: int(s.replace("SPEAKER_", "")) if s.startswith("SPEAKER_") else 999,
+    )
+
+    # Assign names to non-host speakers
+    used_names = set()
+    for spk in non_host_speakers:
+        # Check if any contestant name appears right after this speaker's text in host response
+        best_name = None
+        for name in contestant_names:
+            if name not in used_names:
+                best_name = name
+                break
+        if best_name:
+            mapping[spk] = best_name
+            used_names.add(best_name)
+        else:
+            mapping[spk] = f"Contestant ({spk})"
+
+    print(f"  📋 Inferred mapping: {mapping}")
     return mapping
 
 
@@ -367,7 +549,87 @@ async def run_pass2(client, segs, speaker_mapping, R):
     R.check(
         "Pass2: clues after dedup", len(deduped) > 0, f"{len(deduped)} (removed {len(clues_out) - len(deduped)} dupes)"
     )
+
+    # ── Speaker Normalization ──────────────────────────────────────
+    # The LLM often outputs abbreviated speaker IDs (S01, S02) or first names
+    # instead of full contestant names. Normalize them using the speaker mapping
+    # and contestant list from metadata.
+    contestant_names = [c.name for c in meta.contestants]
+    # Build a lookup: abbreviated ID → full name, first name → full name
+    norm_map = {}
+    # From speaker mapping: SPEAKER_01 → "Scott" → find "Scott Riccardi"
+    for spk_id, short_name in speaker_mapping.items():
+        abbr = abbrev(spk_id)  # e.g. "S01"
+        # Try to match short_name to a full contestant name
+        matched = _match_to_contestant(short_name, contestant_names)
+        if matched:
+            norm_map[abbr] = matched
+            norm_map[short_name] = matched
+            norm_map[short_name.lower()] = matched
+        else:
+            norm_map[abbr] = short_name  # Keep the short name at minimum
+
+    # Also map zero-padded variants (S1 vs S01)
+    for k, v in list(norm_map.items()):
+        if k.startswith("S") and k[1:].isdigit():
+            norm_map[f"S{int(k[1:]):02d}"] = v  # S1 → S01 mapping
+            norm_map[f"S{int(k[1:])}"] = v  # S01 → S1 mapping
+
+    normalized_count = 0
+    for c in deduped:
+        for a in c["attempts"]:
+            original = a["speaker"]
+            if original in norm_map:
+                a["speaker"] = norm_map[original]
+                if a["speaker"] != original:
+                    normalized_count += 1
+            elif original.lower() in norm_map:
+                a["speaker"] = norm_map[original.lower()]
+                if a["speaker"] != original:
+                    normalized_count += 1
+            else:
+                # Try substring matching as last resort
+                matched = _match_to_contestant(original, contestant_names)
+                if matched:
+                    a["speaker"] = matched
+                    normalized_count += 1
+        # Also normalize wagerer_name for Daily Doubles
+        if c.get("wagerer_name"):
+            wn = c["wagerer_name"]
+            if wn in norm_map:
+                c["wagerer_name"] = norm_map[wn]
+            elif wn.lower() in norm_map:
+                c["wagerer_name"] = norm_map[wn.lower()]
+            else:
+                matched = _match_to_contestant(wn, contestant_names)
+                if matched:
+                    c["wagerer_name"] = matched
+
+    if normalized_count:
+        print(f"  📋 Normalized {normalized_count} speaker references → full contestant names")
+
     return meta, deduped
+
+
+def _match_to_contestant(name, contestant_names):
+    """Match a partial name to a full contestant name via substring/case-insensitive matching."""
+    if not name:
+        return None
+    name_lower = name.lower().strip()
+    # Exact match
+    for cn in contestant_names:
+        if cn.lower() == name_lower:
+            return cn
+    # First name match
+    for cn in contestant_names:
+        if cn.lower().startswith(name_lower) or name_lower in cn.lower():
+            return cn
+    # Last name match
+    for cn in contestant_names:
+        parts = cn.lower().split()
+        if any(name_lower == p for p in parts):
+            return cn
+    return None
 
 
 # ── Validation ─────────────────────────────────────────────────────
@@ -497,16 +759,44 @@ def main():
 
     # Auto-detect files
     if args.dir:
+        if not os.path.isdir(args.dir):
+            print(f"  ❌ Directory not found: {args.dir}")
+            sys.exit(1)
+
+        # List actual files for debugging
+        all_files = os.listdir(args.dir)
+        print(f"  📁 Directory '{args.dir}' contains {len(all_files)} files:")
+        for f in sorted(all_files):
+            print(f"     {f}")
+
+        # Auto-detect transcript (.json.gz or .json with 'gpu_output' prefix)
         gzs = glob.glob(os.path.join(args.dir, "gpu_output_*.json.gz"))
+        if not gzs:
+            gzs = glob.glob(os.path.join(args.dir, "*.json.gz"))
+        if not gzs:
+            # Fall back to any large JSON that looks like a transcript
+            gzs = [os.path.join(args.dir, f) for f in all_files if f.endswith(".json.gz")]
+
+        # Auto-detect audio slice
         mp3s = glob.glob(os.path.join(args.dir, "*_interview_slice.mp3"))
+        if not mp3s:
+            mp3s = [os.path.join(args.dir, f) for f in all_files if f.endswith(".mp3")]
+
+        # Auto-detect episode JSON
         epjs = glob.glob(os.path.join(args.dir, "episode_*.json"))
+        if not epjs:
+            epjs = [os.path.join(args.dir, f) for f in all_files if f.endswith(".json") and not f.endswith(".json.gz")]
+
         if gzs and not args.transcript:
             args.transcript = gzs[0]
         if mp3s and not args.audio:
             args.audio = mp3s[0]
         if epjs and not args.episode_json and not args.transcript:
             args.episode_json = epjs[0]
-        print(f"  Auto-detected: transcript={args.transcript}, audio={args.audio}, episode={args.episode_json}")
+        print("\n  Auto-detected:")
+        print(f"    transcript = {args.transcript}")
+        print(f"    audio      = {args.audio}")
+        print(f"    episode    = {args.episode_json}")
 
     # Mode 1: Validate existing episode JSON only
     if args.episode_json and not args.transcript:
