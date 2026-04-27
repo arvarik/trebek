@@ -148,12 +148,27 @@ def validate_gpu(gpu_data, R):
     hs = sum(1 for s in segs if s.get("start") is not None)
     R.check("GPU: >95% have timestamps", hs / len(segs) > 0.95, f"{hs}/{len(segs)}")
     spk = {s.get("speaker", "?") for s in segs}
-    has_speakers = len(spk) >= 2 and "?" not in spk
+    real_speakers = {s for s in spk if s.startswith("SPEAKER_")}
+    unassigned_count = sum(1 for s in segs if s.get("speaker", "?") == "?")
+    unassigned_pct = unassigned_count / len(segs) * 100 if segs else 0
+    has_speakers = len(real_speakers) >= 2
     R.check(
         "GPU: multiple speakers diarized",
         has_speakers,
-        f"{sorted(spk)}" if has_speakers else f"found {sorted(spk)} — diarization may be missing",
+        f"{len(real_speakers)} speakers: {sorted(real_speakers)}"
+        if has_speakers
+        else f"found {sorted(spk)} — diarization may be missing",
     )
+    if has_speakers and unassigned_pct > 20:
+        R.warn(
+            "GPU: high unassigned speaker ratio",
+            f"{unassigned_count}/{len(segs)} ({unassigned_pct:.0f}%) segments have no speaker",
+        )
+    if has_speakers and len(real_speakers) > 8:
+        R.warn(
+            "GPU: possible over-segmentation",
+            f"{len(real_speakers)} distinct speakers detected (expected 3-5 for standard Jeopardy)",
+        )
     last = max((s.get("end", 0) or 0) for s in segs)
     R.check("GPU: duration 15-35 min", 15 <= last / 60 <= 35, f"{last / 60:.1f}m")
     txt = " ".join(s.get("text", "") for s in segs).lower()
