@@ -164,3 +164,57 @@ class TestNormalizeSpeakerNames:
         clues = [_make_clue_with_speaker("Bernstein")]
         _normalize_speaker_names(clues, {}, ["Rachel Bernstein", "Lawrence Subba", "Matt Amodio"])
         assert clues[0].attempts[0].speaker == "Rachel Bernstein"
+
+    def test_abbreviated_speaker_id_s00(self) -> None:
+        """Abbreviated S00/S01 speaker IDs must resolve through the mapping."""
+        clues = [_make_clue_with_speaker("S01")]
+        mapping = {"SPEAKER_00": "Ken Jennings", "SPEAKER_01": "Scott", "SPEAKER_02": "Dan"}
+        _normalize_speaker_names(
+            clues,
+            mapping,
+            ["Scott Riccardi", "Dan Puma", "Elise Kanat"],
+            host_name="Ken Jennings",
+        )
+        assert clues[0].attempts[0].speaker == "Scott Riccardi"
+
+    def test_abbreviated_speaker_id_s1_no_zero_pad(self) -> None:
+        """Non-zero-padded S1 variant also resolves."""
+        clues = [_make_clue_with_speaker("S1")]
+        mapping = {"SPEAKER_00": "Ken Jennings", "SPEAKER_01": "Scott"}
+        _normalize_speaker_names(
+            clues,
+            mapping,
+            ["Scott Riccardi", "Dan Puma", "Elise Kanat"],
+            host_name="Ken Jennings",
+        )
+        assert clues[0].attempts[0].speaker == "Scott Riccardi"
+
+    def test_abbreviated_speaker_id_s03(self) -> None:
+        """S03 resolves correctly for the third contestant."""
+        clues = [_make_clue_with_speaker("S03")]
+        mapping = {
+            "SPEAKER_00": "Ken Jennings",
+            "SPEAKER_01": "Scott",
+            "SPEAKER_02": "Elise",
+            "SPEAKER_03": "Dan",
+        }
+        _normalize_speaker_names(
+            clues,
+            mapping,
+            ["Scott Riccardi", "Dan Puma", "Elise Kanat"],
+            host_name="Ken Jennings",
+        )
+        assert clues[0].attempts[0].speaker == "Dan Puma"
+
+    def test_host_abbreviated_id_excluded(self) -> None:
+        """Abbreviated host speaker ID (S00) should not map to a contestant."""
+        clues = [_make_clue_with_speaker("S00")]
+        mapping = {"SPEAKER_00": "Ken Jennings", "SPEAKER_01": "Scott"}
+        _normalize_speaker_names(
+            clues,
+            mapping,
+            ["Scott Riccardi", "Dan Puma"],
+            host_name="Ken Jennings",
+        )
+        # S00 = host, should NOT be resolved to any contestant
+        assert clues[0].attempts[0].speaker not in ("Scott Riccardi", "Dan Puma")

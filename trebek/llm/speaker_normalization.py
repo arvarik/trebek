@@ -105,6 +105,23 @@ def _normalize_speaker_names(
             # Pass 1 name doesn't match any contestant — map SPEAKER_XX to it directly
             variant_map[sid] = mapped_name
 
+    # 4. Abbreviated speaker IDs: S0, S00, S01, s0, s00, etc.
+    #    The system prompt tells the LLM to use S0=SPEAKER_00, S1=SPEAKER_01, etc.
+    #    The LLM sometimes outputs these abbreviated forms in buzz attempt speaker fields.
+    for speaker_id, mapped_name in speaker_mapping.items():
+        if mapped_name.lower().strip() == host_lower:
+            continue
+        # Extract the numeric part from SPEAKER_XX
+        if speaker_id.upper().startswith("SPEAKER_"):
+            num = speaker_id[len("SPEAKER_") :]
+            resolved = variant_map.get(speaker_id.lower())
+            if resolved:
+                # Map all abbreviated variants
+                variant_map[f"s{num}".lower()] = resolved  # s00, s01
+                variant_map[f"s{int(num)}".lower()] = resolved  # s0, s1
+                # Also map zero-padded variants
+                variant_map[f"s{int(num):02d}"] = resolved  # s00, s01
+
     unmapped: set[str] = set()
 
     # Normalize buzz attempt speakers
