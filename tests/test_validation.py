@@ -2,7 +2,12 @@
 
 from trebek.llm.validation import _validate_extraction_integrity, _deduplicate_clues
 from trebek.schemas import (
-    Episode, Clue, BuzzAttempt, Contestant, FinalJeopardy, FinalJeopardyWager,
+    Episode,
+    Clue,
+    BuzzAttempt,
+    Contestant,
+    FinalJeopardy,
+    FinalJeopardyWager,
 )
 
 
@@ -40,9 +45,27 @@ def _make_episode(clues: list[Clue], num_dd_j: int = 1, num_dd_dj: int = 2) -> E
         host_name="Ken Jennings",
         is_tournament=False,
         contestants=[
-            Contestant(name="Alice", podium_position=1, occupational_category="STEM", is_returning_champion=True, description="A contestant"),
-            Contestant(name="Bob", podium_position=2, occupational_category="Law", is_returning_champion=False, description="A contestant"),
-            Contestant(name="Charlie", podium_position=3, occupational_category="Arts", is_returning_champion=False, description="A contestant"),
+            Contestant(
+                name="Alice",
+                podium_position=1,
+                occupational_category="STEM",
+                is_returning_champion=True,
+                description="A contestant",
+            ),
+            Contestant(
+                name="Bob",
+                podium_position=2,
+                occupational_category="Law",
+                is_returning_champion=False,
+                description="A contestant",
+            ),
+            Contestant(
+                name="Charlie",
+                podium_position=3,
+                occupational_category="Arts",
+                is_returning_champion=False,
+                description="A contestant",
+            ),
         ],
         clues=clues,
         final_jeopardy=FinalJeopardy(
@@ -77,8 +100,12 @@ class TestDeduplicateClues:
     def test_keeps_clue_with_more_attempts(self) -> None:
         """When deduplicating, prefer the clue with more buzz attempts."""
         att = BuzzAttempt(
-            attempt_order=1, speaker="Alice", response_given="What?",
-            is_correct=True, buzz_timestamp_ms=1500, response_start_timestamp_ms=1600,
+            attempt_order=1,
+            speaker="Alice",
+            response_given="What?",
+            is_correct=True,
+            buzz_timestamp_ms=1500,
+            response_start_timestamp_ms=1600,
             is_lockout_inferred=False,
         )
         c1 = _make_clue(start_ms=1000, row=2, col=3, attempts=[att])
@@ -102,20 +129,45 @@ class TestValidateExtractionIntegrity:
     def test_valid_episode_no_warnings(self) -> None:
         clues = []
         for i in range(25):
-            clues.append(_make_clue(round="Jeopardy", row=(i % 5) + 1, col=(i // 5) + 1, order=i + 1, start_ms=i * 2000, finish_ms=i * 2000 + 1000))
+            clues.append(
+                _make_clue(
+                    round="Jeopardy",
+                    row=(i % 5) + 1,
+                    col=(i // 5) + 1,
+                    order=i + 1,
+                    start_ms=i * 2000,
+                    finish_ms=i * 2000 + 1000,
+                )
+            )
         for i in range(25):
-            clues.append(_make_clue(round="Double Jeopardy", row=(i % 5) + 1, col=(i // 5) + 1, order=26 + i, start_ms=100000 + i * 2000, finish_ms=100000 + i * 2000 + 1000))
+            clues.append(
+                _make_clue(
+                    round="Double Jeopardy",
+                    row=(i % 5) + 1,
+                    col=(i // 5) + 1,
+                    order=26 + i,
+                    start_ms=100000 + i * 2000,
+                    finish_ms=100000 + i * 2000 + 1000,
+                )
+            )
         # Add one DD in Jeopardy and two in Double Jeopardy (replacing existing clues at valid positions)
         clues[3] = _make_clue(round="Jeopardy", row=4, col=1, order=4, start_ms=6000, finish_ms=7000, dd=True)
-        clues[30] = _make_clue(round="Double Jeopardy", row=1, col=1, order=31, start_ms=110000, finish_ms=111000, dd=True)
-        clues[35] = _make_clue(round="Double Jeopardy", row=1, col=2, order=36, start_ms=120000, finish_ms=121000, dd=True)
+        clues[30] = _make_clue(
+            round="Double Jeopardy", row=1, col=1, order=31, start_ms=110000, finish_ms=111000, dd=True
+        )
+        clues[35] = _make_clue(
+            round="Double Jeopardy", row=1, col=2, order=36, start_ms=120000, finish_ms=121000, dd=True
+        )
 
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
         assert len(warnings) == 0, f"Unexpected warnings: {warnings}"
 
     def test_too_many_jeopardy_clues(self) -> None:
-        clues = [_make_clue(round="Jeopardy", row=(i % 5) + 1, col=1, order=i, start_ms=i * 2000, finish_ms=i * 2000 + 1000) for i in range(35)]
+        clues = [
+            _make_clue(round="Jeopardy", row=(i % 5) + 1, col=1, order=i, start_ms=i * 2000, finish_ms=i * 2000 + 1000)
+            for i in range(35)
+        ]
         clues.append(_make_clue(round="Double Jeopardy", row=1, col=1, order=36, start_ms=80000, finish_ms=81000))
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
@@ -150,8 +202,12 @@ class TestValidateExtractionIntegrity:
 
     def test_unknown_buzzer_warning(self) -> None:
         att = BuzzAttempt(
-            attempt_order=1, speaker="UnknownPlayer", response_given="What?",
-            is_correct=True, buzz_timestamp_ms=1500, response_start_timestamp_ms=1600,
+            attempt_order=1,
+            speaker="UnknownPlayer",
+            response_given="What?",
+            is_correct=True,
+            buzz_timestamp_ms=1500,
+            response_start_timestamp_ms=1600,
             is_lockout_inferred=False,
         )
         clues = [

@@ -14,7 +14,15 @@ from trebek.config import settings, SUPPORTED_VIDEO_EXTENSIONS
 
 # Status thresholds: episodes at or beyond this status have "passed" the stage
 _STAGE_COMPLETED_STATUSES: dict[str, set[str]] = {
-    "transcribe": {"TRANSCRIPT_READY", "CLEANED", "SAVING", "MULTIMODAL_PROCESSING", "MULTIMODAL_DONE", "VECTORIZING", "COMPLETED"},
+    "transcribe": {
+        "TRANSCRIPT_READY",
+        "CLEANED",
+        "SAVING",
+        "MULTIMODAL_PROCESSING",
+        "MULTIMODAL_DONE",
+        "VECTORIZING",
+        "COMPLETED",
+    },
     "extract": {"SAVING", "MULTIMODAL_PROCESSING", "MULTIMODAL_DONE", "VECTORIZING", "COMPLETED"},
     "augment": {"MULTIMODAL_DONE", "VECTORIZING", "COMPLETED"},
     "verify": {"COMPLETED"},
@@ -38,9 +46,7 @@ def discover_video_files(input_dir: str, stage_filter: str | None = None) -> lis
     if os.path.exists(db_path):
         try:
             with sqlite3.connect(db_path) as conn:
-                rows = conn.execute(
-                    "SELECT episode_id, status, retry_count, last_error FROM pipeline_state"
-                ).fetchall()
+                rows = conn.execute("SELECT episode_id, status, retry_count, last_error FROM pipeline_state").fetchall()
                 for row in rows:
                     episode_states[row[0]] = (row[1], row[2] or 0, row[3])
         except sqlite3.OperationalError:

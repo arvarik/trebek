@@ -125,7 +125,9 @@ async def commit_episode_to_relational_tables(
 
     # 5. Insert score_adjustments
     for adj in episode_data.score_adjustments:
-        adjustment_id = f"{episode_id}_adj_{adj.effective_after_clue_selection_order}_{adj.contestant.replace(' ', '_').lower()}"
+        adjustment_id = (
+            f"{episode_id}_adj_{adj.effective_after_clue_selection_order}_{adj.contestant.replace(' ', '_').lower()}"
+        )
         contestant_id = f"{episode_id}_{adj.contestant.replace(' ', '_').lower()}"
         payload.append(
             (

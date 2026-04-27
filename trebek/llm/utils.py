@@ -140,9 +140,7 @@ async def _extract_part(
                     pass
 
                 if broken_text:
-                    repair_result = await _attempt_flash_repair(
-                        broken_text, str(e), schema_cls, ctx
-                    )
+                    repair_result = await _attempt_flash_repair(broken_text, str(e), schema_cls, ctx)
                     if repair_result is not None:
                         repaired_data, repair_usage = repair_result
                         # Merge repair usage into the original usage

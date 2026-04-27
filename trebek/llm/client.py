@@ -65,9 +65,7 @@ class GeminiClient:
                     ttl=ttl,
                 ),
             )
-            cached_token_count = getattr(
-                getattr(cache, "usage_metadata", None), "total_token_count", "unknown"
-            )
+            cached_token_count = getattr(getattr(cache, "usage_metadata", None), "total_token_count", "unknown")
             logger.info(
                 "Gemini cache: created successfully",
                 cache_name=cache.name,

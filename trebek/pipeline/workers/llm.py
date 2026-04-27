@@ -94,7 +94,9 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
 
                         pass2_start = time.perf_counter()
                         data, usage2, retries = await execute_pass_2_data_extraction(
-                            segments, speaker_mapping, model=orchestrator.llm_model,
+                            segments,
+                            speaker_mapping,
+                            model=orchestrator.llm_model,
                         )
                         pass2_ms = (time.perf_counter() - pass2_start) * 1000
 

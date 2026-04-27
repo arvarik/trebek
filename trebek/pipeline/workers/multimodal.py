@@ -30,6 +30,7 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                 try:
                     episode_data_path = os.path.join(orchestrator.output_dir, f"episode_{episode_id}.json")
                     from pathlib import Path
+
                     episode_json = await asyncio.to_thread(Path(episode_data_path).read_text, encoding="utf-8")
                     episode_data = await asyncio.to_thread(Episode.model_validate_json, episode_json)
 
@@ -43,7 +44,9 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
 
                     start_multi_t = time.perf_counter()
                     episode_data, multi_usage = await execute_pass_3_multimodal_augmentation(
-                        episode_data, video_filepath, orchestrator.output_dir,
+                        episode_data,
+                        video_filepath,
+                        orchestrator.output_dir,
                         model=orchestrator.llm_model,
                     )
                     stage_multimodal_ms = (time.perf_counter() - start_multi_t) * 1000

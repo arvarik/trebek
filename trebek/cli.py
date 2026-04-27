@@ -39,7 +39,9 @@ def handle_scan(input_dir: str, stage_filter: str | None = None) -> None:
     exts = ", ".join(e.lstrip(".").upper() for e in SUPPORTED_VIDEO_EXTENSIONS[:6])
     console.print(f"  [dim]Formats:[/dim] [bold]{exts}[/bold] [dim]+ 6 more[/dim]")
     if stage_filter:
-        console.print(f"  [dim]Stage filter:[/dim] [bold yellow]{stage_filter}[/bold yellow] [dim](showing files that still need this stage)[/dim]")
+        console.print(
+            f"  [dim]Stage filter:[/dim] [bold yellow]{stage_filter}[/bold yellow] [dim](showing files that still need this stage)[/dim]"
+        )
     console.print()
 
     files = discover_video_files(input_dir, stage_filter=stage_filter)
@@ -50,6 +52,7 @@ def handle_scan(input_dir: str, stage_filter: str | None = None) -> None:
 #  Custom ArgumentParser that uses Rich help rendering
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TrebekArgumentParser(argparse.ArgumentParser):
     """ArgumentParser subclass that renders help with Rich instead of plain text."""
 
@@ -59,6 +62,7 @@ class TrebekArgumentParser(argparse.ArgumentParser):
 
     def print_help(self, file: Any = None) -> None:
         from trebek.ui.help import render_help
+
         render_help(self._help_command)
 
     def error(self, message: str) -> None:  # type: ignore[override]
@@ -175,6 +179,7 @@ def main() -> None:
     # ── trebek version ───────────────────────────────────────────────
     if command == "version":
         from trebek import __version__
+
         console.print(f"  [bold cyan]trebek[/bold cyan] [dim]v{__version__}[/dim]")
         return
 
@@ -228,13 +233,15 @@ def main() -> None:
     llm_model = MODEL_ALIASES.get(getattr(args, "model", "pro"), MODEL_PRO)
     max_retries = getattr(args, "max_retries", 3)
 
-    asyncio.run(run_pipeline(
-        mode=mode,
-        input_dir_override=input_dir,
-        stage=stage,
-        llm_model=llm_model,
-        max_retries=max_retries,
-    ))
+    asyncio.run(
+        run_pipeline(
+            mode=mode,
+            input_dir_override=input_dir,
+            stage=stage,
+            llm_model=llm_model,
+            max_retries=max_retries,
+        )
+    )
 
 
 if __name__ == "__main__":

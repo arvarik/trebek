@@ -16,6 +16,7 @@ logger = structlog.get_logger()
 
 class WhisperXWordSegment(BaseModel):
     """A single word-level segment from WhisperX output with timing and confidence."""
+
     word: str
     start: float
     end: float

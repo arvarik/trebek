@@ -20,15 +20,15 @@ from trebek import __version__
 
 # ── Design Tokens ────────────────────────────────────────────────────────────
 # Curated palette for visual consistency across all help pages.
-_C = "bold cyan"           # commands, primary accent
-_F = "bold yellow"         # flags / options
-_V = "bold magenta"        # values / arguments
-_D = "dim white"           # descriptions, secondary text
-_A = "bold white"          # section labels, emphasis
-_G = "bold green"          # success / positive indicators
-_R = "bold red"            # errors / required indicators
-_BORDER = "dim cyan"       # panel borders
-_BORDER_ALT = "dim yellow" # alternate panel borders
+_C = "bold cyan"  # commands, primary accent
+_F = "bold yellow"  # flags / options
+_V = "bold magenta"  # values / arguments
+_D = "dim white"  # descriptions, secondary text
+_A = "bold white"  # section labels, emphasis
+_G = "bold green"  # success / positive indicators
+_R = "bold red"  # errors / required indicators
+_BORDER = "dim cyan"  # panel borders
+_BORDER_ALT = "dim yellow"  # alternate panel borders
 
 
 def _header_panel() -> Panel:
@@ -62,6 +62,7 @@ def _footer() -> None:
 #  MAIN HELP — `trebek --help`
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def render_main_help() -> None:
     """Renders the main `trebek --help` page."""
 
@@ -81,51 +82,55 @@ def render_main_help() -> None:
     cmd.add_row("retry", "Reset all FAILED episodes back to PENDING for re-processing")
     cmd.add_row("version", "Print version string and exit")
 
-    console.print(Panel(
-        cmd,
-        title="[bold]Commands[/bold]",
-        border_style=_BORDER,
-        box=box.ROUNDED,
-        padding=(1, 1),
-    ))
+    console.print(
+        Panel(
+            cmd,
+            title="[bold]Commands[/bold]",
+            border_style=_BORDER,
+            box=box.ROUNDED,
+            padding=(1, 1),
+        )
+    )
 
     # ── Pipeline Architecture Diagram ──
     flow = Text()
-    flow.append("  ┌──────────┐    ┌───────────────┐    ┌───────────┐    ┌───────────┐    ┌──────────┐\n", style=_D)
+    flow.append("  ┌──────────┐ → ┌────────────┐ → ┌─────────┐ → ┌─────────┐ → ┌─────────┐\n", style=_D)
     flow.append("  │", style=_D)
-    flow.append("  ingest  ", style="bold green")
-    flow.append("│ ─→ │", style=_D)
-    flow.append("  transcribe  ", style="bold yellow")
-    flow.append("│ ─→ │", style=_D)
-    flow.append("  extract  ", style="bold blue")
-    flow.append("│ ─→ │", style=_D)
-    flow.append("  augment  ", style="bold magenta")
-    flow.append("│ ─→ │", style=_D)
-    flow.append("  verify  ", style="bold cyan")
+    flow.append(" ingest   ", style="bold green")
+    flow.append("│ → │", style=_D)
+    flow.append(" transcribe ", style="bold yellow")
+    flow.append("│ → │", style=_D)
+    flow.append(" extract ", style="bold blue")
+    flow.append("│ → │", style=_D)
+    flow.append(" augment ", style="bold magenta")
+    flow.append("│ → │", style=_D)
+    flow.append(" verify  ", style="bold cyan")
     flow.append("│\n", style=_D)
     flow.append("  │", style=_D)
-    flow.append("  discover ", style="dim green")
-    flow.append("│    │", style=_D)
-    flow.append("  WhisperX GPU ", style="dim yellow")
-    flow.append("│    │", style=_D)
-    flow.append("  Gemini    ", style="dim blue")
-    flow.append("│    │", style=_D)
-    flow.append("  multimodal", style="dim magenta")
-    flow.append("│    │", style=_D)
-    flow.append("  state DB ", style="dim cyan")
+    flow.append(" discover ", style="dim green")
+    flow.append("│   │", style=_D)
+    flow.append(" WhisperX   ", style="dim yellow")
+    flow.append("│   │", style=_D)
+    flow.append(" Gemini  ", style="dim blue")
+    flow.append("│   │", style=_D)
+    flow.append(" vision  ", style="dim magenta")
+    flow.append("│   │", style=_D)
+    flow.append(" state   ", style="dim cyan")
     flow.append("│\n", style=_D)
-    flow.append("  └──────────┘    └───────────────┘    └───────────┘    └───────────┘    └──────────┘\n", style=_D)
-    flow.append("                    ┈ each stage is ", style=_D)
+    flow.append("  └──────────┘   └────────────┘   └─────────┘   └─────────┘   └─────────┘\n", style=_D)
+    flow.append("               ┈ each stage is ", style=_D)
     flow.append("idempotent", style="bold white")
-    flow.append(" ┈ re-running skips already-completed work ┈", style=_D)
+    flow.append(" ┈ re-run skips completed work ┈", style=_D)
 
-    console.print(Panel(
-        flow,
-        title="[bold]Pipeline Architecture[/bold]",
-        border_style=_BORDER,
-        box=box.ROUNDED,
-        padding=(1, 1),
-    ))
+    console.print(
+        Panel(
+            flow,
+            title="[bold]Pipeline Architecture[/bold]",
+            border_style=_BORDER,
+            box=box.ROUNDED,
+            padding=(1, 1),
+        )
+    )
 
     # ── Quick Start + Examples side by side ──
     qs = Table(box=None, show_header=False, padding=(0, 1))
@@ -144,10 +149,30 @@ def render_main_help() -> None:
     ex.add_row("trebek scan --stage transcribe", "Files still needing GPU work")
     ex.add_row("trebek retry && trebek run --once", "Re-process all failures")
 
-    console.print(Columns([
-        Panel(qs, title="[bold]Quick Start[/bold]", border_style="dim green", box=box.ROUNDED, padding=(1, 1), expand=True),
-        Panel(ex, title="[bold]Examples[/bold]", border_style=_BORDER_ALT, box=box.ROUNDED, padding=(1, 1), expand=True),
-    ], padding=1, expand=True))
+    console.print(
+        Columns(
+            [
+                Panel(
+                    qs,
+                    title="[bold]Quick Start[/bold]",
+                    border_style="dim green",
+                    box=box.ROUNDED,
+                    padding=(1, 1),
+                    expand=True,
+                ),
+                Panel(
+                    ex,
+                    title="[bold]Examples[/bold]",
+                    border_style=_BORDER_ALT,
+                    box=box.ROUNDED,
+                    padding=(1, 1),
+                    expand=True,
+                ),
+            ],
+            padding=1,
+            expand=True,
+        )
+    )
 
     # ── Environment Variables ──
     env = Table(box=None, show_header=True, header_style="bold white", padding=(0, 2))
@@ -162,13 +187,15 @@ def render_main_help() -> None:
     env.add_row("WHISPER_BATCH_SIZE", "WhisperX batch size (tune for VRAM)", "8")
     env.add_row("WHISPER_COMPUTE_TYPE", "Compute precision: float16 | float32", "float16")
 
-    console.print(Panel(
-        env,
-        title="[bold]Environment Variables[/bold]  [dim](also via .env file)[/dim]",
-        border_style=_BORDER,
-        box=box.ROUNDED,
-        padding=(1, 1),
-    ))
+    console.print(
+        Panel(
+            env,
+            title="[bold]Environment Variables[/bold]  [dim](also via .env file)[/dim]",
+            border_style=_BORDER,
+            box=box.ROUNDED,
+            padding=(1, 1),
+        )
+    )
 
     # ── Supported Formats + Prerequisites side by side ──
     fmt = Table(box=None, show_header=False, padding=(0, 2))
@@ -189,10 +216,30 @@ def render_main_help() -> None:
     prereq.add_row("WhisperX", "Required — GPU transcription")
     prereq.add_row("Gemini API", "Required — LLM extraction")
 
-    console.print(Columns([
-        Panel(fmt, title="[bold]Supported Formats[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1), expand=True),
-        Panel(prereq, title="[bold]Prerequisites[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1), expand=True),
-    ], padding=1, expand=True))
+    console.print(
+        Columns(
+            [
+                Panel(
+                    fmt,
+                    title="[bold]Supported Formats[/bold]",
+                    border_style=_BORDER,
+                    box=box.ROUNDED,
+                    padding=(1, 1),
+                    expand=True,
+                ),
+                Panel(
+                    prereq,
+                    title="[bold]Prerequisites[/bold]",
+                    border_style=_BORDER,
+                    box=box.ROUNDED,
+                    padding=(1, 1),
+                    expand=True,
+                ),
+            ],
+            padding=1,
+            expand=True,
+        )
+    )
 
     # ── Footer ──
     console.print(f"  [{_D}]Run [{_A}]trebek <command> --help[/{_A}] for detailed command usage.[/{_D}]")
@@ -203,10 +250,13 @@ def render_main_help() -> None:
 #  RUN HELP — `trebek run --help`
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def render_run_help() -> None:
     """Renders `trebek run --help`."""
     _subcommand_header("trebek run", "Start the extraction pipeline")
-    console.print(f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek run[/{_C}] [{_D}][--once] [--stage <stage>] [--model <model>] [--input-dir <path>][/{_D}]\n")
+    console.print(
+        f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek run[/{_C}] [{_D}][--once] [--stage <stage>] [--model <model>] [--input-dir <path>][/{_D}]\n"
+    )
 
     # ── Options ──
     opt = Table(box=None, show_header=True, header_style="bold white", padding=(0, 2))
@@ -240,10 +290,30 @@ def render_run_help() -> None:
     mdl.add_row("pro", "gemini-3.1-pro-preview", f"[{_G}]$1.25[/{_G}] in  [{_G}]$5.00[/{_G}] out")
     mdl.add_row("flash", "gemini-3-flash-preview", f"[{_G}]$0.075[/{_G}] in  [{_G}]$0.30[/{_G}] out")
 
-    console.print(Columns([
-        Panel(stg, title="[bold]Stages[/bold]  [dim]--stage <name>[/dim]", border_style=_BORDER_ALT, box=box.ROUNDED, padding=(1, 1), expand=True),
-        Panel(mdl, title="[bold]Models[/bold]  [dim]--model <alias>[/dim]", border_style="dim magenta", box=box.ROUNDED, padding=(1, 1), expand=True),
-    ], padding=1, expand=True))
+    console.print(
+        Columns(
+            [
+                Panel(
+                    stg,
+                    title="[bold]Stages[/bold]  [dim]--stage <name>[/dim]",
+                    border_style=_BORDER_ALT,
+                    box=box.ROUNDED,
+                    padding=(1, 1),
+                    expand=True,
+                ),
+                Panel(
+                    mdl,
+                    title="[bold]Models[/bold]  [dim]--model <alias>[/dim]",
+                    border_style="dim magenta",
+                    box=box.ROUNDED,
+                    padding=(1, 1),
+                    expand=True,
+                ),
+            ],
+            padding=1,
+            expand=True,
+        )
+    )
 
     # ── Execution Modes ──
     modes = Table(box=None, show_header=True, header_style="bold white", padding=(0, 2))
@@ -253,14 +323,22 @@ def render_run_help() -> None:
     modes.add_row("trebek run --once", "One-shot — processes queue then exits with code 0")
     modes.add_row("trebek run --docker", "Docker — delegates to trebek:latest with GPU passthrough")
 
-    console.print(Panel(modes, title="[bold]Execution Modes[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1)))
+    console.print(
+        Panel(modes, title="[bold]Execution Modes[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1))
+    )
 
     # ── Behavior Notes ──
     console.print(f"  [{_D}]Notes:[/{_D}]")
-    console.print(f"    [{_D}]• Each stage is [bold]idempotent[/bold] — re-running only processes unfinished episodes.[/{_D}]")
+    console.print(
+        f"    [{_D}]• Each stage is [bold]idempotent[/bold] — re-running only processes unfinished episodes.[/{_D}]"
+    )
     console.print(f"    [{_D}]• [{_F}]--stage transcribe --once[/{_F}] auto-resets FAILED episodes to PENDING.[/{_D}]")
-    console.print(f"    [{_D}]• [{_F}]--docker[/{_F}] mounts CWD + input dir into the container with [{_A}]--gpus all[/{_A}].[/{_D}]")
-    console.print(f"    [{_D}]• Output goes to [{_A}]$OUTPUT_DIR[/{_A}] (default: gpu_outputs/) and [{_A}]$DB_PATH[/{_A}] (default: trebek.db).[/{_D}]")
+    console.print(
+        f"    [{_D}]• [{_F}]--docker[/{_F}] mounts CWD + input dir into the container with [{_A}]--gpus all[/{_A}].[/{_D}]"
+    )
+    console.print(
+        f"    [{_D}]• Output goes to [{_A}]$OUTPUT_DIR[/{_A}] (default: gpu_outputs/) and [{_A}]$DB_PATH[/{_A}] (default: trebek.db).[/{_D}]"
+    )
     console.print()
     _footer()
 
@@ -269,17 +347,22 @@ def render_run_help() -> None:
 #  SCAN HELP — `trebek scan --help`
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def render_scan_help() -> None:
     """Renders `trebek scan --help`."""
     _subcommand_header("trebek scan", "Preview discovered video files with pipeline status")
-    console.print(f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek scan[/{_C}] [{_D}][--stage <stage>] [--input-dir <path>][/{_D}]\n")
+    console.print(
+        f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek scan[/{_C}] [{_D}][--stage <stage>] [--input-dir <path>][/{_D}]\n"
+    )
 
     # ── Options ──
     opt = Table(box=None, show_header=True, header_style="bold white", padding=(0, 2))
     opt.add_column("Flag", style=_F, width=18, no_wrap=True)
     opt.add_column("Value", style=_V, width=20, no_wrap=True)
     opt.add_column("Description", style="white")
-    opt.add_row("--stage", "transcribe | extract\naugment | verify", "Only show files that still need work at this stage")
+    opt.add_row(
+        "--stage", "transcribe | extract\naugment | verify", "Only show files that still need work at this stage"
+    )
     opt.add_row("--input-dir", "<path>", "Override the input video directory")
 
     console.print(Panel(opt, title="[bold]Options[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1)))
@@ -294,11 +377,17 @@ def render_scan_help() -> None:
     legend.add_row("[yellow]🎤 TRANSCRIBING[/yellow]", "In progress", "WhisperX GPU worker is actively processing")
     legend.add_row("[cyan]📝 TRANSCRIPT_READY[/cyan]", "Stage complete", "Transcript done, awaiting LLM extraction")
     legend.add_row("[blue]🧹 CLEANED[/blue]", "In progress", "LLM structured extraction underway")
-    legend.add_row("[bright_magenta]🔬 MULTIMODAL[/bright_magenta]", "In progress", "Visual augmentation (board/score snapshots)")
+    legend.add_row(
+        "[bright_magenta]🔬 MULTIMODAL[/bright_magenta]", "In progress", "Visual augmentation (board/score snapshots)"
+    )
     legend.add_row("[bold green]✅ COMPLETED[/bold green]", "Done", "All stages passed, committed to database")
     legend.add_row("[bold red]❌ FAILED[/bold red]", "Error", "Processing failed — check trebek stats for details")
 
-    console.print(Panel(legend, title="[bold]Pipeline Status Legend[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1)))
+    console.print(
+        Panel(
+            legend, title="[bold]Pipeline Status Legend[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1)
+        )
+    )
 
     # ── Output Description ──
     console.print(f"  [{_D}]The scan table shows for each file:[/{_D}]")
@@ -309,9 +398,15 @@ def render_scan_help() -> None:
 
     # ── Examples ──
     console.print(f"  [{_A}]Examples:[/{_A}]")
-    console.print(f"    [{_C}]trebek scan[/{_C}]                           [{_D}]All files with current pipeline status[/{_D}]")
-    console.print(f"    [{_C}]trebek scan --stage transcribe[/{_C}]        [{_D}]Files that still need GPU transcription[/{_D}]")
-    console.print(f"    [{_C}]trebek scan --stage extract[/{_C}]           [{_D}]Files waiting for LLM extraction[/{_D}]")
+    console.print(
+        f"    [{_C}]trebek scan[/{_C}]                           [{_D}]All files with current pipeline status[/{_D}]"
+    )
+    console.print(
+        f"    [{_C}]trebek scan --stage transcribe[/{_C}]        [{_D}]Files that still need GPU transcription[/{_D}]"
+    )
+    console.print(
+        f"    [{_C}]trebek scan --stage extract[/{_C}]           [{_D}]Files waiting for LLM extraction[/{_D}]"
+    )
     console.print(f"    [{_C}]trebek scan --input-dir /mnt/media[/{_C}]    [{_D}]Scan a custom directory[/{_D}]")
     console.print()
     _footer()
@@ -320,6 +415,7 @@ def render_scan_help() -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 #  STATS HELP — `trebek stats --help`
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def render_stats_help() -> None:
     """Renders `trebek stats --help`."""
@@ -336,7 +432,9 @@ def render_stats_help() -> None:
     panels.add_row("Recent Episodes", "Last 10 episodes with status, retry count, and error messages")
     panels.add_row("Cost Breakdown", "Per-model token usage with input/output cost split")
 
-    console.print(Panel(panels, title="[bold]Dashboard Sections[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1)))
+    console.print(
+        Panel(panels, title="[bold]Dashboard Sections[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1))
+    )
 
     console.print(f"  [{_D}]The dashboard auto-refreshes every 2 seconds. Press [{_A}]Ctrl+C[/{_A}] to exit.[/{_D}]")
     console.print(f"  [{_D}]Data is read from [{_A}]$DB_PATH[/{_A}] (default: trebek.db).[/{_D}]")
@@ -347,6 +445,7 @@ def render_stats_help() -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 #  RETRY HELP — `trebek retry --help`
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def render_retry_help() -> None:
     """Renders `trebek retry --help`."""
@@ -380,14 +479,16 @@ def render_retry_help() -> None:
     console.print()
 
     # ── Tip ──
-    console.print(Panel(
-        f"[{_D}]Running [{_F}]trebek run --stage <stage> --once[/{_F}] auto-resets FAILED episodes\n"
-        f"for that specific stage — no need to call [{_C}]trebek retry[/{_C}] separately.[/{_D}]",
-        title="[bold]💡 Tip[/bold]",
-        border_style="dim green",
-        box=box.ROUNDED,
-        padding=(1, 2),
-    ))
+    console.print(
+        Panel(
+            f"[{_D}]Running [{_F}]trebek run --stage <stage> --once[/{_F}] auto-resets FAILED episodes\n"
+            f"for that specific stage — no need to call [{_C}]trebek retry[/{_C}] separately.[/{_D}]",
+            title="[bold]💡 Tip[/bold]",
+            border_style="dim green",
+            box=box.ROUNDED,
+            padding=(1, 2),
+        )
+    )
     _footer()
 
 

@@ -20,10 +20,15 @@ def handle_docker(args: argparse.Namespace, input_dir: str) -> None:
     input_abs = os.path.abspath(input_dir)
 
     cmd = [
-        "docker", "run", "--rm", "-it",
-        "--gpus", "all",
+        "docker",
+        "run",
+        "--rm",
+        "-it",
+        "--gpus",
+        "all",
         "--shm-size=8gb",
-        "-v", f"{cwd_abs}:/app",
+        "-v",
+        f"{cwd_abs}:/app",
     ]
 
     # If input_dir is outside CWD, mount it separately

@@ -89,6 +89,7 @@ async def execute_pass_2_data_extraction(
     def _accumulate_usage(usage: dict[str, float]) -> None:
         for k in total_usage:
             total_usage[k] += usage.get(k, 0.0)
+
     # ── Stage 1: Meta Extraction (Full Transcript) ──────────────────
     logger.info("Extracting Episode Metadata...")
     meta_prompt = (

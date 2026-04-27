@@ -14,7 +14,7 @@ from typing import Any, Dict
 def _abbreviate_speaker(speaker: str) -> str:
     """Compress SPEAKER_XX → SXX for token savings (3 tokens → 1 token per line)."""
     if speaker.startswith("SPEAKER_"):
-        return "S" + speaker[len("SPEAKER_"):]
+        return "S" + speaker[len("SPEAKER_") :]
     return speaker
 
 

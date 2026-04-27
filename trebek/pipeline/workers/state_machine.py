@@ -34,6 +34,7 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
 
                     # Offload heavy Pydantic validation to a thread to protect the event loop
                     from pathlib import Path
+
                     episode_json = await asyncio.to_thread(Path(episode_data_path).read_text, encoding="utf-8")
                     episode_data = await asyncio.to_thread(Episode.model_validate_json, episode_json)
 
