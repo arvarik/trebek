@@ -158,7 +158,11 @@ def gpu_worker_task(
             try:
                 from whisperx.diarize import DiarizationPipeline
 
-                diarize_model = DiarizationPipeline(use_auth_token=hf_token, device="cuda")
+                diarize_model = DiarizationPipeline(
+                    model_name="pyannote/speaker-diarization-3.1",
+                    token=hf_token,
+                    device="cuda",
+                )
                 diarize_segments = diarize_model(audio_path)
                 transcript_data = whisperx.assign_word_speakers(diarize_segments, transcript_data)
                 speaker_set = {s.get("speaker", "?") for s in transcript_data.get("segments", [])}
