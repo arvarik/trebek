@@ -54,4 +54,3 @@ class EpisodeSkeleton(BaseModel):
     total_jeopardy_clues_played: int
     total_double_jeopardy_clues_played: int
     daily_double_count: int
-

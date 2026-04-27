@@ -110,9 +110,7 @@ async def _extract_part(
             )
 
             if hasattr(response, "usage_metadata") and response.usage_metadata:
-                output_tokens_used = int(
-                    getattr(response.usage_metadata, "candidates_token_count", 0) or 0
-                )
+                output_tokens_used = int(getattr(response.usage_metadata, "candidates_token_count", 0) or 0)
             else:
                 output_tokens_used = 0
             logger.info(
