@@ -6,7 +6,6 @@ from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
 from trebek.schemas import Episode
 from trebek.llm import execute_pass_3_multimodal_augmentation
-from trebek.config import MODEL_PRICING
 
 if TYPE_CHECKING:
     from trebek.pipeline.orchestrator import TrebekPipelineOrchestrator
@@ -55,13 +54,8 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                     with open(episode_data_path, "w", encoding="utf-8") as f:
                         f.write(episode_data.model_dump_json())
 
-                    # Update telemetry (dynamic pricing from config)
-                    actual_model = orchestrator.llm_model
-                    model_pricing = MODEL_PRICING.get(actual_model, {"input": 2.00, "output": 12.00})
-                    cost_3 = (
-                        multi_usage.get("input_tokens", 0) * model_pricing["input"]
-                        + multi_usage.get("output_tokens", 0) * model_pricing["output"]
-                    ) / 1_000_000
+                    # Use pre-computed cost from client.py (includes thinking tokens at output rate)
+                    cost_3 = multi_usage.get("cost_usd", 0.0)
 
                     await orchestrator.db_writer.execute(
                         "UPDATE job_telemetry SET "

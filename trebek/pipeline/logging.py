@@ -19,6 +19,7 @@ def configure_logging() -> None:
         structlog.processors.TimeStamper(fmt="iso"),
     ]
 
+    renderer: Any
     if sys.stderr.isatty():
         # Interactive terminal — beautiful Rich output
         renderer = structlog.dev.ConsoleRenderer(

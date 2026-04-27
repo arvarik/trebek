@@ -88,7 +88,9 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                             "Pass 1 complete",
                             episode_id=episode_id,
                             speakers=len(speaker_mapping),
+                            speaker_mapping=speaker_mapping,
                             pass1_ms=round(pass1_ms, 0),
+                            cost_usd=round(usage1.get("cost_usd", 0.0), 6),
                         )
 
                         pass2_start = time.perf_counter()
@@ -152,7 +154,13 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                     else:
                         raise ValueError("Transcript path not found in database")
                 except Exception as e:
-                    logger.error("LLM Pipeline failed", error=str(e))
+                    logger.error(
+                        "LLM Pipeline failed",
+                        episode_id=episode_id,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                        exc_info=True,
+                    )
                     permanently_failed = await orchestrator.db_writer.fail_episode_with_retry(
                         episode_id, "TRANSCRIPT_READY", str(e)
                     )

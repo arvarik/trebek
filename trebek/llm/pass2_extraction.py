@@ -11,6 +11,7 @@ Orchestrates the full extraction pipeline:
 """
 
 import json
+import re
 import structlog
 import asyncio
 from typing import Any, Dict, Literal, Union, Optional
@@ -26,6 +27,24 @@ from trebek.config import MODEL_PRO
 
 logger = structlog.get_logger()
 GEMINI_CONCURRENCY = 3
+
+
+def _count_syllables(text: str) -> int:
+    """
+    Vowel-cluster syllable counting heuristic.
+
+    More accurate than word_count * constant for Jeopardy's academic vocabulary.
+    Handles silent-e and guarantees a minimum of 1 syllable per word.
+    """
+    words = text.lower().split()
+    total = 0
+    for word in words:
+        syllables = len(re.findall(r"[aeiouy]+", word))
+        # Silent-e heuristic: trailing 'e' with >1 syllable
+        if word.endswith("e") and syllables > 1:
+            syllables -= 1
+        total += max(1, syllables)
+    return max(1, total)
 
 
 async def execute_pass_2_data_extraction(
@@ -83,7 +102,15 @@ async def execute_pass_2_data_extraction(
         "Use Line IDs for all timestamp-related fields."
     )
 
-    total_usage: dict[str, float] = {"input_tokens": 0.0, "output_tokens": 0.0, "cached_tokens": 0.0, "latency_ms": 0.0}
+    total_usage: dict[str, float] = {
+        "input_tokens": 0.0,
+        "output_tokens": 0.0,
+        "thinking_tokens": 0.0,
+        "cached_tokens": 0.0,
+        "total_tokens": 0.0,
+        "cost_usd": 0.0,
+        "latency_ms": 0.0,
+    }
     max_attempt_reached = 0
 
     def _accumulate_usage(usage: dict[str, float]) -> None:
@@ -105,6 +132,7 @@ async def execute_pass_2_data_extraction(
         max_retries,
         model=model,
         invocation_context="Pass 2 Meta",
+        thinking_level="medium",  # Meta extraction needs reasoning for FJ, score adjustments, tournament detection
     )
     _accumulate_usage(meta_usage)
     max_attempt_reached = max(max_attempt_reached, meta_att)
@@ -135,8 +163,16 @@ async def execute_pass_2_data_extraction(
             chunk_lines_list = chunk_text.split("\n")
             chunk_line_count = len(chunk_lines_list)
 
+            # Extract Line ID range for debugging
+            first_line_id = chunk_lines_list[0].split(" ")[0] if chunk_lines_list else "?"
+            last_line_id = chunk_lines_list[-1].split(" ")[0] if chunk_lines_list else "?"
+
             ctx_label = f"Pass 2 Chunk {chunk_idx + 1}/{len(chunks)}"
-            logger.info(f"Extracting clues from chunk {chunk_idx + 1}/{len(chunks)}", lines=chunk_line_count)
+            logger.info(
+                f"Extracting clues from chunk {chunk_idx + 1}/{len(chunks)}",
+                lines=chunk_line_count,
+                line_range=f"{first_line_id}–{last_line_id}",
+            )
 
             prompt = (
                 f"Transcript Chunk ({chunk_idx + 1} of {len(chunks)}):\n{chunk_text}\n\n"
@@ -170,6 +206,7 @@ async def execute_pass_2_data_extraction(
                 "Chunk extraction failed, skipping chunk",
                 chunk=idx + 1,
                 total_chunks=len(chunks),
+                error_type=type(result).__name__,
                 error=str(result)[:300],
             )
             continue
@@ -190,28 +227,87 @@ async def execute_pass_2_data_extraction(
 
     # ── Stage 4: Reconstruct & Deduplicate ──────────────────────────
     all_clues: list[Clue] = []
+    dropped_clue_count = 0
+    clamped_line_id_count = 0
+    buzz_fallback_count = 0
+    fj_filtered_count = 0
+    nonstandard_line_id_count = 0
+
     for chunk_data, chunk_usage, chunk_att in chunk_results:
         for ext_clue in chunk_data.clues:
-            # Resolve Line IDs
-            start_id = ext_clue.host_read_start_line_id.replace("L", "").replace("[", "").replace("]", "").strip()
-            end_id = ext_clue.host_read_end_line_id.replace("L", "").replace("[", "").replace("]", "").strip()
+            # Filter out Final Jeopardy clues — the prompt says skip FJ but
+            # the LLM sometimes extracts them anyway. FJ is handled by meta.
+            if ext_clue.round == "Final Jeopardy":
+                fj_filtered_count += 1
+                continue
+
+            # Resolve Line IDs — track non-standard formats
+            raw_start_lid = ext_clue.host_read_start_line_id
+            raw_end_lid = ext_clue.host_read_end_line_id
+            start_id = raw_start_lid.replace("L", "").replace("[", "").replace("]", "").strip()
+            end_id = raw_end_lid.replace("L", "").replace("[", "").replace("]", "").strip()
+
+            # Track non-standard Line ID formats for prompt engineering feedback
+            standard_pattern = re.compile(r"^L\d+$")
+            if not standard_pattern.match(raw_start_lid.strip()) or not standard_pattern.match(raw_end_lid.strip()):
+                nonstandard_line_id_count += 1
 
             try:
                 s_idx = int(start_id)
                 e_idx = int(end_id)
             except ValueError:
-                logger.warning("Invalid Line ID extracted", start=start_id, end=end_id)
+                dropped_clue_count += 1
+                logger.warning(
+                    "Invalid Line ID — dropping clue",
+                    start=start_id,
+                    end=end_id,
+                    category=ext_clue.category,
+                    round=ext_clue.round,
+                    dropped_total=dropped_clue_count,
+                )
                 continue
 
-            # Bounds check
-            s_idx = max(0, min(s_idx, len(segments) - 1))
-            e_idx = max(0, min(e_idx, len(segments) - 1))
+            # Bounds check with logging
+            s_clamped = max(0, min(s_idx, len(segments) - 1))
+            e_clamped = max(0, min(e_idx, len(segments) - 1))
+            if s_clamped != s_idx or e_clamped != e_idx:
+                clamped_line_id_count += 1
+                logger.warning(
+                    "Line ID out of bounds — clamped",
+                    original_start=s_idx,
+                    original_end=e_idx,
+                    clamped_start=s_clamped,
+                    clamped_end=e_clamped,
+                    max_segment=len(segments) - 1,
+                    category=ext_clue.category,
+                )
+            s_idx = s_clamped
+            e_idx = e_clamped
             if e_idx < s_idx:
                 e_idx = s_idx
 
             clue_text = " ".join([seg.get("text", "").strip() for seg in segments[s_idx : e_idx + 1]])
-            host_start_ms = float(segments[s_idx].get("start", 0.0) * 1000)
-            host_finish_ms = float(segments[e_idx].get("end", 0.0) * 1000)
+
+            # Explicit None-check on segment timestamps — silent 0.0 default
+            # would create phantom clues at t=0
+            raw_start = segments[s_idx].get("start")
+            raw_end = segments[e_idx].get("end")
+            if raw_start is None:
+                logger.warning(
+                    "Segment missing 'start' timestamp, defaulting to 0.0",
+                    segment_idx=s_idx,
+                    category=ext_clue.category,
+                )
+                raw_start = 0.0
+            if raw_end is None:
+                logger.warning(
+                    "Segment missing 'end' timestamp, defaulting to 0.0",
+                    segment_idx=e_idx,
+                    category=ext_clue.category,
+                )
+                raw_end = 0.0
+            host_start_ms = float(raw_start) * 1000.0
+            host_finish_ms = float(raw_end) * 1000.0
 
             # Map Buzz Attempts
             attempts = []
@@ -220,9 +316,29 @@ async def execute_pass_2_data_extraction(
                 try:
                     b_idx = int(buzz_id_str)
                     b_idx = max(0, min(b_idx, len(segments) - 1))
-                    buzz_timestamp_ms = float(segments[b_idx].get("start", 0.0) * 1000)
+                    raw_buzz_start = segments[b_idx].get("start")
+                    if raw_buzz_start is None:
+                        logger.warning(
+                            "Buzz segment missing 'start' timestamp, defaulting to 0.0",
+                            segment_idx=b_idx,
+                            speaker=ext_att.speaker,
+                            category=ext_clue.category,
+                        )
+                        raw_buzz_start = 0.0
+                    buzz_timestamp_ms = float(raw_buzz_start) * 1000.0
                 except ValueError:
+                    buzz_fallback_count += 1
+                    logger.warning(
+                        "Invalid buzz Line ID — falling back to host_finish",
+                        buzz_line_id=ext_att.buzz_line_id,
+                        speaker=ext_att.speaker,
+                        category=ext_clue.category,
+                        fallback_total=buzz_fallback_count,
+                    )
                     buzz_timestamp_ms = host_finish_ms  # fallback
+
+                # Account for lockout penalty in response start offset
+                lockout_penalty = 250.0 if ext_att.is_lockout_inferred else 0.0
 
                 attempts.append(
                     BuzzAttempt(
@@ -231,7 +347,7 @@ async def execute_pass_2_data_extraction(
                         response_given=ext_att.response_given,
                         is_correct=ext_att.is_correct,
                         buzz_timestamp_ms=buzz_timestamp_ms,
-                        response_start_timestamp_ms=buzz_timestamp_ms + 250.0,  # Approximate
+                        response_start_timestamp_ms=buzz_timestamp_ms + 250.0 + lockout_penalty,
                         is_lockout_inferred=ext_att.is_lockout_inferred,
                     )
                 )
@@ -244,7 +360,13 @@ async def execute_pass_2_data_extraction(
                     try:
                         wager_val = int(ext_clue.daily_double_wager)
                     except ValueError:
-                        pass
+                        logger.warning(
+                            "Invalid DD wager value — dropping",
+                            raw_wager=ext_clue.daily_double_wager,
+                            category=ext_clue.category,
+                        )
+
+            syllable_estimate = _count_syllables(clue_text)
 
             all_clues.append(
                 Clue(
@@ -257,7 +379,7 @@ async def execute_pass_2_data_extraction(
                     requires_visual_context=ext_clue.requires_visual_context,
                     host_start_timestamp_ms=host_start_ms,
                     host_finish_timestamp_ms=host_finish_ms,
-                    clue_syllable_count=len(clue_text.split()) * 2,  # Approximate
+                    clue_syllable_count=syllable_estimate,
                     daily_double_wager=wager_val,
                     wagerer_name=ext_clue.wagerer_name,
                     clue_text=clue_text,
@@ -269,6 +391,24 @@ async def execute_pass_2_data_extraction(
         _accumulate_usage(chunk_usage)
         max_attempt_reached = max(max_attempt_reached, chunk_att)
 
+    # ── Assembly quality summary ─────────────────────────────────────
+    logger.info(
+        "Clue assembly quality summary",
+        clues_assembled=len(all_clues),
+        clues_dropped_invalid_line_id=dropped_clue_count,
+        buzz_fallback_to_host_finish=buzz_fallback_count,
+        line_ids_clamped=clamped_line_id_count,
+        fj_clues_filtered=fj_filtered_count,
+        nonstandard_line_id_format=nonstandard_line_id_count,
+    )
+    if nonstandard_line_id_count > 0:
+        logger.warning(
+            "Non-standard Line ID formats detected — consider prompt adjustment",
+            count=nonstandard_line_id_count,
+            total_clues=len(all_clues),
+            pct=round(nonstandard_line_id_count / max(1, len(all_clues)) * 100, 1),
+        )
+
     logger.info("Raw clues before deduplication", count=len(all_clues))
     unique_clues = _deduplicate_clues(all_clues)
 
@@ -277,7 +417,12 @@ async def execute_pass_2_data_extraction(
     for i, clue in enumerate(sorted_clues):
         clue.selection_order = i + 1
 
-    logger.info("Clues after deduplication", count=len(sorted_clues))
+    duplicates_removed = len(all_clues) - len(sorted_clues)
+    logger.info(
+        "Clues after deduplication",
+        count=len(sorted_clues),
+        duplicates_removed=duplicates_removed,
+    )
 
     # ── Stage 4b: Speaker Name Normalization ────────────────────────
     contestant_names = [c.name for c in meta_data.contestants]
@@ -324,4 +469,18 @@ async def execute_pass_2_data_extraction(
         max_retries_used=max_attempt_reached,
         model=model,
     )
+
+    # ── Episode Quality Score ────────────────────────────────────────
+    quality_score = "PASS" if not integrity_warnings else ("DEGRADED" if len(integrity_warnings) <= 3 else "FAIL")
+    logger.info(
+        "Episode quality assessment",
+        quality=quality_score,
+        warning_count=len(integrity_warnings),
+        clue_count=len(sorted_clues),
+        contestant_count=len(meta_data.contestants),
+        dropped_clues=dropped_clue_count,
+        clamped_line_ids=clamped_line_id_count,
+        buzz_fallbacks=buzz_fallback_count,
+    )
+
     return episode, total_usage, max_attempt_reached

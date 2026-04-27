@@ -4,7 +4,6 @@ from trebek.schemas import Contestant, FinalJeopardy, ScoreAdjustment
 
 
 class PartialEpisodeMeta(BaseModel):
-    reasoning_scratchpad: str = Field(description="Write a chronological narrative of the events...")
     episode_date: str
     host_name: str
     is_tournament: bool
@@ -44,14 +43,10 @@ class ClueExtraction(BaseModel):
 
 
 class PartialClues(BaseModel):
-    reasoning_scratchpad: str = Field(
-        description="Think step-by-step about the clues in this chunk. Identify boundaries, daily doubles, and map out the buzz attempts chronologically before extracting them."
-    )
     clues: list[ClueExtraction]
 
 
 class EpisodeSkeleton(BaseModel):
-    reasoning_scratchpad: str = Field(description="...")
     jeopardy_categories: list[str]
     double_jeopardy_categories: list[str]
     total_jeopardy_clues_played: int

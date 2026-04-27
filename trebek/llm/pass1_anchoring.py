@@ -46,16 +46,46 @@ async def execute_pass_1_speaker_anchoring(audio_file_path: str) -> "tuple[Dict[
         response_text = str(response.text)
         clean = response_text.replace("```json", "").replace("```", "").strip()
         if not clean:
-            logger.warning("Pass 1 returned empty response, using empty mapping")
+            logger.warning(
+                "Pass 1 returned empty response, using empty mapping",
+                raw_response=response_text[:200] if response_text else "None",
+                input_tokens=int(usage.get("input_tokens", 0)),
+                cost_usd=round(usage.get("cost_usd", 0.0), 6),
+            )
             return {}, usage
         # Try json.loads first, fall back to ast.literal_eval for single-quoted dicts
         try:
             mapping: Dict[str, str] = json.loads(clean)
         except json.JSONDecodeError:
-            mapping = dict(ast.literal_eval(clean))
-        logger.info("Pass 1 Speaker Anchor resolved", mapping=mapping)
+            raw_mapping = dict(ast.literal_eval(clean))
+            # Validate: all values must be non-empty strings to prevent
+            # downstream crashes in speaker normalization
+            invalid_entries = {k: v for k, v in raw_mapping.items() if not isinstance(v, str) or not v.strip()}
+            if invalid_entries:
+                logger.warning(
+                    "Pass 1: filtering invalid mapping entries (None or empty values)",
+                    invalid_entries=invalid_entries,
+                )
+            mapping = {k: str(v).strip() for k, v in raw_mapping.items() if isinstance(v, str) and v.strip()}
+        logger.info(
+            "Pass 1 Speaker Anchor resolved",
+            mapping=mapping,
+            speakers_found=len(mapping),
+            input_tokens=int(usage.get("input_tokens", 0)),
+            output_tokens=int(usage.get("output_tokens", 0)),
+            cost_usd=round(usage.get("cost_usd", 0.0), 6),
+            latency_ms=round(usage.get("latency_ms", 0), 0),
+        )
         return mapping, usage
     except Exception as e:
-        logger.error("Failed to generate speaker anchor", error=str(e))
+        logger.error("Failed to generate speaker anchor", error=str(e), error_type=type(e).__name__)
         # Fallback or default mapping logic here
-        return {}, {"input_tokens": 0.0, "output_tokens": 0.0, "cached_tokens": 0.0, "latency_ms": 0.0}
+        return {}, {
+            "input_tokens": 0.0,
+            "output_tokens": 0.0,
+            "thinking_tokens": 0.0,
+            "cached_tokens": 0.0,
+            "total_tokens": 0.0,
+            "cost_usd": 0.0,
+            "latency_ms": 0.0,
+        }

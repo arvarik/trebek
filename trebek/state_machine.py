@@ -44,6 +44,14 @@ class TrebekStateMachine:
             clue_value = 0
 
         # 2. Handle Daily Double — only one attempt allowed per Jeopardy rules
+        if clue.is_daily_double and (clue.daily_double_wager is None or not clue.wagerer_name):
+            logger.warning(
+                "Daily Double missing wager or wagerer — falling back to standard scoring",
+                category=clue.category,
+                selection_order=clue.selection_order,
+                has_wager=clue.daily_double_wager is not None,
+                has_wagerer=bool(clue.wagerer_name),
+            )
         if clue.is_daily_double and clue.daily_double_wager is not None and clue.wagerer_name:
             wagerer = clue.wagerer_name
             self.scores.setdefault(wagerer, 0)

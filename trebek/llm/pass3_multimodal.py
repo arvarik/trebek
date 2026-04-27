@@ -19,7 +19,15 @@ async def execute_pass_3_multimodal_augmentation(
     """
 
     client = _get_client()
-    total_usage: dict[str, float] = {"input_tokens": 0.0, "output_tokens": 0.0, "cached_tokens": 0.0, "latency_ms": 0.0}
+    total_usage: dict[str, float] = {
+        "input_tokens": 0.0,
+        "output_tokens": 0.0,
+        "thinking_tokens": 0.0,
+        "cached_tokens": 0.0,
+        "total_tokens": 0.0,
+        "cost_usd": 0.0,
+        "latency_ms": 0.0,
+    }
 
     # Use a bounded semaphore to prevent ffmpeg/API floods
     semaphore = asyncio.Semaphore(GEMINI_CONCURRENCY)
@@ -30,6 +38,13 @@ async def execute_pass_3_multimodal_augmentation(
             if clue.attempts:
                 clip_path = os.path.join(output_dir, f"podium_{clue.selection_order}.mp4")
                 start_time = clue.host_finish_timestamp_ms / 1000.0
+
+                logger.info(
+                    "Pass 3: extracting video clip",
+                    clue_order=clue.selection_order,
+                    clip_start_s=round(start_time, 3),
+                    clip_duration_s=3.0,
+                )
 
                 proc = await asyncio.create_subprocess_exec(
                     "ffmpeg",
@@ -44,9 +59,9 @@ async def execute_pass_3_multimodal_augmentation(
                     "copy",
                     clip_path,
                     stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
                 )
-                await proc.wait()
+                _, stderr_bytes = await proc.communicate()
 
                 if proc.returncode == 0:
                     try:
@@ -62,7 +77,9 @@ async def execute_pass_3_multimodal_augmentation(
                                 raise RuntimeError(f"File processing failed: {uploaded_file.name}")
                             await asyncio.sleep(1)
                         else:
-                            logger.warning("File never became ACTIVE, skipping", file=uploaded_file.name)
+                            logger.warning(
+                                "File never became ACTIVE, skipping", file=uploaded_file.name, polls=poll_i + 1
+                            )
                             await client.delete_file(uploaded_file.name)
                             return
 
@@ -79,20 +96,42 @@ async def execute_pass_3_multimodal_augmentation(
                             system_instruction="You are a precise temporal grounding model. Return ONLY a float.",
                             max_output_tokens=64,
                             invocation_context=f"Pass 3 Temporal Sniping (clue {clue.selection_order})",
+                            thinking_level="minimal",  # Perception task, not reasoning
                         )
                         for k in total_usage:
                             total_usage[k] += usage.get(k, 0.0)
 
+                        # Log the result for debugging
+                        result_text = str(response.text).strip() if response.text else "None"
+                        logger.info(
+                            "Pass 3: temporal sniping result",
+                            clue_order=clue.selection_order,
+                            result=result_text,
+                            cost_usd=round(usage.get("cost_usd", 0.0), 6),
+                            latency_ms=round(usage.get("latency_ms", 0), 0),
+                        )
+
                         await client.delete_file(uploaded_file.name)
                     except Exception as e:
                         logger.warning(
-                            "Temporal sniping failed for clue", clue_order=clue.selection_order, error=str(e)
+                            "Temporal sniping failed for clue",
+                            clue_order=clue.selection_order,
+                            error_type=type(e).__name__,
+                            error=str(e)[:200],
                         )
 
                     try:
                         os.remove(clip_path)
                     except OSError:
                         pass
+                else:
+                    stderr_text = stderr_bytes.decode(errors="replace")[-200:] if stderr_bytes else "no stderr"
+                    logger.warning(
+                        "Pass 3: ffmpeg clip extraction failed",
+                        clue_order=clue.selection_order,
+                        returncode=proc.returncode,
+                        stderr=stderr_text,
+                    )
 
     # For demonstration, only process a few visual context or podium items
     # to avoid overwhelming the API in a single run. We'll filter for visual context clues.
@@ -100,5 +139,14 @@ async def execute_pass_3_multimodal_augmentation(
     if tasks:
         logger.info("Executing multimodal temporal sniping", tasks=len(tasks))
         await asyncio.gather(*tasks)
+        logger.info(
+            "Pass 3 multimodal complete",
+            clues_processed=len(tasks),
+            total_cost_usd=round(total_usage.get("cost_usd", 0.0), 6),
+            total_latency_ms=round(total_usage.get("latency_ms", 0), 0),
+            total_thinking_tokens=int(total_usage.get("thinking_tokens", 0)),
+        )
+    else:
+        logger.info("Pass 3: no visual context clues to process, skipping")
 
     return episode, total_usage

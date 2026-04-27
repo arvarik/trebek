@@ -105,6 +105,7 @@ class GeminiClient:
         max_output_tokens: int = 65536,
         cached_content_name: Optional[str] = None,
         invocation_context: str = "",
+        thinking_level: Optional[str] = None,
     ) -> "tuple[Any, dict[str, float]]":
         """
         Generates content via the Gemini API with structured invocation logging.
@@ -121,14 +122,41 @@ class GeminiClient:
         kwargs: dict[str, Any] = {"temperature": 0.0, "max_output_tokens": max_output_tokens}
         if not cached_content_name:
             kwargs["system_instruction"] = system_instruction
+        _VALID_THINKING_LEVELS = {"MINIMAL", "LOW", "MEDIUM", "HIGH"}
         if response_schema:
             kwargs["response_mime_type"] = "application/json"
             kwargs["response_json_schema"] = response_schema.model_json_schema()
+            # Thinking burns output tokens from the same max_output_tokens budget,
+            # causing JSON truncation when the model defaults to "high" thinking.
+            # Default to LOW for structured output, but allow callers to override
+            # for tasks that genuinely need reasoning (e.g., meta extraction).
+            if thinking_level:
+                level_upper = thinking_level.upper()
+                if level_upper not in _VALID_THINKING_LEVELS:
+                    raise ValueError(
+                        f"Invalid thinking_level '{thinking_level}'. Valid values: {sorted(_VALID_THINKING_LEVELS)}"
+                    )
+                level = getattr(types.ThinkingLevel, level_upper)
+            else:
+                level = types.ThinkingLevel.LOW
+            kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=level)
         else:
             kwargs["response_mime_type"] = "application/json"
+            # For non-schema calls, apply thinking config if caller explicitly requests it
+            if thinking_level:
+                level_upper = thinking_level.upper()
+                if level_upper not in _VALID_THINKING_LEVELS:
+                    raise ValueError(
+                        f"Invalid thinking_level '{thinking_level}'. Valid values: {sorted(_VALID_THINKING_LEVELS)}"
+                    )
+                level = getattr(types.ThinkingLevel, level_upper)
+                kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=level)
         if cached_content_name:
             kwargs["cached_content"] = cached_content_name
         config = types.GenerateContentConfig(**kwargs)
+
+        # Resolve effective thinking level for logging
+        effective_thinking = thinking_level.upper() if thinking_level else ("LOW" if response_schema else "DEFAULT")
 
         ctx = invocation_context or "unnamed"
         max_retries = 10
@@ -141,7 +169,11 @@ class GeminiClient:
                     model=model,
                     attempt=attempt + 1,
                     max_output_tokens=max_output_tokens,
+                    thinking_level=effective_thinking,
+                    has_schema=response_schema is not None,
+                    schema_name=response_schema.__name__ if response_schema else None,
                     cached=cached_content_name is not None,
+                    prompt_length=len(str(prompt)) if isinstance(prompt, str) else "multimodal",
                 )
                 start_t = time.perf_counter()
                 response = await self.client.aio.models.generate_content(model=model, contents=prompt, config=config)
@@ -153,28 +185,56 @@ class GeminiClient:
                     usage = {
                         "input_tokens": getattr(response.usage_metadata, "prompt_token_count", 0) or 0.0,
                         "output_tokens": getattr(response.usage_metadata, "candidates_token_count", 0) or 0.0,
+                        "thinking_tokens": getattr(response.usage_metadata, "thoughts_token_count", 0) or 0.0,
                         "cached_tokens": getattr(response.usage_metadata, "cached_content_token_count", 0) or 0.0,
+                        "total_tokens": getattr(response.usage_metadata, "total_token_count", 0) or 0.0,
                         "latency_ms": latency_ms,
                     }
                 else:
-                    usage = {"input_tokens": 0.0, "output_tokens": 0.0, "cached_tokens": 0.0, "latency_ms": latency_ms}
+                    usage = {
+                        "input_tokens": 0.0,
+                        "output_tokens": 0.0,
+                        "thinking_tokens": 0.0,
+                        "cached_tokens": 0.0,
+                        "total_tokens": 0.0,
+                        "latency_ms": latency_ms,
+                    }
 
                 cost = 0.0
                 pricing = MODEL_PRICING.get(model)
                 if pricing:
-                    cost = (
-                        usage["input_tokens"] * pricing["input"] + usage["output_tokens"] * pricing["output"]
-                    ) / 1_000_000
+                    # Thinking tokens are billed at the output token rate
+                    billable_output = usage["output_tokens"] + usage["thinking_tokens"]
+                    cost = (usage["input_tokens"] * pricing["input"] + billable_output * pricing["output"]) / 1_000_000
                 usage["cost_usd"] = cost
+
+                # Detect output truncation before returning
+                finish_reason = None
+                if response.candidates:
+                    finish_reason = getattr(response.candidates[0], "finish_reason", None)
+                if finish_reason and "MAX_TOKENS" in str(finish_reason):
+                    logger.warning(
+                        "Gemini API: response truncated (MAX_TOKENS)",
+                        context=ctx,
+                        model=model,
+                        thinking_level=effective_thinking,
+                        thinking_tokens=int(usage["thinking_tokens"]),
+                        output_tokens=int(usage["output_tokens"]),
+                        max_output_tokens=max_output_tokens,
+                        total_tokens=int(usage["total_tokens"]),
+                    )
 
                 logger.info(
                     "Gemini API: success",
                     context=ctx,
                     model=model,
                     attempt=attempt + 1,
+                    finish_reason=str(finish_reason) if finish_reason else "UNKNOWN",
                     input_tokens=int(usage["input_tokens"]),
                     output_tokens=int(usage["output_tokens"]),
+                    thinking_tokens=int(usage["thinking_tokens"]),
                     cached_tokens=int(usage["cached_tokens"]),
+                    cost_usd=round(usage["cost_usd"], 6),
                     latency_ms=round(latency_ms, 0),
                 )
                 return response, usage
