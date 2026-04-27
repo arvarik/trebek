@@ -143,6 +143,9 @@ def _normalize_speaker_names(
         # Also normalize wagerer_name on daily doubles
         if clue.wagerer_name:
             canonical = variant_map.get(clue.wagerer_name.lower())
+            if not canonical:
+                # Fuzzy match wagerer too
+                canonical = _fuzzy_match_contestant(clue.wagerer_name, contestant_names)
             if canonical:
                 clue.wagerer_name = canonical
 
@@ -150,6 +153,8 @@ def _normalize_speaker_names(
     for adj in score_adjustments:
         if hasattr(adj, "contestant") and adj.contestant:
             canonical = variant_map.get(adj.contestant.lower())
+            if not canonical:
+                canonical = _fuzzy_match_contestant(adj.contestant, contestant_names)
             if canonical:
                 adj.contestant = canonical
 
@@ -157,13 +162,83 @@ def _normalize_speaker_names(
     for wager in fj_wagers:
         if hasattr(wager, "contestant") and wager.contestant:
             canonical = variant_map.get(wager.contestant.lower())
+            if not canonical:
+                canonical = _fuzzy_match_contestant(wager.contestant, contestant_names)
             if canonical:
                 wager.contestant = canonical
 
+    # ── Hard cleanup sweep ───────────────────────────────────────────
+    # After soft normalization, any remaining unmapped speakers will crash
+    # the database FK constraints. Fuzzy-match or drop them.
     if unmapped:
+        contestant_set_lower = {c.lower() for c in contestant_names}
+        dropped_total = 0
+        fuzzy_resolved = 0
+
+        # Build a set of known host-associated IDs to exclude from fuzzy matching.
+        # Without this, abbreviated host IDs like "S00" could fuzzy-match to a
+        # contestant name (e.g. "S00" → "Dan" at edit distance 2).
+        host_ids: set[str] = set()
+        if host_lower:
+            host_ids.add(host_lower)
+            for speaker_id, mapped_name in speaker_mapping.items():
+                if mapped_name.lower().strip() == host_lower:
+                    host_ids.add(speaker_id.lower())
+                    if speaker_id.upper().startswith("SPEAKER_"):
+                        num = speaker_id[len("SPEAKER_") :]
+                        host_ids.add(f"s{num}".lower())
+                        host_ids.add(f"s{int(num)}".lower())
+                        host_ids.add(f"s{int(num):02d}")
+
+        for clue in clues:
+            surviving_attempts = []
+            for attempt in clue.attempts:
+                if attempt.speaker.lower() in contestant_set_lower:
+                    surviving_attempts.append(attempt)
+                    continue
+
+                # Already a canonical name (case-exact match)?
+                if attempt.speaker in contestant_names:
+                    surviving_attempts.append(attempt)
+                    continue
+
+                # Skip host-associated IDs entirely — host doesn't buzz in
+                if attempt.speaker.lower() in host_ids:
+                    logger.warning(
+                        "Speaker normalization: dropping host speaker from buzz attempts",
+                        speaker=attempt.speaker,
+                        clue_category=clue.category,
+                    )
+                    dropped_total += 1
+                    continue
+
+                # Try fuzzy matching (edit distance)
+                fuzzy_match = _fuzzy_match_contestant(attempt.speaker, contestant_names)
+                if fuzzy_match:
+                    logger.info(
+                        "Speaker normalization: fuzzy-resolved unmapped speaker",
+                        original=attempt.speaker,
+                        resolved_to=fuzzy_match,
+                    )
+                    attempt.speaker = fuzzy_match
+                    surviving_attempts.append(attempt)
+                    fuzzy_resolved += 1
+                else:
+                    logger.warning(
+                        "Speaker normalization: dropping unresolvable buzz attempt",
+                        speaker=attempt.speaker,
+                        clue_category=clue.category,
+                        clue_selection_order=clue.selection_order,
+                    )
+                    dropped_total += 1
+
+            clue.attempts = surviving_attempts
+
         logger.warning(
-            "Speaker normalization: unmapped speakers remain",
-            unmapped=unmapped,
+            "Speaker normalization: hard cleanup complete",
+            unmapped_speakers=unmapped,
+            fuzzy_resolved=fuzzy_resolved,
+            attempts_dropped=dropped_total,
             variant_map={k: v for k, v in variant_map.items() if not k.startswith("speaker_")},
         )
     else:
@@ -171,3 +246,46 @@ def _normalize_speaker_names(
             "Speaker normalization complete — all speakers mapped to contestant full names",
             total_attempts=sum(len(c.attempts) for c in clues),
         )
+
+
+def _fuzzy_match_contestant(speaker: str, contestant_names: "list[str]", max_distance: int = 3) -> "Optional[str]":
+    """
+    Attempts to fuzzy-match a speaker name to a contestant using edit distance.
+
+    Returns the closest contestant name if within max_distance, else None.
+    Uses a simple Levenshtein implementation to avoid adding a dependency.
+    """
+    speaker_lower = speaker.lower().strip()
+    best_match: "Optional[str]" = None
+    best_distance = max_distance + 1
+
+    for cname in contestant_names:
+        # Try matching against full name and each name part
+        candidates = [cname.lower()] + [p.lower() for p in cname.split() if len(p) > 1]
+        for candidate in candidates:
+            dist = _levenshtein(speaker_lower, candidate)
+            if dist < best_distance:
+                best_distance = dist
+                best_match = cname
+
+    return best_match if best_distance <= max_distance else None
+
+
+def _levenshtein(s1: str, s2: str) -> int:
+    """Minimal Levenshtein distance implementation (no external deps)."""
+    if len(s1) < len(s2):
+        return _levenshtein(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+
+    prev_row = list(range(len(s2) + 1))
+    for i, c1 in enumerate(s1):
+        curr_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = prev_row[j + 1] + 1
+            deletions = curr_row[j] + 1
+            substitutions = prev_row[j] + (c1 != c2)
+            curr_row.append(min(insertions, deletions, substitutions))
+        prev_row = curr_row
+
+    return prev_row[-1]

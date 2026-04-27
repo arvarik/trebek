@@ -145,7 +145,43 @@ async def commit_episode_to_relational_tables(
             )
         )
 
-    await db_writer.execute_transaction(payload)
+    # ── Pre-commit FK validation ──────────────────────────────────────
+    # Build the set of valid contestant IDs that were actually inserted.
+    # Any buzz_attempt or score_adjustment referencing an ID outside this
+    # set would crash with FOREIGN KEY constraint failed.
+    valid_contestant_ids = {f"{episode_id}_{c.name.replace(' ', '_').lower()}" for c in episode_data.contestants}
+
+    # Filter payload: remove any rows referencing invalid contestant IDs
+    validated_payload: list[Tuple[str, Any]] = []
+    dropped_rows = 0
+    for sql, params in payload:
+        if "buzz_attempts" in sql or "score_adjustments" in sql:
+            # contestant_id is at a known position in the params tuple
+            # buzz_attempts: (attempt_id, clue_id, contestant_id, ...)
+            # score_adjustments: (adjustment_id, episode_id, contestant_id, ...)
+            contestant_id_idx = 2  # 0-indexed position of contestant_id
+            if len(params) > contestant_id_idx:
+                cid = params[contestant_id_idx]
+                if cid not in valid_contestant_ids:
+                    dropped_rows += 1
+                    logger.warning(
+                        "Pre-commit FK filter: dropping row with invalid contestant_id",
+                        table="buzz_attempts" if "buzz_attempts" in sql else "score_adjustments",
+                        contestant_id=cid,
+                        valid_ids=sorted(valid_contestant_ids),
+                    )
+                    continue
+        validated_payload.append((sql, params))
+
+    if dropped_rows:
+        logger.warning(
+            "Pre-commit FK filter: rows dropped to prevent FK crash",
+            dropped_rows=dropped_rows,
+            original_rows=len(payload),
+            validated_rows=len(validated_payload),
+        )
+
+    await db_writer.execute_transaction(validated_payload)
 
     logger.info(
         "Relational commit complete",

@@ -21,10 +21,16 @@ class TrebekStateMachine:
     "True Daily Double" calculations to runtime. Applies score adjustments sequentially.
     """
 
-    def __init__(self, initial_scores: Optional[Dict[str, int]] = None):
+    def __init__(
+        self,
+        initial_scores: Optional[Dict[str, int]] = None,
+        valid_contestants: Optional[set[str]] = None,
+    ):
         self.scores: Dict[str, int] = initial_scores or {}
         self.pending_adjustments: List[ScoreAdjustment] = []
         self.current_board_control_contestant: Optional[str] = None
+        self.valid_contestants: Optional[set[str]] = valid_contestants
+        self.unknown_speaker_warnings: int = 0
 
     def load_adjustments(self, adjustments: List[ScoreAdjustment]) -> None:
         """Loads score adjustments into the state machine."""
@@ -84,6 +90,19 @@ class TrebekStateMachine:
             wager_amount = clue_value
             for attempt in clue.attempts:
                 player = attempt.speaker
+
+                # Validate speaker against known contestants
+                if self.valid_contestants and player not in self.valid_contestants:
+                    self.unknown_speaker_warnings += 1
+                    if self.unknown_speaker_warnings <= 5:  # Cap log noise
+                        logger.warning(
+                            "State machine: skipping unknown speaker",
+                            speaker=player,
+                            selection_order=clue.selection_order,
+                            valid_contestants=sorted(self.valid_contestants),
+                        )
+                    continue
+
                 self.scores.setdefault(player, 0)
 
                 if attempt.is_correct:

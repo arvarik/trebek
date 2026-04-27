@@ -65,7 +65,7 @@ class TestNormalizeSpeakerNames:
         assert clues[0].attempts[0].speaker == "Rachel Bernstein"
 
     def test_host_excluded_from_mapping(self) -> None:
-        """Host name should be excluded from speaker mapping to prevent host appearing in buzz attempts."""
+        """Host name should be excluded from speaker mapping — host can't buzz in."""
         clues = [_make_clue_with_speaker("SPEAKER_00")]
         mapping = {"SPEAKER_00": "Ken Jennings", "SPEAKER_01": "Rachel"}
         _normalize_speaker_names(
@@ -74,9 +74,8 @@ class TestNormalizeSpeakerNames:
             ["Rachel Bernstein", "Lawrence Subba", "Matt Amodio"],
             host_name="Ken Jennings",
         )
-        # SPEAKER_00 maps to host — should NOT be resolved to a contestant
-        # (it stays as Ken Jennings since no contestant match)
-        assert clues[0].attempts[0].speaker != "Rachel Bernstein"
+        # SPEAKER_00 maps to host — should be dropped entirely (host can't buzz)
+        assert len(clues[0].attempts) == 0
 
     def test_case_insensitive(self) -> None:
         """Name matching should be case-insensitive."""
@@ -207,7 +206,7 @@ class TestNormalizeSpeakerNames:
         assert clues[0].attempts[0].speaker == "Dan Puma"
 
     def test_host_abbreviated_id_excluded(self) -> None:
-        """Abbreviated host speaker ID (S00) should not map to a contestant."""
+        """Abbreviated host speaker ID (S00) should be dropped, not fuzzy-matched."""
         clues = [_make_clue_with_speaker("S00")]
         mapping = {"SPEAKER_00": "Ken Jennings", "SPEAKER_01": "Scott"}
         _normalize_speaker_names(
@@ -216,5 +215,112 @@ class TestNormalizeSpeakerNames:
             ["Scott Riccardi", "Dan Puma"],
             host_name="Ken Jennings",
         )
-        # S00 = host, should NOT be resolved to any contestant
-        assert clues[0].attempts[0].speaker not in ("Scott Riccardi", "Dan Puma")
+        # S00 = host, should be dropped entirely (host can't buzz)
+        assert len(clues[0].attempts) == 0
+
+    def test_hard_cleanup_drops_unresolvable(self) -> None:
+        """Completely unrecognizable speakers should be dropped, not passed through."""
+        clues = [_make_clue_with_speaker("XYZ_MYSTERY_PLAYER")]
+        _normalize_speaker_names(clues, {}, ["Rachel Bernstein", "Lawrence Subba", "Matt Amodio"])
+        # The attempt should be dropped entirely
+        assert len(clues[0].attempts) == 0
+
+    def test_hard_cleanup_fuzzy_matches_typo(self) -> None:
+        """A minor typo (edit distance <= 3) should be fuzzy-matched, not dropped."""
+        clues = [_make_clue_with_speaker("Rachael")]  # Typo: "Rachael" vs "Rachel"
+        _normalize_speaker_names(clues, {}, ["Rachel Bernstein", "Lawrence Subba", "Matt Amodio"])
+        assert len(clues[0].attempts) == 1
+        assert clues[0].attempts[0].speaker == "Rachel Bernstein"
+
+    def test_hard_cleanup_preserves_valid_speakers(self) -> None:
+        """Valid speakers should never be dropped by the hard cleanup."""
+        clue = Clue(
+            round="Jeopardy",
+            category="Test",
+            board_row=1,
+            board_col=1,
+            selection_order=1,
+            is_daily_double=False,
+            requires_visual_context=False,
+            host_start_timestamp_ms=0.0,
+            host_finish_timestamp_ms=1000.0,
+            clue_syllable_count=5,
+            clue_text="Test clue",
+            correct_response="Test answer",
+            attempts=[
+                BuzzAttempt(
+                    attempt_order=1,
+                    speaker="Rachel",
+                    response_given="What?",
+                    is_correct=False,
+                    buzz_timestamp_ms=1500.0,
+                    response_start_timestamp_ms=1750.0,
+                    is_lockout_inferred=False,
+                ),
+                BuzzAttempt(
+                    attempt_order=2,
+                    speaker="GARBAGE_NAME",
+                    response_given="Who?",
+                    is_correct=True,
+                    buzz_timestamp_ms=2000.0,
+                    response_start_timestamp_ms=2250.0,
+                    is_lockout_inferred=False,
+                ),
+            ],
+        )
+        _normalize_speaker_names([clue], {}, ["Rachel Bernstein", "Lawrence Subba", "Matt Amodio"])
+        # Valid speaker kept, garbage dropped
+        assert len(clue.attempts) == 1
+        assert clue.attempts[0].speaker == "Rachel Bernstein"
+
+
+class TestLevenshtein:
+    """Test the minimal Levenshtein distance implementation."""
+
+    def test_identical(self) -> None:
+        from trebek.llm.speaker_normalization import _levenshtein
+
+        assert _levenshtein("hello", "hello") == 0
+
+    def test_one_insertion(self) -> None:
+        from trebek.llm.speaker_normalization import _levenshtein
+
+        assert _levenshtein("hell", "hello") == 1
+
+    def test_one_substitution(self) -> None:
+        from trebek.llm.speaker_normalization import _levenshtein
+
+        assert _levenshtein("rachel", "rachael") == 1
+
+    def test_empty(self) -> None:
+        from trebek.llm.speaker_normalization import _levenshtein
+
+        assert _levenshtein("", "abc") == 3
+        assert _levenshtein("abc", "") == 3
+
+    def test_completely_different(self) -> None:
+        from trebek.llm.speaker_normalization import _levenshtein
+
+        assert _levenshtein("abc", "xyz") == 3
+
+
+class TestFuzzyMatchContestant:
+    """Test the fuzzy matching helper."""
+
+    def test_exact_match(self) -> None:
+        from trebek.llm.speaker_normalization import _fuzzy_match_contestant
+
+        result = _fuzzy_match_contestant("Rachel", ["Rachel Bernstein", "Matt Amodio"])
+        assert result == "Rachel Bernstein"
+
+    def test_close_typo(self) -> None:
+        from trebek.llm.speaker_normalization import _fuzzy_match_contestant
+
+        result = _fuzzy_match_contestant("Rachael", ["Rachel Bernstein", "Matt Amodio"])
+        assert result == "Rachel Bernstein"
+
+    def test_too_far(self) -> None:
+        from trebek.llm.speaker_normalization import _fuzzy_match_contestant
+
+        result = _fuzzy_match_contestant("XYZABC", ["Rachel Bernstein", "Matt Amodio"])
+        assert result is None

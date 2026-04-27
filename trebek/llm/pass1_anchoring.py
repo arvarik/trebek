@@ -1,7 +1,7 @@
 import ast
 import json
 import structlog
-from typing import Dict
+from typing import Dict, Optional
 
 from trebek.config import MODEL_FLASH
 from trebek.llm.client import _get_client
@@ -36,7 +36,7 @@ async def execute_pass_1_speaker_anchoring(audio_file_path: str) -> "tuple[Dict[
             model=MODEL_FLASH,
             prompt=prompt,
             system_instruction=system_prompt,
-            max_output_tokens=2048,
+            max_output_tokens=65536,
             invocation_context="Pass 1 Speaker Anchoring",
         )
 
@@ -53,20 +53,9 @@ async def execute_pass_1_speaker_anchoring(audio_file_path: str) -> "tuple[Dict[
                 cost_usd=round(usage.get("cost_usd", 0.0), 6),
             )
             return {}, usage
-        # Try json.loads first, fall back to ast.literal_eval for single-quoted dicts
-        try:
-            mapping: Dict[str, str] = json.loads(clean)
-        except json.JSONDecodeError:
-            raw_mapping = dict(ast.literal_eval(clean))
-            # Validate: all values must be non-empty strings to prevent
-            # downstream crashes in speaker normalization
-            invalid_entries = {k: v for k, v in raw_mapping.items() if not isinstance(v, str) or not v.strip()}
-            if invalid_entries:
-                logger.warning(
-                    "Pass 1: filtering invalid mapping entries (None or empty values)",
-                    invalid_entries=invalid_entries,
-                )
-            mapping = {k: str(v).strip() for k, v in raw_mapping.items() if isinstance(v, str) and v.strip()}
+
+        mapping = _normalize_speaker_mapping(clean)
+
         logger.info(
             "Pass 1 Speaker Anchor resolved",
             mapping=mapping,
@@ -89,3 +78,98 @@ async def execute_pass_1_speaker_anchoring(audio_file_path: str) -> "tuple[Dict[
             "cost_usd": 0.0,
             "latency_ms": 0.0,
         }
+
+
+def _normalize_speaker_mapping(raw_text: str) -> Dict[str, str]:
+    """
+    Robustly extracts SPEAKER_XX → name pairs from any format the LLM returns.
+
+    Handles:
+    - Standard dict: {"SPEAKER_00": "Ken Jennings", ...}
+    - Single-quoted Python dict: {'SPEAKER_00': 'Ken'}
+    - List of dicts: [{"speaker": "SPEAKER_00", "name": "Ken"}, ...]
+    - Nested dict: {"speakers": {"SPEAKER_00": "Ken"}}
+    - Prose with patterns: "SPEAKER_00 is Ken Jennings"
+    """
+    import re
+
+    # Strategy 1: Try json.loads
+    try:
+        parsed = json.loads(raw_text)
+        result = _extract_from_parsed(parsed)
+        if result:
+            return result
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Strategy 2: Try ast.literal_eval (handles single-quoted dicts)
+    try:
+        parsed = ast.literal_eval(raw_text)
+        result = _extract_from_parsed(parsed)
+        if result:
+            return result
+    except (ValueError, SyntaxError):
+        pass
+
+    # Strategy 3: Regex extraction from prose/unstructured text
+    # Matches patterns like: SPEAKER_00: Ken Jennings, "SPEAKER_01" -> "Matt"
+    pattern = re.compile(
+        r'["\']?(SPEAKER_\d+)["\']?\s*[:\-=→>]+\s*["\']?([A-Z][a-zA-Z\s\'.]+?)(?:["\',}\]\n]|$)',
+        re.MULTILINE,
+    )
+    matches = pattern.findall(raw_text)
+    if matches:
+        mapping: Dict[str, str] = {}
+        for speaker_id, name in matches:
+            name_clean = name.strip().rstrip(".,;:'\"")
+            if name_clean:
+                mapping[speaker_id] = name_clean
+        if mapping:
+            logger.info(
+                "Pass 1: extracted speaker mapping via regex fallback",
+                pairs_found=len(mapping),
+            )
+            return mapping
+
+    logger.warning(
+        "Pass 1: could not extract speaker mapping from response",
+        raw_text=raw_text[:300],
+    )
+    return {}
+
+
+def _extract_from_parsed(parsed: object) -> "Optional[Dict[str, str]]":
+    """
+    Extracts SPEAKER_XX → name pairs from a parsed JSON/Python structure.
+    Handles dicts (flat or nested) and lists of dicts.
+    """
+    if isinstance(parsed, dict):
+        # Check if it's a flat SPEAKER_XX → name dict
+        if any(str(k).upper().startswith("SPEAKER_") for k in parsed):
+            return {str(k): str(v).strip() for k, v in parsed.items() if isinstance(v, str) and v.strip()}
+        # Check for nested structure like {"speakers": {...}, "mapping": {...}}
+        for v in parsed.values():
+            if isinstance(v, dict) and any(str(sk).upper().startswith("SPEAKER_") for sk in v):
+                return {str(sk): str(sv).strip() for sk, sv in v.items() if isinstance(sv, str) and sv.strip()}
+
+    if isinstance(parsed, list):
+        # List of dicts: [{"speaker": "SPEAKER_00", "name": "Ken"}, ...]
+        mapping: Dict[str, str] = {}
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            # Try common key patterns
+            speaker_key = None
+            name_key = None
+            for k in item:
+                k_lower = str(k).lower()
+                if k_lower in ("speaker", "speaker_id", "id"):
+                    speaker_key = k
+                elif k_lower in ("name", "contestant", "person"):
+                    name_key = k
+            if speaker_key and name_key:
+                mapping[str(item[speaker_key])] = str(item[name_key]).strip()
+        if mapping:
+            return mapping
+
+    return None

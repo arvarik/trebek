@@ -40,7 +40,8 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
 
                     # Run the deterministic state machine verification
                     start_vec_t = time.perf_counter()
-                    state_machine = TrebekStateMachine()
+                    valid_contestants = {c.name for c in episode_data.contestants}
+                    state_machine = TrebekStateMachine(valid_contestants=valid_contestants)
                     state_machine.load_adjustments(episode_data.score_adjustments)
                     for clue in episode_data.clues:
                         state_machine.process_clue(clue)

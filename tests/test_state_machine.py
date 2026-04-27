@@ -268,3 +268,30 @@ class TestScoreAdjustments:
         assert sm.scores["A"] == 0
         # Adjustment should still be pending
         assert len(sm.pending_adjustments) == 1
+
+
+class TestStateMachineContestantValidation:
+    """Tests for the valid_contestants gating in the state machine."""
+
+    def test_unknown_speaker_skipped(self) -> None:
+        """Unknown speakers should not create score entries."""
+        sm = TrebekStateMachine(valid_contestants={"Alice", "Bob"})
+        clue = _make_clue(row=1, attempts=[_make_attempt("UNKNOWN_PERSON", True)])
+        sm.process_clue(clue)
+        assert "UNKNOWN_PERSON" not in sm.scores
+        assert sm.unknown_speaker_warnings == 1
+
+    def test_known_speaker_scored(self) -> None:
+        """Known speakers should be scored normally."""
+        sm = TrebekStateMachine(valid_contestants={"Alice", "Bob"})
+        clue = _make_clue(row=1, attempts=[_make_attempt("Alice", True)])
+        sm.process_clue(clue)
+        assert sm.scores["Alice"] == 200
+        assert sm.unknown_speaker_warnings == 0
+
+    def test_no_validation_when_none(self) -> None:
+        """When valid_contestants is None, all speakers are accepted (backward compat)."""
+        sm = TrebekStateMachine()
+        clue = _make_clue(row=1, attempts=[_make_attempt("AnyName", True)])
+        sm.process_clue(clue)
+        assert sm.scores["AnyName"] == 200
