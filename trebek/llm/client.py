@@ -146,6 +146,8 @@ class GeminiClient:
                 start_t = time.perf_counter()
                 response = await self.client.aio.models.generate_content(model=model, contents=prompt, config=config)
                 latency_ms = (time.perf_counter() - start_t) * 1000
+                from trebek.config import MODEL_PRICING
+
                 usage = {}
                 if hasattr(response, "usage_metadata") and response.usage_metadata:
                     usage = {
@@ -156,6 +158,14 @@ class GeminiClient:
                     }
                 else:
                     usage = {"input_tokens": 0.0, "output_tokens": 0.0, "cached_tokens": 0.0, "latency_ms": latency_ms}
+
+                cost = 0.0
+                pricing = MODEL_PRICING.get(model)
+                if pricing:
+                    cost = (
+                        usage["input_tokens"] * pricing["input"] + usage["output_tokens"] * pricing["output"]
+                    ) / 1_000_000
+                usage["cost_usd"] = cost
 
                 logger.info(
                     "Gemini API: success",

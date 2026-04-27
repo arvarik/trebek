@@ -44,6 +44,9 @@ class ClueExtraction(BaseModel):
 
 
 class PartialClues(BaseModel):
+    reasoning_scratchpad: str = Field(
+        description="Think step-by-step about the clues in this chunk. Identify boundaries, daily doubles, and map out the buzz attempts chronologically before extracting them."
+    )
     clues: list[ClueExtraction]
 
 

@@ -140,6 +140,7 @@ async def _extract_part(
                     pass
 
                 if broken_text:
+                    logger.warning("Schema validation failed, attempting Flash repair", context=ctx, error=str(e)[:500])
                     repair_result = await _attempt_flash_repair(broken_text, str(e), schema_cls, ctx)
                     if repair_result is not None:
                         repaired_data, repair_usage = repair_result

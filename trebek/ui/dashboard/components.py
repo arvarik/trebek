@@ -129,9 +129,9 @@ def generate_timing_panel(conn: sqlite3.Connection) -> Panel:
             if srow and srow[0] is not None:
                 timing_table.add_row(
                     label,
-                    f"[cyan]{srow[0] / 1000:.1f}[/cyan]",
-                    f"{srow[1] / 1000:.1f}",
-                    f"{srow[2] / 1000:.1f}",
+                    f"[cyan]{srow[0] / 1000:.3f}[/cyan]",
+                    f"{srow[1] / 1000:.3f}",
+                    f"{srow[2] / 1000:.3f}",
                 )
     except sqlite3.OperationalError:
         pass

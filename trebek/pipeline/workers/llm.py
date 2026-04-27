@@ -7,7 +7,6 @@ import structlog
 from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
 from trebek.llm import execute_pass_1_speaker_anchoring, execute_pass_2_data_extraction
-from trebek.config import MODEL_PRICING, MODEL_FLASH
 
 if TYPE_CHECKING:
     from trebek.pipeline.orchestrator import TrebekPipelineOrchestrator
@@ -107,19 +106,7 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                         total_cached = int(usage1.get("cached_tokens", 0) + usage2.get("cached_tokens", 0))
                         total_latency = usage1.get("latency_ms", 0.0) + usage2.get("latency_ms", 0.0)
 
-                        # Dynamic cost calculation based on selected model
-                        flash_pricing = MODEL_PRICING[MODEL_FLASH]
-                        pass2_pricing = MODEL_PRICING.get(orchestrator.llm_model, MODEL_PRICING[orchestrator.llm_model])
-
-                        cost_1 = (
-                            usage1.get("input_tokens", 0) * flash_pricing["input"]
-                            + usage1.get("output_tokens", 0) * flash_pricing["output"]
-                        ) / 1_000_000
-                        cost_2 = (
-                            usage2.get("input_tokens", 0) * pass2_pricing["input"]
-                            + usage2.get("output_tokens", 0) * pass2_pricing["output"]
-                        ) / 1_000_000
-                        total_cost = cost_1 + cost_2
+                        total_cost = usage1.get("cost_usd", 0.0) + usage2.get("cost_usd", 0.0)
 
                         logger.info(
                             "Pass 2 complete",

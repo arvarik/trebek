@@ -59,12 +59,27 @@ def gpu_worker_task(
                     util = pynvml.nvmlDeviceGetUtilizationRates(handle)
                     metrics["util_sum"] += float(util.gpu)
                     metrics["util_count"] += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("pynvml loop error", error=str(e))
                 time.sleep(0.5)
             pynvml.nvmlShutdown()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("pynvml failed, falling back to torch.cuda", error=str(e))
+            # Fallback to PyTorch VRAM tracking if pynvml is not installed or fails
+            try:
+                import torch
+
+                while not stop_event.is_set():
+                    try:
+                        vram_mb = float(torch.cuda.max_memory_allocated(0)) / (1024 * 1024)
+                        if vram_mb > metrics["peak_vram"]:
+                            metrics["peak_vram"] = vram_mb
+                        # Torch cannot easily provide utilization %
+                    except Exception:
+                        pass
+                    time.sleep(0.5)
+            except Exception:
+                pass
 
     monitor_thread = threading.Thread(target=monitor_gpu, daemon=True)
     monitor_thread.start()
