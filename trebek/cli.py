@@ -105,7 +105,7 @@ def build_parser() -> TrebekArgumentParser:
         type=str,
         choices=list(MODEL_ALIASES.keys()),
         default="pro",
-        help="LLM model for Pass 2 extraction: 'pro' (default, full quality) or 'flash' (cheaper)",
+        help="LLM model for Pass 2 extraction: 'pro' (default), 'flash' (cheapest), or 'flash3' (balanced)",
     )
     run_parser.add_argument(
         "--input-dir",

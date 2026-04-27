@@ -22,7 +22,7 @@ async def _attempt_flash_repair(
     """
     Attempts to repair broken JSON using the cheap Flash model.
 
-    Sends the broken JSON string and the validation error to gemini-3-flash-preview
+    Sends the broken JSON string and the validation error to gemini-3.1-flash-lite-preview
     with a targeted repair prompt. If the repaired output passes Pydantic validation,
     returns the validated object and usage stats. Returns None on any failure,
     allowing the caller to fall through to a full retry.
@@ -109,7 +109,12 @@ async def _extract_part(
                 invocation_context=f"{ctx} (schema validation attempt {attempt + 1}/{max_retries + 1})",
             )
 
-            output_tokens_used = int(usage.get("output_tokens", 0))
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
+                output_tokens_used = int(
+                    getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+                )
+            else:
+                output_tokens_used = 0
             logger.info(
                 "LLM extraction completed",
                 context=ctx,
@@ -122,9 +127,6 @@ async def _extract_part(
                 else 0,
                 latency_ms=round(usage.get("latency_ms", 0), 0),
             )
-
-            if hasattr(response, "parsed") and response.parsed:
-                return response.parsed, usage, attempt
 
             response_text = str(response.text)
             clean_json = response_text.replace("```json", "").replace("```", "").strip()

@@ -28,19 +28,23 @@ SUPPORTED_VIDEO_EXTENSIONS: Tuple[str, ...] = (
 
 
 # ── Model Constants ──────────────────────────────────────────────
-MODEL_FLASH = "gemini-3-flash-preview"
+MODEL_FLASH = "gemini-3.1-flash-lite-preview"
+MODEL_FLASH3 = "gemini-3-flash-preview"
 MODEL_PRO = "gemini-3.1-pro-preview"
 
 # CLI alias → canonical model name
 MODEL_ALIASES: dict[str, str] = {
     "flash": MODEL_FLASH,
+    "flash3": MODEL_FLASH3,
     "pro": MODEL_PRO,
 }
 
-# Per-million-token pricing (USD)
+# Per-million-token pricing (USD) — Standard tier, prompts ≤200k tokens
+# Source: https://ai.google.dev/gemini-api/docs/pricing#standard (2026-04-26)
 MODEL_PRICING: dict[str, dict[str, float]] = {
-    MODEL_FLASH: {"input": 0.075, "output": 0.30},
-    MODEL_PRO: {"input": 1.25, "output": 5.00},
+    MODEL_FLASH: {"input": 0.25, "output": 1.50},
+    MODEL_FLASH3: {"input": 0.50, "output": 3.00},
+    MODEL_PRO: {"input": 2.00, "output": 12.00},
 }
 
 

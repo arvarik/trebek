@@ -57,7 +57,7 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
 
                     # Update telemetry (dynamic pricing from config)
                     actual_model = orchestrator.llm_model
-                    model_pricing = MODEL_PRICING.get(actual_model, {"input": 1.25, "output": 5.00})
+                    model_pricing = MODEL_PRICING.get(actual_model, {"input": 2.00, "output": 12.00})
                     cost_3 = (
                         multi_usage.get("input_tokens", 0) * model_pricing["input"]
                         + multi_usage.get("output_tokens", 0) * model_pricing["output"]

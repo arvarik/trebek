@@ -237,12 +237,14 @@ async def execute_pass_2_data_extraction(
                 )
 
             wager_val: Optional[Union[int, Literal["True Daily Double"]]] = None
-            if ext_clue.daily_double_wager == "True Daily Double":
-                wager_val = "True Daily Double"
-            elif isinstance(ext_clue.daily_double_wager, int):
-                wager_val = ext_clue.daily_double_wager
-            elif isinstance(ext_clue.daily_double_wager, str) and ext_clue.daily_double_wager.isdigit():
-                wager_val = int(ext_clue.daily_double_wager)
+            if ext_clue.daily_double_wager is not None:
+                if ext_clue.daily_double_wager == "True Daily Double":
+                    wager_val = "True Daily Double"
+                else:
+                    try:
+                        wager_val = int(ext_clue.daily_double_wager)
+                    except ValueError:
+                        pass
 
             all_clues.append(
                 Clue(

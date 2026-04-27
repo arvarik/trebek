@@ -38,7 +38,7 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
 
                         def _load_transcript(path: str) -> dict[str, Any]:
                             with gzip.open(path, "rt", encoding="utf-8") as f:
-                                return json.load(f)  # type: ignore[no-any-return]
+                                return json.load(f)  # type: ignore[no-any-return, unused-ignore]
 
                         gpu_data: dict[str, Any] = await asyncio.to_thread(_load_transcript, transcript_path)
 

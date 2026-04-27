@@ -1,4 +1,4 @@
-from typing import Optional, Literal, Union
+from typing import Optional, Literal
 from pydantic import BaseModel, Field
 from trebek.schemas import Contestant, FinalJeopardy, ScoreAdjustment
 
@@ -31,14 +31,19 @@ class ClueExtraction(BaseModel):
     requires_visual_context: bool
     host_read_start_line_id: str
     host_read_end_line_id: str
-    daily_double_wager: Optional[Union[int, str]] = None
-    wagerer_name: Optional[str] = None
+    daily_double_wager: Optional[str] = Field(
+        description="The wagered amount as a string (e.g. '2000', 'True Daily Double'), or null if not a Daily Double."
+    )
+    wagerer_name: Optional[str] = Field(
+        description="Name of the contestant who found the Daily Double, or null if not a Daily Double."
+    )
     correct_response: str
-    attempts: list[BuzzAttemptExtraction] = Field(default_factory=list)
+    attempts: list[BuzzAttemptExtraction] = Field(
+        description="Chronological list of buzz attempts. Empty list for Triple Stumpers."
+    )
 
 
 class PartialClues(BaseModel):
-    reasoning_scratchpad: str = Field(description="...")
     clues: list[ClueExtraction]
 
 
@@ -49,3 +54,4 @@ class EpisodeSkeleton(BaseModel):
     total_jeopardy_clues_played: int
     total_double_jeopardy_clues_played: int
     daily_double_count: int
+

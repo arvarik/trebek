@@ -3,6 +3,7 @@ import json
 import structlog
 from typing import Dict
 
+from trebek.config import MODEL_FLASH
 from trebek.llm.client import _get_client
 
 logger = structlog.get_logger()
@@ -32,7 +33,7 @@ async def execute_pass_1_speaker_anchoring(audio_file_path: str) -> "tuple[Dict[
         ]
 
         response, usage = await client.generate_content(
-            model="gemini-3-flash-preview",
+            model=MODEL_FLASH,
             prompt=prompt,
             system_instruction=system_prompt,
             max_output_tokens=2048,

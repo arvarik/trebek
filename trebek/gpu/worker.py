@@ -10,6 +10,8 @@ from typing import Any
 
 logger = structlog.get_logger()
 _whisperx_model: Any = None
+_whisperx_align_model: Any = None
+_whisperx_align_metadata: Any = None
 
 
 def gpu_worker_task(
@@ -19,6 +21,14 @@ def gpu_worker_task(
     Executes the GPU processing task (Stage 3) and writes results to disk to avoid
     IPC serialization bottleneck of massive JSON structures.
     Uses Warm Worker architecture to keep model weights in VRAM.
+
+    Pipeline:
+    1. FFmpeg audio extraction (video → WAV)
+    2. WhisperX transcription (large-v3, paragraph-level segments)
+    3. WhisperX forced alignment (wav2vec2, word-level timestamps)
+       — This step is CRITICAL: without it, segments are ~25s paragraphs
+       with zero word-level tokens, causing downstream LLM extraction
+       to miss 50%+ of clues.
     """
     import gc
     import torch
@@ -72,8 +82,8 @@ def gpu_worker_task(
         detail = "\n".join(err_msg[-3:]) if err_msg else f"exit code {result.returncode}"
         raise RuntimeError(f"ffmpeg failed for {video_filepath}: {detail}")
 
-    # 2. WhisperX - Native API with Warm Worker
-    global _whisperx_model
+    # 2. WhisperX Transcription — Warm Worker
+    global _whisperx_model, _whisperx_align_model, _whisperx_align_metadata
     if "_whisperx_model" not in globals() or _whisperx_model is None:
         logger.info("Loading WhisperX model into VRAM (Cold Start)...")
         _whisperx_model = whisperx.load_model("large-v3", device="cuda", compute_type=compute_type, language="en")
@@ -83,6 +93,46 @@ def gpu_worker_task(
     try:
         audio = whisperx.load_audio(audio_path)
         transcript_data = _whisperx_model.transcribe(audio, batch_size=batch_size, language="en")
+
+        raw_segment_count = len(transcript_data.get("segments", []))
+        logger.info(
+            "WhisperX transcription complete (pre-alignment)",
+            segments=raw_segment_count,
+        )
+
+        # 3. Forced Alignment — word-level timestamps via wav2vec2
+        # Without this step, segments are ~25s paragraph chunks with zero
+        # word-level tokens, making Line ID-based extraction nearly impossible.
+        if "_whisperx_align_model" not in globals() or _whisperx_align_model is None:
+            logger.info("Loading WhisperX alignment model (wav2vec2)...")
+            _whisperx_align_model, _whisperx_align_metadata = whisperx.load_align_model(
+                language_code="en", device="cuda"
+            )
+
+        try:
+            aligned_result = whisperx.align(
+                transcript_data["segments"],
+                _whisperx_align_model,
+                _whisperx_align_metadata,
+                audio,
+                device="cuda",
+                return_char_alignments=False,
+            )
+            aligned_segment_count = len(aligned_result.get("segments", []))
+            word_count = sum(len(s.get("words", [])) for s in aligned_result.get("segments", []))
+            logger.info(
+                "WhisperX alignment complete",
+                pre_alignment_segments=raw_segment_count,
+                post_alignment_segments=aligned_segment_count,
+                word_level_tokens=word_count,
+            )
+            transcript_data = aligned_result
+        except Exception as align_err:
+            logger.warning(
+                "WhisperX alignment failed, using unaligned transcript",
+                error=str(align_err)[:200],
+            )
+            # Fall through with the unaligned transcript_data
 
         # Explicit Memory Management
         del audio

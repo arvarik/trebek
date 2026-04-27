@@ -52,3 +52,9 @@ input_videos/
 
 # Agent state
 .agent/
+
+# Docs — local explorations and agent-generated working docs
+docs/archive/
+docs/designs/
+docs/explorations/
+docs/plans/

@@ -123,7 +123,7 @@ class GeminiClient:
             kwargs["system_instruction"] = system_instruction
         if response_schema:
             kwargs["response_mime_type"] = "application/json"
-            kwargs["response_schema"] = response_schema
+            kwargs["response_json_schema"] = response_schema.model_json_schema()
         else:
             kwargs["response_mime_type"] = "application/json"
         if cached_content_name:
