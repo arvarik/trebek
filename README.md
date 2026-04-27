@@ -283,7 +283,8 @@ All LLM extraction outputs are validated against strict Pydantic v2 models defin
 | **NVIDIA GPU** | 16GB VRAM recommended (RTX 4060 Ti / 5060 Ti) |
 | **CUDA Toolkit** | Required for WhisperX GPU acceleration |
 | **SQLite** | 3.35+ (for `RETURNING` clause support) |
-| **Gemini API Key** | Required for LLM extraction stages |
+| **Gemini API Key** | Required for LLM extraction stages ([get one free](https://aistudio.google.com/apikey)) |
+| **HuggingFace Token** | Required for speaker diarization ([setup guide](#speaker-diarization-setup)) |
 
 ### Quick Start
 
@@ -312,6 +313,24 @@ pip install whisperx pyannote.audio
 
 If you prefer not to install these heavy dependencies, use the built-in Docker wrapper instead (see below).
 
+### Speaker Diarization Setup
+
+WhisperX uses [pyannote](https://github.com/pyannote/pyannote-audio) for speaker diarization, which requires a **free** HuggingFace token:
+
+1. **Create a HuggingFace account** at [huggingface.co/join](https://huggingface.co/join)
+2. **Accept the model license** — visit each page and click "Agree and access":
+   - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+   - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
+3. **Generate an access token** at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+4. **Add it to your `.env`:**
+   ```env
+   HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+
+> **⚠️ Without `HF_TOKEN`**, the GPU stage will skip diarization and segments will lack `speaker` labels. The LLM pipeline can still work (Pass 1 handles speaker identification via audio), but extraction accuracy is significantly reduced — expect ~50% fewer clues extracted.
+
+The pyannote model files are cached locally after first download (`~/.cache/huggingface/`), so subsequent runs work offline.
+
 ### 🐳 Docker Hybrid Execution (Recommended)
 
 To completely bypass complex PyTorch and CUDA dependency issues on your host, Trebek includes a seamless Docker orchestrator.
@@ -326,6 +345,8 @@ Simply append the `--docker` flag to any `trebek` command. The CLI will automati
 trebek --docker
 trebek --docker --once --input-dir ./videos
 ```
+
+> **ℹ️ Note:** The `--docker` flag automatically passes through `GEMINI_API_KEY` and `HF_TOKEN` from your environment or `.env` file into the container.
 
 > **⚠️ WARNING — SQLite WAL Mode & Network Drives**
 > Trebek uses SQLite Write-Ahead Logging (WAL) which requires strict POSIX advisory locking. Your `trebek.db` volume **must** be mounted to a local disk (ext4, NTFS, APFS). Mapping it to a network share (NFS, SMB, CIFS) will result in database corruption.
@@ -347,6 +368,10 @@ input_dir=input_videos
 # ─── API Keys ───
 # Get your key at https://aistudio.google.com/apikey
 GEMINI_API_KEY=your_api_key_here
+
+# Required for speaker diarization (free)
+# See: README.md → Speaker Diarization Setup
+HF_TOKEN=hf_your_token_here
 
 # ─── Logging ───
 log_level=INFO
