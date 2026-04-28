@@ -39,7 +39,7 @@ class ClueExtraction(BaseModel):
     )
     correct_response: str
     attempts: list[BuzzAttemptExtraction] = Field(
-        description="Chronological list of buzz attempts. Empty list for Triple Stumpers."
+        default_factory=list, description="Chronological list of buzz attempts. Empty list for Triple Stumpers."
     )
 
 

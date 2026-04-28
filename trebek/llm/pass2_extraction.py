@@ -178,11 +178,8 @@ async def execute_pass_2_data_extraction(
                 f"Transcript Chunk ({chunk_idx + 1} of {len(chunks)}):\n{chunk_text}\n\n"
                 "Extract ALL Jeopardy and Double Jeopardy clues found in this chunk. "
                 "Do NOT extract Final Jeopardy — it is handled separately. "
-                "If a clue appears cut off at the start or end of this chunk, SKIP IT completely "
-                "(overlapping chunks will capture it whole). "
-                "If no clues are found in this chunk, return an empty array for clues. "
-                "Output ONLY Line IDs for clue reading and buzz attempts (e.g. 'L105'). "
-                "Ensure you extract ALL buzz attempts."
+                "Skip clues cut off at chunk boundaries. "
+                "Use Line IDs for timestamps (e.g. 'L105')."
             )
             return await _extract_part(
                 prompt,
