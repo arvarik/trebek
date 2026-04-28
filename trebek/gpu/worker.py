@@ -163,7 +163,11 @@ def gpu_worker_task(
                     token=hf_token,
                     device="cuda",
                 )
-                diarize_segments = diarize_model(audio_path)
+                diarize_segments = diarize_model(
+                    audio_path,
+                    min_speakers=3,
+                    max_speakers=6,
+                )
                 transcript_data = whisperx.assign_word_speakers(diarize_segments, transcript_data)
                 speaker_set = {s.get("speaker", "?") for s in transcript_data.get("segments", [])}
                 logger.info(
