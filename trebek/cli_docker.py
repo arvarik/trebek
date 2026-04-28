@@ -3,7 +3,7 @@ Docker container delegation for the ``trebek run --docker`` flag.
 
 Constructs and executes a ``docker run`` command that passes through
 GPU access, volume mounts, environment variables, and CLI flags to
-the ``trebek:latest`` container image.
+the ``ghcr.io/arvarik/trebek:latest`` container image.
 """
 
 import os
@@ -27,6 +27,7 @@ def handle_docker(args: argparse.Namespace, input_dir: str) -> None:
         "--gpus",
         "all",
         "--shm-size=8gb",
+        "--pull=always",
         "-v",
         f"{cwd_abs}:/app",
     ]
@@ -44,7 +45,7 @@ def handle_docker(args: argparse.Namespace, input_dir: str) -> None:
     if "HF_TOKEN" in os.environ:
         cmd.extend(["-e", f"HF_TOKEN={os.environ['HF_TOKEN']}"])
 
-    cmd.append("trebek:latest")
+    cmd.append("ghcr.io/arvarik/trebek:latest")
 
     # Forward subcommand and flags
     cmd.append("run")

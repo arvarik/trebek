@@ -119,18 +119,20 @@ All SQLite writes serialized through a single `DatabaseWriter` actor (`asyncio.Q
 
 ## 🚀 Quick Start
 
+The fastest way to get Trebek running is using the official Docker image via Hybrid Mode. The lightweight CLI runs on your host, while the heavy GPU workloads (PyTorch, WhisperX) are safely delegated to the `ghcr.io` container.
+
 ```bash
-# 1. Install
+# 1. Install lightweight CLI
 pip install trebek
 
-# 2. Configure (just need a free Gemini API key)
+# 2. Configure (requires a free Gemini API key)
 echo "GEMINI_API_KEY=your_key_here" > .env
 
-# 3. Run
-trebek run --input-dir /path/to/your/videos
+# 3. Run with Docker GPU delegation
+trebek run --input-dir /path/to/your/videos --docker
 ```
 
-> **📖 Full installation guide**: See **[SETUP.md](SETUP.md)** for Docker setup (recommended), GPU dependencies, HuggingFace token configuration, and detailed usage instructions.
+> **📖 Full installation guide**: See **[SETUP.md](SETUP.md)** for `docker-compose` deployments, native installations (no Docker), HuggingFace token configuration, and detailed CLI usage.
 
 > **🏗️ Architecture deep-dive**: See **[DESIGN.md](DESIGN.md)** for the complete system architecture, data model, pipeline stages, and safety invariants.
 

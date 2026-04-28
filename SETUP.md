@@ -20,8 +20,9 @@ The fastest way to get Trebek running — handles all GPU dependencies automatic
 ### 5-Step Setup
 
 ```bash
-# 1. Clone
-git clone https://github.com/arvarik/trebek.git && cd trebek
+# 1. Download
+curl -O https://raw.githubusercontent.com/arvarik/trebek/main/docker-compose.yml
+curl -o .env https://raw.githubusercontent.com/arvarik/trebek/main/.env.example
 
 # 2. Configure
 cp .env.example .env
@@ -31,7 +32,7 @@ cp .env.example .env
 mkdir -p input_videos
 # Copy/symlink your J! episode files here (nested folders OK)
 
-# 4. Launch
+# 4. Launch (auto-pulls GHCR image)
 docker compose up -d
 
 # 5. Monitor
@@ -82,11 +83,11 @@ WhisperX uses [pyannote](https://github.com/pyannote/pyannote-audio) for speaker
 
 ### Docker Hybrid Mode
 
-Install Trebek natively for the CLI but delegate GPU work to Docker:
+Install Trebek natively for the CLI but delegate GPU work to the official GHCR Docker image:
 
 ```bash
 pip install trebek         # Lightweight (no PyTorch)
-trebek run --docker        # GPU work in container
+trebek run --docker        # Pulls from GHCR and delegates GPU work
 ```
 
 ---
