@@ -234,18 +234,24 @@ async def commit_episode_to_relational_tables(
     validated_payload: list[Tuple[str, Any]] = []
     dropped_rows = 0
     for sql, params in payload:
-        if "buzz_attempts" in sql or "score_adjustments" in sql:
+        if "buzz_attempts" in sql or "score_adjustments" in sql or ("wagers" in sql and "contestant_id" in sql):
             # contestant_id is at a known position in the params tuple
             # buzz_attempts: (attempt_id, clue_id, contestant_id, ...)
             # score_adjustments: (adjustment_id, episode_id, contestant_id, ...)
+            # wagers: (wager_id, clue_id, contestant_id, ...)
             contestant_id_idx = 2  # 0-indexed position of contestant_id
             if len(params) > contestant_id_idx:
                 cid = params[contestant_id_idx]
                 if cid not in valid_contestant_ids:
                     dropped_rows += 1
+                    table_name = "buzz_attempts"
+                    if "score_adjustments" in sql:
+                        table_name = "score_adjustments"
+                    elif "wagers" in sql:
+                        table_name = "wagers"
                     logger.warning(
                         "Pre-commit FK filter: dropping row with invalid contestant_id",
-                        table="buzz_attempts" if "buzz_attempts" in sql else "score_adjustments",
+                        table=table_name,
                         contestant_id=cid,
                         valid_ids=sorted(valid_contestant_ids),
                     )

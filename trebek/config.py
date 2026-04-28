@@ -55,6 +55,24 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default="", description="GCP / Gemini API Key")
     log_level: str = Field(default="INFO", description="Logging level")
 
+    def require_gemini_api_key(self) -> str:
+        """Validates that GEMINI_API_KEY is set. Call this at pipeline startup,
+        not at import time, so that CLI commands like scan/stats still work."""
+        if not self.gemini_api_key:
+            raise ValueError(
+                "GEMINI_API_KEY is required. Get a free key at https://aistudio.google.com/apikey "
+                "and set it in your .env file or environment."
+            )
+        return self.gemini_api_key
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, v: str) -> str:
+        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if v.upper() not in valid_levels:
+            raise ValueError(f"log_level must be one of {sorted(valid_levels)}, got '{v}'")
+        return v.upper()
+
     # GPU constraints
     gpu_vram_target_gb: int = Field(
         default=16, description="Target VRAM ceiling for safety limits (e.g. 16 for 4060/5060 Ti)"

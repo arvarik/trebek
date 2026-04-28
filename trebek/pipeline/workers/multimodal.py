@@ -6,6 +6,7 @@ from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
 from trebek.schemas import Episode
 from trebek.llm import execute_pass_3_multimodal_augmentation
+from trebek.status import PipelineStatus
 
 if TYPE_CHECKING:
     from trebek.pipeline.orchestrator import TrebekPipelineOrchestrator
@@ -18,13 +19,15 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
     current_episode_id: str | None = None
     try:
         while orchestrator.running:
-            episode_id = await orchestrator.db_writer.poll_for_work("SAVING", "MULTIMODAL_PROCESSING")
+            episode_id = await orchestrator.db_writer.poll_for_work(
+                PipelineStatus.SAVING, PipelineStatus.MULTIMODAL_PROCESSING
+            )
             current_episode_id = episode_id
             if episode_id:
                 logger.info(
                     "Multimodal Worker: Processing episode",
                     episode_id=episode_id,
-                    stage=get_stage_display("MULTIMODAL_PROCESSING"),
+                    stage=get_stage_display(PipelineStatus.MULTIMODAL_PROCESSING),
                 )
                 try:
                     episode_data_path = os.path.join(orchestrator.output_dir, f"episode_{episode_id}.json")
@@ -74,9 +77,11 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                     )
 
                     await orchestrator.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'MULTIMODAL_DONE', updated_at = CURRENT_TIMESTAMP "
-                        "WHERE episode_id = ?",
-                        (episode_id,),
+                        "UPDATE pipeline_state SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
+                        (
+                            PipelineStatus.MULTIMODAL_DONE,
+                            episode_id,
+                        ),
                     )
                     current_episode_id = None
                     if orchestrator.is_stage_active("verify"):
@@ -89,7 +94,7 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                 except Exception as e:
                     logger.error("Multimodal worker failed", error=str(e))
                     permanently_failed = await orchestrator.db_writer.fail_episode_with_retry(
-                        episode_id, "SAVING", str(e)
+                        episode_id, PipelineStatus.SAVING, str(e)
                     )
                     current_episode_id = None
                     if permanently_failed:
@@ -97,7 +102,7 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                     progress.advance(task_id)
             else:
                 current_episode_id = None
-                if orchestrator.mode == "once" and await orchestrator._no_work_remaining("SAVING"):
+                if orchestrator.mode == "once" and await orchestrator._no_work_remaining(PipelineStatus.SAVING):
                     break
                 orchestrator.multimodal_work_ready.clear()
                 if orchestrator.mode == "daemon":
@@ -112,8 +117,11 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
             logger.warning("Multimodal worker cancelled, resetting episode", episode_id=current_episode_id)
             try:
                 await orchestrator.db_writer.execute(
-                    "UPDATE pipeline_state SET status = 'SAVING', updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
-                    (current_episode_id,),
+                    "UPDATE pipeline_state SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
+                    (
+                        PipelineStatus.SAVING,
+                        current_episode_id,
+                    ),
                 )
             except Exception:
                 pass

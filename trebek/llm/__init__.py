@@ -1,5 +1,5 @@
 """
-LLM package — Gemini API-based extraction passes for Jeopardy! transcripts.
+LLM package — Gemini API-based extraction passes for J! transcripts.
 
 Three-pass architecture:
     - **Pass 1** (``pass1_anchoring``): Speaker diarization mapping via Flash

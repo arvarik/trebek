@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trebek"
-version = "0.1.23"
-description = "A high-fidelity multimodal AI pipeline for data extraction"
+version = "1.0.0"
+description = "A high-fidelity multimodal AI pipeline for J! data extraction"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{name = "Arvind", email = "arvind@example.com"}]

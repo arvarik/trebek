@@ -7,6 +7,7 @@ import structlog
 from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
 from trebek.llm import execute_pass_1_speaker_anchoring, execute_pass_2_data_extraction
+from trebek.status import PipelineStatus
 
 if TYPE_CHECKING:
     from trebek.pipeline.orchestrator import TrebekPipelineOrchestrator
@@ -19,13 +20,15 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
     current_episode_id: str | None = None
     try:
         while orchestrator.running:
-            episode_id = await orchestrator.db_writer.poll_for_work("TRANSCRIPT_READY", "CLEANED")
+            episode_id = await orchestrator.db_writer.poll_for_work(
+                PipelineStatus.TRANSCRIPT_READY, PipelineStatus.CLEANED
+            )
             current_episode_id = episode_id
             if episode_id:
                 logger.info(
                     "LLM Worker: Processing episode",
                     episode_id=episode_id,
-                    stage=get_stage_display("CLEANED"),
+                    stage=get_stage_display(PipelineStatus.CLEANED),
                 )
                 try:
                     rows = await orchestrator.db_writer.execute(
@@ -139,9 +142,11 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                             f.write(data.model_dump_json())
 
                         await orchestrator.db_writer.execute(
-                            "UPDATE pipeline_state SET status = 'SAVING', updated_at = CURRENT_TIMESTAMP "
-                            "WHERE episode_id = ?",
-                            (episode_id,),
+                            "UPDATE pipeline_state SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
+                            (
+                                PipelineStatus.SAVING,
+                                episode_id,
+                            ),
                         )
                         current_episode_id = None
                         if orchestrator.is_stage_active("augment"):
@@ -162,7 +167,7 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                         exc_info=True,
                     )
                     permanently_failed = await orchestrator.db_writer.fail_episode_with_retry(
-                        episode_id, "TRANSCRIPT_READY", str(e)
+                        episode_id, PipelineStatus.TRANSCRIPT_READY, str(e)
                     )
                     current_episode_id = None
                     if permanently_failed:
@@ -170,7 +175,9 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                     progress.advance(task_id)
             else:
                 current_episode_id = None
-                if orchestrator.mode == "once" and await orchestrator._no_work_remaining("TRANSCRIPT_READY"):
+                if orchestrator.mode == "once" and await orchestrator._no_work_remaining(
+                    PipelineStatus.TRANSCRIPT_READY
+                ):
                     break
                 orchestrator.llm_work_ready.clear()
                 if orchestrator.mode == "daemon":
@@ -185,8 +192,11 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
             logger.warning("LLM worker cancelled, resetting episode", episode_id=current_episode_id)
             try:
                 await orchestrator.db_writer.execute(
-                    "UPDATE pipeline_state SET status = 'TRANSCRIPT_READY', updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
-                    (current_episode_id,),
+                    "UPDATE pipeline_state SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
+                    (
+                        PipelineStatus.TRANSCRIPT_READY,
+                        current_episode_id,
+                    ),
                 )
             except Exception:
                 pass

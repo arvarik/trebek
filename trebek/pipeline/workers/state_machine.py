@@ -7,6 +7,7 @@ from trebek.ui import get_stage_display
 from trebek.schemas import Episode
 from trebek.state_machine import TrebekStateMachine
 from trebek.database import commit_episode_to_relational_tables
+from trebek.status import PipelineStatus
 
 if TYPE_CHECKING:
     from trebek.pipeline.orchestrator import TrebekPipelineOrchestrator
@@ -19,13 +20,15 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
     current_episode_id: str | None = None
     try:
         while orchestrator.running:
-            episode_id = await orchestrator.db_writer.poll_for_work("MULTIMODAL_DONE", "VECTORIZING")
+            episode_id = await orchestrator.db_writer.poll_for_work(
+                PipelineStatus.MULTIMODAL_DONE, PipelineStatus.VECTORIZING
+            )
             current_episode_id = episode_id
             if episode_id:
                 logger.info(
                     "State Machine: Verifying game state",
                     episode_id=episode_id,
-                    stage=get_stage_display("VECTORIZING"),
+                    stage=get_stage_display(PipelineStatus.VECTORIZING),
                 )
                 try:
                     episode_data_path = os.path.join(orchestrator.output_dir, f"episode_{episode_id}.json")
@@ -57,9 +60,11 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                     )
 
                     await orchestrator.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP "
-                        "WHERE episode_id = ?",
-                        (episode_id,),
+                        "UPDATE pipeline_state SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
+                        (
+                            PipelineStatus.COMPLETED,
+                            episode_id,
+                        ),
                     )
                     current_episode_id = None
                     orchestrator.stats["completed"] += 1
@@ -67,13 +72,13 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                     logger.info(
                         "Episode completed successfully",
                         episode_id=episode_id,
-                        stage=get_stage_display("COMPLETED"),
+                        stage=get_stage_display(PipelineStatus.COMPLETED),
                     )
 
                 except Exception as e:
                     logger.error("State Machine Verification failed", error=str(e))
                     permanently_failed = await orchestrator.db_writer.fail_episode_with_retry(
-                        episode_id, "MULTIMODAL_DONE", str(e)
+                        episode_id, PipelineStatus.MULTIMODAL_DONE, str(e)
                     )
                     current_episode_id = None
                     if permanently_failed:
@@ -81,7 +86,9 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                     progress.advance(task_id)
             else:
                 current_episode_id = None
-                if orchestrator.mode == "once" and await orchestrator._no_work_remaining("MULTIMODAL_DONE"):
+                if orchestrator.mode == "once" and await orchestrator._no_work_remaining(
+                    PipelineStatus.MULTIMODAL_DONE
+                ):
                     break
                 orchestrator.state_machine_work_ready.clear()
                 if orchestrator.mode == "daemon":
@@ -96,8 +103,11 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
             logger.warning("State machine worker cancelled, resetting episode", episode_id=current_episode_id)
             try:
                 await orchestrator.db_writer.execute(
-                    "UPDATE pipeline_state SET status = 'MULTIMODAL_DONE', updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
-                    (current_episode_id,),
+                    "UPDATE pipeline_state SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
+                    (
+                        PipelineStatus.MULTIMODAL_DONE,
+                        current_episode_id,
+                    ),
                 )
             except Exception:
                 pass

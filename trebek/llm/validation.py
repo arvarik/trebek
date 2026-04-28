@@ -1,5 +1,5 @@
 """
-Deterministic integrity validation and deduplication for extracted Jeopardy data.
+Deterministic integrity validation and deduplication for extracted J! data.
 
 Encodes hard domain rules (board dimensions, Daily Double limits, contestant FK
 consistency, wager bounds, board position uniqueness, question format) as

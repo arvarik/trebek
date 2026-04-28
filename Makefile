@@ -3,9 +3,9 @@
 # Run the full quality gate: lint → typecheck → test
 all: lint typecheck test
 
-# Run tests with coverage
+# Run tests with coverage enforcement
 test:
-	pytest tests/ -v --tb=short --cov=trebek --cov-report=term-missing
+	pytest tests/ -v --tb=short --cov=trebek --cov-report=term-missing --cov-fail-under=50
 
 # Lint with ruff
 lint:

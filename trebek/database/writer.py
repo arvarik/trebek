@@ -67,7 +67,8 @@ class DatabaseWriter(PipelineQueryMixin):
             while True:
                 query, params, future = await self.queue.get()
                 try:
-                    assert self.conn is not None
+                    if self.conn is None:
+                        raise RuntimeError("DatabaseWriter.start() must be called before processing queries")
                     cursor = self.conn.cursor()
                     if query == "__TRANSACTION__":
                         for q, p in params:

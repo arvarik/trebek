@@ -18,6 +18,7 @@ from typing import Any, List, Optional
 from trebek.database import DatabaseWriter
 from trebek.gpu import GPUOrchestrator
 from trebek.config import settings, MODEL_PRO
+from trebek.status import PipelineStatus
 from trebek.ui import (
     console,
     create_pipeline_progress,
@@ -93,7 +94,10 @@ class TrebekPipelineOrchestrator:
 
         # Cleanup intermediate files
         try:
-            rows = await self.db_writer.execute("SELECT episode_id FROM pipeline_state WHERE status != 'COMPLETED'")
+            rows = await self.db_writer.execute(
+                "SELECT episode_id FROM pipeline_state WHERE status != ?",
+                (PipelineStatus.COMPLETED,),
+            )
             incomplete_episodes = {row[0] for row in rows} if rows else set()
 
             for filename in os.listdir(self.output_dir):
@@ -132,7 +136,7 @@ class TrebekPipelineOrchestrator:
         telemetry_stats = {}
         try:
             rows = await self.db_writer.execute("""
-                SELECT 
+                SELECT
                     SUM(gemini_total_input_tokens + gemini_total_output_tokens + gemini_total_cached_tokens),
                     SUM(gemini_total_cost_usd),
                     AVG(peak_vram_mb),
@@ -188,18 +192,18 @@ class TrebekPipelineOrchestrator:
         # This ensures `trebek run --stage transcribe --once` picks up
         # previously failed files without needing `trebek retry` first.
         _STAGE_RESET_STATUS: dict[str, str] = {
-            "transcribe": "PENDING",
-            "extract": "TRANSCRIPT_READY",
-            "augment": "SAVING",
-            "verify": "MULTIMODAL_DONE",
+            "transcribe": PipelineStatus.PENDING,
+            "extract": PipelineStatus.TRANSCRIPT_READY,
+            "augment": PipelineStatus.SAVING,
+            "verify": PipelineStatus.MULTIMODAL_DONE,
         }
         if self.stage != "all" and self.stage in _STAGE_RESET_STATUS:
             reset_to = _STAGE_RESET_STATUS[self.stage]
             reset_result = await self.db_writer.execute(
                 "UPDATE pipeline_state SET status = ?, retry_count = 0, "
                 "last_error = NULL, updated_at = CURRENT_TIMESTAMP "
-                "WHERE status = 'FAILED' RETURNING episode_id",
-                (reset_to,),
+                "WHERE status = ? RETURNING episode_id",
+                (reset_to, PipelineStatus.FAILED),
             )
             reset_count = len(reset_result) if isinstance(reset_result, list) else 0
             if reset_count > 0:
@@ -271,6 +275,9 @@ async def run_pipeline(
     from trebek.ui import render_startup_banner, render_system_diagnostics
 
     input_dir = input_dir_override or settings.input_dir
+
+    # ── Fail-fast validation ──
+    settings.require_gemini_api_key()
 
     # ── Branded startup ──
     stage_label = f"{mode} • stage={stage}" if stage != "all" else mode

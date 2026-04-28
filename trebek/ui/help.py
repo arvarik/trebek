@@ -35,7 +35,7 @@ _BORDER_ALT = "dim yellow"  # alternate panel borders
 def _header_panel() -> Panel:
     """Shared branded header used across all help pages."""
     art = Text(TREBEK_ASCII.strip(), style="bold cyan")
-    tag = Text(f"  v{__version__}  •  High-fidelity Jeopardy! data extraction pipeline\n", style=_D)
+    tag = Text(f"  v{__version__}  •  High-fidelity J! data extraction pipeline\n", style=_D)
     return Panel(
         Group(art, tag),
         border_style="cyan",

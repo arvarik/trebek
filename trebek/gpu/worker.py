@@ -99,7 +99,7 @@ def gpu_worker_task(
 
     # 2. WhisperX Transcription — Warm Worker
     global _whisperx_model, _whisperx_align_model, _whisperx_align_metadata
-    if "_whisperx_model" not in globals() or _whisperx_model is None:
+    if _whisperx_model is None:
         logger.info("Loading WhisperX model into VRAM (Cold Start)...")
         _whisperx_model = whisperx.load_model("large-v3", device="cuda", compute_type=compute_type, language="en")
     else:
@@ -118,7 +118,7 @@ def gpu_worker_task(
         # 3. Forced Alignment — word-level timestamps via wav2vec2
         # Without this step, segments are ~25s paragraph chunks with zero
         # word-level tokens, making Line ID-based extraction nearly impossible.
-        if "_whisperx_align_model" not in globals() or _whisperx_align_model is None:
+        if _whisperx_align_model is None:
             logger.info("Loading WhisperX alignment model (wav2vec2)...")
             _whisperx_align_model, _whisperx_align_metadata = whisperx.load_align_model(
                 language_code="en", device="cuda"
@@ -191,28 +191,29 @@ def gpu_worker_task(
         del audio
         gc.collect()
         torch.cuda.empty_cache()
+
+        processed_result = {
+            "status": "success",
+            "video_filepath": video_filepath,
+            "transcript": transcript_data,
+        }
+
+        output_path = os.path.join(output_dir, f"gpu_output_{file_id}.json.gz")
+
+        with gzip.open(output_path, "wt", encoding="utf-8") as f:
+            json.dump(processed_result, f)
+
     except Exception as e:
         # Check for OOM specifically
         if "OutOfMemoryError" in str(type(e).__name__) or "CUDA out of memory" in str(e):
             raise MemoryError("CUDA OOM") from e
         raise RuntimeError(f"whisperx failed: {str(e)}")
-
-    processed_result = {
-        "status": "success",
-        "video_filepath": video_filepath,
-        "transcript": transcript_data,
-    }
-
-    output_path = os.path.join(output_dir, f"gpu_output_{file_id}.json.gz")
-
-    with gzip.open(output_path, "wt", encoding="utf-8") as f:
-        json.dump(processed_result, f)
-
-    # Cleanup intermediate files
-    try:
-        os.remove(audio_path)
-    except OSError:
-        pass
+    finally:
+        # Cleanup intermediate audio file even on crash to prevent orphaned WAVs
+        try:
+            os.remove(audio_path)
+        except OSError:
+            pass
 
     stop_event.set()
     monitor_thread.join(timeout=1.0)

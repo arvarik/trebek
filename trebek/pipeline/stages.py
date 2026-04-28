@@ -8,6 +8,8 @@ Used by the orchestrator for worker dispatch and by the CLI for
 
 from typing import Set
 
+from trebek.status import PipelineStatus as S
+
 # Valid stage names for the --stage CLI flag
 VALID_STAGES = ("all", "transcribe", "extract", "augment", "verify")
 
@@ -24,30 +26,30 @@ ACTIVE_STAGES: dict[str, Set[str]] = {
 # "full" = wait for upstream stages before exiting (used when all stages run together).
 # "isolated" = only check own input/in-flight statuses (used for single-stage runs).
 UPSTREAM_MAP_FULL: dict[str, list[str]] = {
-    "PENDING": ["PENDING"],
-    "TRANSCRIPT_READY": ["PENDING", "TRANSCRIBING", "TRANSCRIPT_READY", "CLEANED"],
-    "SAVING": [
-        "PENDING",
-        "TRANSCRIBING",
-        "TRANSCRIPT_READY",
-        "CLEANED",
-        "SAVING",
+    S.PENDING: [S.PENDING],
+    S.TRANSCRIPT_READY: [S.PENDING, S.TRANSCRIBING, S.TRANSCRIPT_READY, S.CLEANED],
+    S.SAVING: [
+        S.PENDING,
+        S.TRANSCRIBING,
+        S.TRANSCRIPT_READY,
+        S.CLEANED,
+        S.SAVING,
     ],
-    "MULTIMODAL_DONE": [
-        "PENDING",
-        "TRANSCRIBING",
-        "TRANSCRIPT_READY",
-        "CLEANED",
-        "SAVING",
-        "MULTIMODAL_PROCESSING",
-        "MULTIMODAL_DONE",
-        "VECTORIZING",
+    S.MULTIMODAL_DONE: [
+        S.PENDING,
+        S.TRANSCRIBING,
+        S.TRANSCRIPT_READY,
+        S.CLEANED,
+        S.SAVING,
+        S.MULTIMODAL_PROCESSING,
+        S.MULTIMODAL_DONE,
+        S.VECTORIZING,
     ],
 }
 
 UPSTREAM_MAP_ISOLATED: dict[str, list[str]] = {
-    "PENDING": ["PENDING"],
-    "TRANSCRIPT_READY": ["TRANSCRIPT_READY", "CLEANED"],
-    "SAVING": ["SAVING", "MULTIMODAL_PROCESSING"],
-    "MULTIMODAL_DONE": ["MULTIMODAL_DONE", "VECTORIZING"],
+    S.PENDING: [S.PENDING],
+    S.TRANSCRIPT_READY: [S.TRANSCRIPT_READY, S.CLEANED],
+    S.SAVING: [S.SAVING, S.MULTIMODAL_PROCESSING],
+    S.MULTIMODAL_DONE: [S.MULTIMODAL_DONE, S.VECTORIZING],
 }

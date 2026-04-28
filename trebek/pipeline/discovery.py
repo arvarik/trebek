@@ -10,22 +10,23 @@ import sqlite3
 from typing import Any
 
 from trebek.config import settings, SUPPORTED_VIDEO_EXTENSIONS
+from trebek.status import PipelineStatus as S
 
 
 # Status thresholds: episodes at or beyond this status have "passed" the stage
 _STAGE_COMPLETED_STATUSES: dict[str, set[str]] = {
     "transcribe": {
-        "TRANSCRIPT_READY",
-        "CLEANED",
-        "SAVING",
-        "MULTIMODAL_PROCESSING",
-        "MULTIMODAL_DONE",
-        "VECTORIZING",
-        "COMPLETED",
+        S.TRANSCRIPT_READY,
+        S.CLEANED,
+        S.SAVING,
+        S.MULTIMODAL_PROCESSING,
+        S.MULTIMODAL_DONE,
+        S.VECTORIZING,
+        S.COMPLETED,
     },
-    "extract": {"SAVING", "MULTIMODAL_PROCESSING", "MULTIMODAL_DONE", "VECTORIZING", "COMPLETED"},
-    "augment": {"MULTIMODAL_DONE", "VECTORIZING", "COMPLETED"},
-    "verify": {"COMPLETED"},
+    "extract": {S.SAVING, S.MULTIMODAL_PROCESSING, S.MULTIMODAL_DONE, S.VECTORIZING, S.COMPLETED},
+    "augment": {S.MULTIMODAL_DONE, S.VECTORIZING, S.COMPLETED},
+    "verify": {S.COMPLETED},
 }
 
 

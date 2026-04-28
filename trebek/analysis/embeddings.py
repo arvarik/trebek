@@ -2,7 +2,7 @@
 Vector embedding distance calculations for semantic analysis.
 
 Provides cosine distance and lateral semantic distance metrics
-used to measure the relationship between Jeopardy clue texts
+used to measure the relationship between J! clue texts
 and their correct responses (e.g., wordplay vs. direct recall).
 """
 

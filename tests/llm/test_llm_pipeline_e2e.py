@@ -330,7 +330,7 @@ def validate_db_commit_dry_run(episode: Any, result: ValidationResult) -> None:
     print("\n── Database Commit (Dry Run) ─────────────────────────")
 
     # Create a temp DB with the schema
-    schema_path = Path(__file__).parent.parent / "trebek" / "schema.sql"
+    schema_path = Path(__file__).resolve().parents[2] / "trebek" / "schema.sql"
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
         tmp_path = tmp.name
 

@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS episodes (
 
 CREATE TABLE IF NOT EXISTS contestants (
     contestant_id TEXT PRIMARY KEY,
-    name TEXT,
+    name TEXT NOT NULL,
     occupational_category TEXT,
     is_returning_champion BOOLEAN
 );
@@ -102,9 +102,9 @@ CREATE TABLE IF NOT EXISTS wagers (
 
 CREATE TABLE IF NOT EXISTS score_adjustments (
     adjustment_id TEXT PRIMARY KEY,
-    episode_id TEXT REFERENCES episodes(episode_id),
-    contestant_id TEXT REFERENCES contestants(contestant_id),
-    points_adjusted INTEGER,
+    episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
+    contestant_id TEXT NOT NULL REFERENCES contestants(contestant_id),
+    points_adjusted INTEGER NOT NULL,
     reason TEXT,
     effective_after_clue_selection_order INTEGER
 );
@@ -143,3 +143,10 @@ CREATE INDEX IF NOT EXISTS idx_buzz_attempts_contestant_id ON buzz_attempts(cont
 CREATE INDEX IF NOT EXISTS idx_wagers_clue_id ON wagers(clue_id);
 CREATE INDEX IF NOT EXISTS idx_score_adjustments_episode_id ON score_adjustments(episode_id);
 CREATE INDEX IF NOT EXISTS idx_job_telemetry_episode_id ON job_telemetry(episode_id);
+
+-- Schema version tracking for forward-only migrations
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);

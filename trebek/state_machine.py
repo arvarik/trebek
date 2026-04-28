@@ -1,5 +1,5 @@
 """
-Deterministic game state machine for Jeopardy! episode verification.
+Deterministic game state machine for J! episode verification.
 
 Processes extracted clues sequentially, tracking running scores,
 board control, Daily Double wager resolution, and chronologically
@@ -50,7 +50,7 @@ class TrebekStateMachine:
         else:
             clue_value = 0
 
-        # 2. Handle Daily Double — only one attempt allowed per Jeopardy rules
+        # 2. Handle Daily Double — only one attempt allowed per J! rules
         if clue.is_daily_double and (clue.daily_double_wager is None or not clue.wagerer_name):
             logger.warning(
                 "Daily Double missing wager or wagerer — falling back to standard scoring",
@@ -88,7 +88,7 @@ class TrebekStateMachine:
                 else:
                     self.scores[wagerer] -= wager_amount
                     self.coryat_scores[wagerer] -= clue_value  # Coryat uses face value
-                    # Board control stays with wagerer on DD miss per Jeopardy rules
+                    # Board control stays with wagerer on DD miss per J! rules
         else:
             # 3. Standard clue: process all buzz attempts (rebounds allowed)
             wager_amount = clue_value

@@ -1,5 +1,5 @@
 """
-Pass 2: Map-Reduce structured data extraction from Jeopardy transcripts.
+Pass 2: Map-Reduce structured data extraction from J! transcripts.
 
 Orchestrates the full extraction pipeline:
 1. Episode metadata extraction (contestants, FJ, score adjustments)
@@ -7,7 +7,7 @@ Orchestrates the full extraction pipeline:
 3. Semaphore-bounded concurrent clue extraction per chunk (Line-Indexed)
 4. Timestamp reconstruction from parsed WhisperX JSON
 5. Composite-key deduplication for overlapping chunk regions
-6. Deterministic integrity validation encoding Jeopardy domain rules
+6. Deterministic integrity validation encoding J! domain rules
 """
 
 import json
@@ -33,7 +33,7 @@ def _count_syllables(text: str) -> int:
     """
     Vowel-cluster syllable counting heuristic.
 
-    More accurate than word_count * constant for Jeopardy's academic vocabulary.
+    More accurate than word_count * constant for J!'s academic vocabulary.
     Handles silent-e and guarantees a minimum of 1 syllable per word.
     """
     words = text.lower().split()
@@ -62,7 +62,7 @@ async def execute_pass_2_data_extraction(
     3. Semaphore-bounded concurrent clue extraction per chunk (Line-Indexed)
     4. Reconstruct clue texts and timestamps directly from parsed WhisperX JSON
     5. Composite-key deduplication for overlapping chunk regions
-    6. Deterministic integrity validation encoding Jeopardy domain rules
+    6. Deterministic integrity validation encoding J! domain rules
 
     Cost optimizations:
     - Prompt compression: timestamps stripped, speaker IDs abbreviated
@@ -92,7 +92,7 @@ async def execute_pass_2_data_extraction(
     )
 
     base_system = (
-        "You are Trebek, an expert data extraction pipeline for Jeopardy game transcripts. "
+        "You are Trebek, an expert data extraction pipeline for J! game transcripts. "
         "Extract game events into the provided JSON schema with surgical precision. "
         f"CRITICAL CONSTRAINT: Map speakers using this exact dictionary: {json.dumps(compressed_mapping)}. "
         "Speaker IDs are abbreviated (e.g., S0 = SPEAKER_00, S1 = SPEAKER_01). "

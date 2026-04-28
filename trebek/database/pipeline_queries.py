@@ -9,7 +9,31 @@ The mixin is inherited by ``DatabaseWriter`` so all call sites remain unchanged.
 import structlog
 from typing import Any, Optional
 
+from trebek.status import PipelineStatus
+
 logger = structlog.get_logger()
+
+# Whitelist of valid job_telemetry column names to prevent SQL injection.
+# update_job_telemetry() uses f-string interpolation for column names;
+# this frozenset ensures only known columns can be written.
+_TELEMETRY_COLUMNS: frozenset[str] = frozenset(
+    {
+        "peak_vram_mb",
+        "avg_gpu_utilization_pct",
+        "stage_ingestion_ms",
+        "stage_gpu_extraction_ms",
+        "stage_commercial_filtering_ms",
+        "stage_structured_extraction_ms",
+        "stage_multimodal_ms",
+        "stage_vectorization_ms",
+        "gemini_total_input_tokens",
+        "gemini_total_output_tokens",
+        "gemini_total_cached_tokens",
+        "gemini_total_cost_usd",
+        "gemini_api_latency_ms",
+        "pydantic_retry_count",
+    }
+)
 
 
 class PipelineQueryMixin:
@@ -25,15 +49,15 @@ class PipelineQueryMixin:
         Requires SQLite 3.35+ for RETURNING.
         """
         query = """
-        UPDATE pipeline_state 
+        UPDATE pipeline_state
         SET status = ?, updated_at = CURRENT_TIMESTAMP
         WHERE episode_id = (
-            SELECT episode_id 
-            FROM pipeline_state 
-            WHERE status = ? 
+            SELECT episode_id
+            FROM pipeline_state
+            WHERE status = ?
             ORDER BY created_at ASC
             LIMIT 1
-        ) 
+        )
         RETURNING episode_id;
         """
         try:
@@ -49,9 +73,19 @@ class PipelineQueryMixin:
     async def update_job_telemetry(self, episode_id: str, **kwargs: Any) -> None:
         """
         Upserts job telemetry fields for a given episode.
+
+        Column names are validated against ``_TELEMETRY_COLUMNS`` to prevent
+        SQL injection — kwargs keys are interpolated into the UPDATE statement.
         """
         if not kwargs:
             return
+
+        # Validate column names against whitelist to prevent SQL injection
+        invalid_columns = set(kwargs.keys()) - _TELEMETRY_COLUMNS
+        if invalid_columns:
+            raise ValueError(
+                f"Invalid telemetry column(s): {sorted(invalid_columns)}. Valid: {sorted(_TELEMETRY_COLUMNS)}"
+            )
 
         # First ensure a row exists
         await self.execute("INSERT OR IGNORE INTO job_telemetry (episode_id) VALUES (?)", (episode_id,))  # type: ignore[attr-defined]
@@ -84,9 +118,9 @@ class PipelineQueryMixin:
         if current_retries >= max_retries:
             # Exhausted retries — permanently fail
             await self.execute(  # type: ignore[attr-defined]
-                "UPDATE pipeline_state SET status = 'FAILED', last_error = ?, "
+                "UPDATE pipeline_state SET status = ?, last_error = ?, "
                 "updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
-                (error[:500], episode_id),
+                (PipelineStatus.FAILED, error[:500], episode_id),
             )
             logger.warning(
                 "Episode permanently failed (retries exhausted)",
@@ -118,8 +152,9 @@ class PipelineQueryMixin:
         Returns the count of episodes reset.
         """
         result = await self.execute(  # type: ignore[attr-defined]
-            "UPDATE pipeline_state SET status = 'PENDING', retry_count = 0, last_error = NULL, "
-            "updated_at = CURRENT_TIMESTAMP WHERE status = 'FAILED' RETURNING episode_id"
+            "UPDATE pipeline_state SET status = ?, retry_count = 0, last_error = NULL, "
+            "updated_at = CURRENT_TIMESTAMP WHERE status = ? RETURNING episode_id",
+            (PipelineStatus.PENDING, PipelineStatus.FAILED),
         )
         count = len(result) if isinstance(result, list) else 0
         if count > 0:

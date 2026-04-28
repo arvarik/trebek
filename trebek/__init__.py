@@ -1,5 +1,5 @@
 """
-Trebek — High-fidelity multimodal AI pipeline for Jeopardy! data extraction.
+Trebek — High-fidelity multimodal AI pipeline for J! data extraction.
 
 Processes video recordings through a 5-stage pipeline:
     ingest → transcribe (WhisperX) → extract (Gemini) → augment → verify
@@ -13,4 +13,4 @@ Architecture:
     - ``analysis/``   — Post-extraction analytics (buzzer physics, embeddings)
 """
 
-__version__ = "0.1.23"
+__version__ = "1.0.0"

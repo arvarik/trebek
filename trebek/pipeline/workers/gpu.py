@@ -4,6 +4,7 @@ import asyncio
 import structlog
 from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
+from trebek.status import PipelineStatus
 
 if TYPE_CHECKING:
     from trebek.pipeline.orchestrator import TrebekPipelineOrchestrator
@@ -16,13 +17,13 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
     current_episode_id: str | None = None
     try:
         while orchestrator.running:
-            episode_id = await orchestrator.db_writer.poll_for_work("PENDING", "TRANSCRIBING")
+            episode_id = await orchestrator.db_writer.poll_for_work(PipelineStatus.PENDING, PipelineStatus.TRANSCRIBING)
             current_episode_id = episode_id
             if episode_id:
                 logger.info(
                     "Extractor: Processing episode",
                     episode_id=episode_id,
-                    stage=get_stage_display("TRANSCRIBING"),
+                    stage=get_stage_display(PipelineStatus.TRANSCRIBING),
                 )
 
                 # Look up the actual source filename from the database
@@ -37,7 +38,7 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                 if not os.path.exists(video_filepath):
                     logger.error("Video file not found", filepath=video_filepath)
                     permanently_failed = await orchestrator.db_writer.fail_episode_with_retry(
-                        episode_id, "PENDING", f"Video file not found: {video_filepath}"
+                        episode_id, PipelineStatus.PENDING, f"Video file not found: {video_filepath}"
                     )
                     if permanently_failed:
                         orchestrator.stats["failed"] += 1
@@ -61,9 +62,9 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                     )
 
                     await orchestrator.db_writer.execute(
-                        "UPDATE pipeline_state SET status = 'TRANSCRIPT_READY', transcript_path = ?, "
+                        "UPDATE pipeline_state SET status = ?, transcript_path = ?, "
                         "updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
-                        (transcript_path, episode_id),
+                        (PipelineStatus.TRANSCRIPT_READY, transcript_path, episode_id),
                     )
                     current_episode_id = None
                     if orchestrator.is_stage_active("extract"):
@@ -76,7 +77,7 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                 except Exception as e:
                     logger.error("GPU Orchestrator failed", error=str(e))
                     permanently_failed = await orchestrator.db_writer.fail_episode_with_retry(
-                        episode_id, "PENDING", str(e)
+                        episode_id, PipelineStatus.PENDING, str(e)
                     )
                     current_episode_id = None
                     if permanently_failed:
@@ -84,7 +85,7 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                     progress.advance(task_id)
             else:
                 current_episode_id = None
-                if orchestrator.mode == "once" and await orchestrator._no_work_remaining("PENDING"):
+                if orchestrator.mode == "once" and await orchestrator._no_work_remaining(PipelineStatus.PENDING):
                     break
                 orchestrator.gpu_work_ready.clear()
                 if orchestrator.mode == "daemon":
@@ -99,8 +100,11 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
             logger.warning("GPU worker cancelled, resetting episode", episode_id=current_episode_id)
             try:
                 await orchestrator.db_writer.execute(
-                    "UPDATE pipeline_state SET status = 'PENDING', updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
-                    (current_episode_id,),
+                    "UPDATE pipeline_state SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
+                    (
+                        PipelineStatus.PENDING,
+                        current_episode_id,
+                    ),
                 )
             except Exception:
                 pass

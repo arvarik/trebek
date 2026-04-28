@@ -1,5 +1,5 @@
 """
-Trebek CLI — Entry point for the Jeopardy! data extraction pipeline.
+Trebek CLI — Entry point for the J! data extraction pipeline.
 
 Provides a subcommand-based interface with Rich-rendered help pages:
     trebek run          Start full pipeline in daemon mode

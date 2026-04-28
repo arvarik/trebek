@@ -51,12 +51,12 @@ Used for: Pass 1 Speaker Anchoring, Flash Repair (JSON fix fallback)
 
 ## Pipeline Cost Estimates (Per Episode)
 
-Typical Jeopardy episode (~22 min, ~300 transcript segments):
+Typical J! episode (~22 min, ~300 transcript segments):
 
 ### Using `--model pro` (default)
 
 | Stage | Model | Est. Input Tokens | Est. Output Tokens | Est. Cost |
-|-------|-------|-------------------|--------------------|-----------| 
+|-------|-------|-------------------|--------------------|-----------|
 | Pass 1 — Speaker Anchoring | flash-lite | ~2,500 | ~100 | ~$0.0008 |
 | Pass 2 — Metadata Extraction | pro | ~3,000 | ~800 | ~$0.016 |
 | Pass 2 — Clue Chunks (×2-3) | pro | ~8,000 | ~6,000 | ~$0.088 |
@@ -66,7 +66,7 @@ Typical Jeopardy episode (~22 min, ~300 transcript segments):
 ### Using `--model flash3`
 
 | Stage | Model | Est. Input Tokens | Est. Output Tokens | Est. Cost |
-|-------|-------|-------------------|--------------------|-----------| 
+|-------|-------|-------------------|--------------------|-----------|
 | Pass 1 — Speaker Anchoring | flash-lite | ~2,500 | ~100 | ~$0.0008 |
 | Pass 2 — Metadata + Clues | flash3 | ~11,000 | ~6,800 | ~$0.026 |
 | Pass 3 — Multimodal (if needed) | flash3 | ~1,000 | ~200 | ~$0.001 |
@@ -75,7 +75,7 @@ Typical Jeopardy episode (~22 min, ~300 transcript segments):
 ### Using `--model flash`
 
 | Stage | Model | Est. Input Tokens | Est. Output Tokens | Est. Cost |
-|-------|-------|-------------------|--------------------|-----------| 
+|-------|-------|-------------------|--------------------|-----------|
 | Pass 1 — Speaker Anchoring | flash-lite | ~2,500 | ~100 | ~$0.0008 |
 | Pass 2 — Metadata + Clues | flash-lite | ~11,000 | ~6,800 | ~$0.013 |
 | Pass 3 — Multimodal (if needed) | flash-lite | ~1,000 | ~200 | ~$0.001 |

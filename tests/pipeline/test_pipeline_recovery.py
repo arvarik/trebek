@@ -16,7 +16,7 @@ async def test_state_machine_worker_exception_recovery(memory_db_path: str) -> N
         # We need the pipeline schema to insert a job
         import os
 
-        schema_path = os.path.join(os.path.dirname(__file__), "..", "trebek", "schema.sql")
+        schema_path = os.path.join(os.path.dirname(__file__), "..", "..", "trebek", "schema.sql")
         with open(schema_path) as f:
             await writer.execute_transaction([(q, ()) for q in f.read().split(";") if q.strip()])
 

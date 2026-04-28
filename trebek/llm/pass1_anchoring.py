@@ -16,7 +16,7 @@ async def execute_pass_1_speaker_anchoring(audio_file_path: str) -> "tuple[Dict[
     """
 
     system_prompt = (
-        "You are a strict data extractor. Analyze the audio slice of the Jeopardy host interview segment. "
+        "You are a strict data extractor. Analyze the audio slice of the J! host interview segment. "
         "Listen to the host interview the contestants. Map their distinct vocal timbres to Diarization Speaker IDs (like SPEAKER_00). "
         "Return a pure JSON dictionary mapping Diarization Speaker IDs to Contestant/Host Names. "
         'Format: {"SPEAKER_00": "Ken Jennings", "SPEAKER_01": "Matt Amodio"}. '

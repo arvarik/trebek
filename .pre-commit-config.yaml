@@ -21,4 +21,4 @@ repos:
       - id: mypy
         additional_dependencies: [pydantic, pydantic-settings]
         args: [--strict, --ignore-missing-imports]
-        exclude: ^scripts/
+        exclude: ^(scripts/|tests/)
