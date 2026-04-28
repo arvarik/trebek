@@ -89,13 +89,10 @@ class TestUnmappedPassOneName:
         clues = [_make_clue("SPEAKER_02")]
         mapping = {"SPEAKER_00": "Host", "SPEAKER_02": "CompletelyUnknownPerson"}
         _normalize_speaker_names(clues, mapping, ["Rachel Bernstein", "Dan Puma", "Scott Riccardi"], host_name="Host")
-        # SPEAKER_02 → "CompletelyUnknownPerson" stored directly in variant_map.
-        # Hard cleanup checks if the resolved name is a valid contestant.
-        # "CompletelyUnknownPerson" is NOT a contestant, but hard cleanup only drops
-        # if fuzzy match fails AND name is not in variant_map.
-        # Since it WAS placed in variant_map, it survives as-is.
-        assert len(clues[0].attempts) == 1
-        assert clues[0].attempts[0].speaker == "CompletelyUnknownPerson"
+        # Since it WAS placed in variant_map, the soft normalization maps it to "CompletelyUnknownPerson".
+        # However, since we now always run the hard cleanup, it checks if "CompletelyUnknownPerson"
+        # is a valid contestant. Since it isn't, and fuzzy matching fails, it gets dropped.
+        assert len(clues[0].attempts) == 0
 
     def test_unmapped_name_also_stored_as_variant(self) -> None:
         """The Pass 1 name itself should also be stored in the variant map."""

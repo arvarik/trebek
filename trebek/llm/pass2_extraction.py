@@ -17,7 +17,7 @@ import asyncio
 from typing import Any, Dict, Literal, Union, Optional
 
 from trebek.schemas import Episode, Clue, BuzzAttempt
-from trebek.llm.schemas import PartialEpisodeMeta, PartialClues
+from trebek.llm.schemas import PartialEpisodeMeta
 from trebek.llm.chunking import _chunk_by_semantic_boundaries
 from trebek.llm.validation import _validate_extraction_integrity, _deduplicate_clues
 from trebek.llm.utils import _extract_part
@@ -122,7 +122,7 @@ async def execute_pass_2_data_extraction(
     meta_prompt = (
         f"Transcript Data:\n{full_transcript}\n\n"
         "Output strict JSON matching the requested schema. "
-        "EXTRACT ONLY: episode_date, host_name, is_tournament, contestants, final_jep, and score_adjustments. "
+        "EXTRACT ONLY: episode_date, host_name, is_tournament, contestants, jeopardy_categories, double_jep_categories, final_jep, and score_adjustments. "
         "DO NOT extract individual clues."
     )
     meta_data, meta_usage, meta_att = await _extract_part(
@@ -146,6 +146,12 @@ async def execute_pass_2_data_extraction(
     )
 
     # ── Stage 2: Semantic Chunking ──────────────────────────────────
+    from trebek.llm.schemas import create_dynamic_clue_schema
+
+    all_categories = meta_data.jeopardy_categories + meta_data.double_jep_categories
+    contestant_names = [c.name for c in meta_data.contestants]
+    DynamicPartialClues = create_dynamic_clue_schema(all_categories, contestant_names)
+
     lines = full_transcript.split("\n")
     chunks = _chunk_by_semantic_boundaries(lines)
     logger.info(
@@ -158,7 +164,9 @@ async def execute_pass_2_data_extraction(
     # ── Stage 3: Semaphore-Bounded Concurrent Clue Extraction ──────
     semaphore = asyncio.Semaphore(GEMINI_CONCURRENCY)
 
-    async def extract_chunk(chunk_idx: int, chunk_text: str) -> "tuple[PartialClues, dict[str, float], int]":
+    async def extract_chunk(
+        chunk_idx: int, chunk_text: str, is_retry: bool = False
+    ) -> "tuple[Any, dict[str, float], int]":
         async with semaphore:
             chunk_lines_list = chunk_text.split("\n")
             chunk_line_count = len(chunk_lines_list)
@@ -167,11 +175,12 @@ async def execute_pass_2_data_extraction(
             first_line_id = chunk_lines_list[0].split(" ")[0] if chunk_lines_list else "?"
             last_line_id = chunk_lines_list[-1].split(" ")[0] if chunk_lines_list else "?"
 
-            ctx_label = f"Pass 2 Chunk {chunk_idx + 1}/{len(chunks)}"
+            ctx_label = f"Pass 2 Chunk {chunk_idx + 1}/{len(chunks)}" + (" (Retry)" if is_retry else "")
             logger.info(
                 f"Extracting clues from chunk {chunk_idx + 1}/{len(chunks)}",
                 lines=chunk_line_count,
                 line_range=f"{first_line_id}–{last_line_id}",
+                is_retry=is_retry,
             )
 
             prompt = (
@@ -184,7 +193,7 @@ async def execute_pass_2_data_extraction(
             return await _extract_part(
                 prompt,
                 base_system,
-                PartialClues,
+                DynamicPartialClues,
                 max_retries,
                 model=model,
                 invocation_context=ctx_label,
@@ -218,9 +227,8 @@ async def execute_pass_2_data_extraction(
 
     # ── Auto-retry under-extracted chunks ──────────────────────────
     # If a chunk has substantial transcript content (>100 lines) but
-    # yielded suspiciously few clues (<5), retry it once. This catches
-    # LLM non-determinism where the model prematurely stops generating.
-    UNDER_EXTRACTION_THRESHOLD = 5
+    # yielded suspiciously few clues (<15), extract the remaining lines.
+    UNDER_EXTRACTION_THRESHOLD = 15
     MIN_CHUNK_LINES_FOR_RETRY = 100
     retried_chunks = 0
 
@@ -228,41 +236,57 @@ async def execute_pass_2_data_extraction(
     for result_tuple, original_idx in chunk_results:
         chunk_data, chunk_usage, chunk_att = result_tuple
         chunk_text = chunks[original_idx]
-        chunk_line_count = len(chunk_text.split("\n"))
+        chunk_lines_list = chunk_text.split("\n")
+        chunk_line_count = len(chunk_lines_list)
 
         if len(chunk_data.clues) < UNDER_EXTRACTION_THRESHOLD and chunk_line_count > MIN_CHUNK_LINES_FOR_RETRY:
             retried_chunks += 1
             logger.warning(
-                "Chunk under-extracted, retrying",
+                "Chunk under-extracted, triggering sliding window retry",
                 chunk=original_idx + 1,
                 clues_found=len(chunk_data.clues),
                 chunk_lines=chunk_line_count,
-                threshold=UNDER_EXTRACTION_THRESHOLD,
             )
+
+            # Find where the LLM stopped extracting
+            last_extracted_line_id = None
+            if chunk_data.clues:
+                # Sort clues by start line ID to find the last one
+                try:
+                    sorted_clues = sorted(
+                        chunk_data.clues,
+                        key=lambda c: int(
+                            c.host_read_start_line_id.replace("L", "").replace("[", "").replace("]", "").strip()
+                        ),
+                    )
+                    last_extracted_line_id = sorted_clues[-1].host_read_end_line_id
+                except ValueError:
+                    pass
+
+            # If we couldn't parse line IDs, just split the chunk in half
+            if not last_extracted_line_id:
+                retry_text = "\n".join(chunk_lines_list[chunk_line_count // 2 :])
+            else:
+                # Find the index of the last extracted line
+                split_idx = chunk_line_count // 2
+                for i, line in enumerate(chunk_lines_list):
+                    if line.startswith(last_extracted_line_id):
+                        split_idx = min(i + 1, chunk_line_count - 1)
+                        break
+                retry_text = "\n".join(chunk_lines_list[split_idx:])
+
             try:
-                retry_result = await extract_chunk(original_idx, chunk_text)
+                retry_result = await extract_chunk(original_idx, retry_text, is_retry=True)
                 retry_data, retry_usage, retry_att = retry_result
                 logger.info(
                     "Chunk retry result",
                     chunk=original_idx + 1,
                     original_clues=len(chunk_data.clues),
-                    retry_clues=len(retry_data.clues),
+                    additional_clues=len(retry_data.clues),
                 )
-                # Use whichever extraction yielded more clues
-                if len(retry_data.clues) > len(chunk_data.clues):
-                    final_chunk_results.append(retry_result)
-                    logger.info(
-                        "Using retry result (more clues)",
-                        chunk=original_idx + 1,
-                        clues=len(retry_data.clues),
-                    )
-                else:
-                    final_chunk_results.append(result_tuple)
-                    logger.info(
-                        "Keeping original result (retry did not improve)",
-                        chunk=original_idx + 1,
-                        clues=len(chunk_data.clues),
-                    )
+                # Combine both results
+                chunk_data.clues.extend(retry_data.clues)
+                final_chunk_results.append((chunk_data, chunk_usage, max(chunk_att, retry_att)))
             except Exception as retry_err:
                 logger.warning(
                     "Chunk retry failed, keeping original",

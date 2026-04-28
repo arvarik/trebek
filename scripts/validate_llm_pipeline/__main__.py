@@ -112,11 +112,23 @@ def main():
             epjs = [os.path.join(args.dir, f) for f in all_files if f.endswith(".json") and not f.endswith(".json.gz")]
 
         if gzs and not args.transcript:
+            if len(gzs) > 1:
+                print("  ❌ Multiple transcript files found. Please specify --transcript explicitly.")
+                sys.exit(1)
             args.transcript = gzs[0]
+
         if mp3s and not args.audio:
+            if len(mp3s) > 1:
+                print("  ❌ Multiple audio files found. Please specify --audio explicitly.")
+                sys.exit(1)
             args.audio = mp3s[0]
+
         if epjs and not args.episode_json and not args.transcript:
+            if len(epjs) > 1:
+                print("  ❌ Multiple episode JSON files found. Please specify --episode-json explicitly.")
+                sys.exit(1)
             args.episode_json = epjs[0]
+
         print("\n  Auto-detected:")
         print(f"    transcript = {args.transcript}")
         print(f"    audio      = {args.audio}")

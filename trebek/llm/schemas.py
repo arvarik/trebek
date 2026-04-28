@@ -8,6 +8,8 @@ class PartialEpisodeMeta(BaseModel):
     host_name: str
     is_tournament: bool
     contestants: list[Contestant]
+    jeopardy_categories: list[str]
+    double_jep_categories: list[str]
     final_jep: FinalJep
     score_adjustments: list[ScoreAdjustment]
 
@@ -53,3 +55,48 @@ class EpisodeSkeleton(BaseModel):
     total_jep_clues_played: int
     total_double_jep_clues_played: int
     daily_double_count: int
+
+
+def create_dynamic_clue_schema(categories: list[str], contestants: list[str]) -> type[BaseModel]:
+    from pydantic import create_model
+
+    # Provide fallbacks to avoid Empty Literal error if lists are somehow empty
+    cat_tuple = tuple(categories) if categories else ("Unknown Category",)
+    cont_tuple = tuple(contestants) if contestants else ("Unknown Contestant",)
+
+    CategoryLiteral = Literal[cat_tuple]  # type: ignore
+    SpeakerLiteral = Literal[cont_tuple]  # type: ignore
+
+    DynamicBuzzAttempt = create_model(
+        "BuzzAttemptExtraction",
+        __base__=BuzzAttemptExtraction,
+        speaker=(SpeakerLiteral, ...),
+    )
+
+    DynamicClueExtraction = create_model(
+        "ClueExtraction",
+        __base__=ClueExtraction,
+        category=(CategoryLiteral, ...),
+        wagerer_name=(
+            Optional[SpeakerLiteral],
+            Field(
+                default=None,
+                description="Name of the contestant who found the Daily Double, or null if not a Daily Double.",
+            ),
+        ),
+        attempts=(
+            list[DynamicBuzzAttempt],  # type: ignore
+            Field(
+                default_factory=list,  # type: ignore
+                description="Chronological list of buzz attempts. Empty list for Triple Stumpers.",
+            ),
+        ),
+    )
+
+    DynamicPartialClues = create_model(
+        "PartialClues",
+        __base__=PartialClues,
+        clues=(list[DynamicClueExtraction], ...),  # type: ignore
+    )
+
+    return DynamicPartialClues

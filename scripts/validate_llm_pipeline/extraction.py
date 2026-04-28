@@ -143,19 +143,20 @@ async def run_pass1(client, audio_path, R):
         parsed = ast.literal_eval(clean)
 
     # Handle both dict (expected) and list (fallback) response formats
+    mapping = {}
     if isinstance(parsed, dict):
-        # Check if it's a proper {SPEAKER_XX: Name} mapping or something else
-        if all(isinstance(v, str) for v in parsed.values()):
-            mapping = parsed
-        else:
-            print("  ⚠️  Dict values are not strings, attempting to extract names...")
-            mapping = {k: str(v) for k, v in parsed.items()}
+        if any(str(k).upper().startswith("SPEAKER_") for k in parsed):
+            mapping = {str(k): str(v).strip() for k, v in parsed.items() if isinstance(v, str) and v.strip()}
     elif isinstance(parsed, list):
-        # Gemini returned a list of segments — extract speaker→name mapping
-        print("  ⚠️  Got segment list instead of mapping — inferring speaker names...")
-        mapping = _infer_speaker_mapping_from_segments(parsed)
-    else:
-        mapping = {}
+        for item in parsed:
+            if isinstance(item, dict):
+                # Flatten the list of dicts into a single mapping dict
+                for k, v in item.items():
+                    if str(k).upper().startswith("SPEAKER_") and isinstance(v, str) and v.strip():
+                        mapping[str(k)] = str(v).strip()
+
+    if not mapping:
+        print("  ❌ Pass1: Failed to parse LLM response into mapping", parsed)
 
     R.check("Pass1: returned mapping", isinstance(mapping, dict) and len(mapping) > 0, f"{mapping}")
     R.check("Pass1: 2+ speakers", len(mapping) >= 2, f"{len(mapping)} speakers")

@@ -170,7 +170,7 @@ def _normalize_speaker_names(
     # ── Hard cleanup sweep ───────────────────────────────────────────
     # After soft normalization, any remaining unmapped speakers will crash
     # the database FK constraints. Fuzzy-match or drop them.
-    if unmapped:
+    if True:  # Always run hard cleanup to catch any soft-mapped but invalid names
         contestant_set_lower = {c.lower() for c in contestant_names}
         dropped_total = 0
         fuzzy_resolved = 0
@@ -240,11 +240,6 @@ def _normalize_speaker_names(
             fuzzy_resolved=fuzzy_resolved,
             attempts_dropped=dropped_total,
             variant_map={k: v for k, v in variant_map.items() if not k.startswith("speaker_")},
-        )
-    else:
-        logger.info(
-            "Speaker normalization complete — all speakers mapped to contestant full names",
-            total_attempts=sum(len(c.attempts) for c in clues),
         )
 
 
