@@ -54,11 +54,12 @@ async def commit_episode_to_relational_tables(
 
         # 3. Insert episode_performances with final scores from state machine
         final_score = state_machine.scores.get(contestant.name, 0)
+        coryat_score = state_machine.coryat_scores.get(contestant.name, 0)
         payload.append(
             (
                 "INSERT OR REPLACE INTO episode_performances "
-                "(episode_id, contestant_id, podium_position, final_score) VALUES (?, ?, ?, ?)",
-                (episode_id, contestant_id, contestant.podium_position, final_score),
+                "(episode_id, contestant_id, podium_position, final_score, coryat_score) VALUES (?, ?, ?, ?, ?)",
+                (episode_id, contestant_id, contestant.podium_position, final_score, coryat_score),
             )
         )
 

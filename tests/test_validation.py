@@ -417,30 +417,6 @@ class TestValidateExtractionIntegrity:
         warnings = _validate_extraction_integrity(episode)
         assert any("category merge" in w for w in warnings)
 
-    def test_question_format_majority_violation_warning(self) -> None:
-        """If >30% of correct_responses don't start with 'What/Who/Where', warn."""
-        clues = [
-            _make_clue(round="Jeopardy", correct_response="Rome", row=i + 1, order=i, start_ms=i * 2000)
-            for i in range(10)
-        ]
-        clues.append(_make_clue(round="Double Jeopardy", start_ms=50000))
-        episode = _make_episode(clues)
-        warnings = _validate_extraction_integrity(episode)
-        assert any("not in question format" in w for w in warnings)
-
-    def test_question_format_acceptable_minority_no_warning(self) -> None:
-        """If only a small fraction lack question format, no warning should fire."""
-        clues = [
-            _make_clue(round="Jeopardy", correct_response="What is Rome?", row=(i % 5) + 1, order=i, start_ms=i * 2000)
-            for i in range(10)
-        ]
-        # Add one non-question format — under 30%
-        clues.append(_make_clue(round="Jeopardy", correct_response="Paris", row=1, col=2, order=11, start_ms=25000))
-        clues.append(_make_clue(round="Double Jeopardy", start_ms=50000))
-        episode = _make_episode(clues)
-        warnings = _validate_extraction_integrity(episode)
-        assert not any("not in question format" in w for w in warnings)
-
 
 # ── Dedup Boundary Tests ────────────────────────────────────────────
 

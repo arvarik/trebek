@@ -27,6 +27,7 @@ class TrebekStateMachine:
         valid_contestants: Optional[set[str]] = None,
     ):
         self.scores: Dict[str, int] = initial_scores or {}
+        self.coryat_scores: Dict[str, int] = {}  # Clue face value only, no DD wagers, no FJ
         self.pending_adjustments: List[ScoreAdjustment] = []
         self.current_board_control_contestant: Optional[str] = None
         self.valid_contestants: Optional[set[str]] = valid_contestants
@@ -79,11 +80,14 @@ class TrebekStateMachine:
             # Daily Doubles: only the wagerer responds (max 1 attempt)
             if clue.attempts:
                 attempt = clue.attempts[0]
+                self.coryat_scores.setdefault(wagerer, 0)
                 if attempt.is_correct:
                     self.scores[wagerer] += wager_amount
+                    self.coryat_scores[wagerer] += clue_value  # Coryat uses face value
                     self.current_board_control_contestant = wagerer
                 else:
                     self.scores[wagerer] -= wager_amount
+                    self.coryat_scores[wagerer] -= clue_value  # Coryat uses face value
                     # Board control stays with wagerer on DD miss per Jeopardy rules
         else:
             # 3. Standard clue: process all buzz attempts (rebounds allowed)
@@ -104,9 +108,11 @@ class TrebekStateMachine:
                     continue
 
                 self.scores.setdefault(player, 0)
+                self.coryat_scores.setdefault(player, 0)
 
                 if attempt.is_correct:
                     self.scores[player] += wager_amount
+                    self.coryat_scores[player] += wager_amount
                     # Shift board control ONLY on correct response
                     if self.current_board_control_contestant != player:
                         logger.info(
@@ -118,6 +124,7 @@ class TrebekStateMachine:
                     break  # Only one person can be correct per clue
                 else:
                     self.scores[player] -= wager_amount
+                    self.coryat_scores[player] -= wager_amount
 
         # 4. Enforce Chronological Rigidity for Score Adjustments
         self._apply_score_adjustments_for_index(clue.selection_order)

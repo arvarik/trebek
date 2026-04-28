@@ -154,10 +154,7 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
     inverted_timestamp_count = 0
     zero_start_mid_game_count = 0
     long_read_duration_count = 0
-    non_question_format_count = 0
     buzz_before_host_start_count = 0
-
-    question_starters = {"what", "who", "where", "when", "how", "name"}
 
     for clue in episode.clues:
         # Empty clue text
@@ -176,16 +173,10 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
         if clue.selection_order > 3 and clue.host_start_timestamp_ms == 0.0:
             zero_start_mid_game_count += 1
 
-        # Unrealistically long clue read (> 60s signals bad Line IDs)
+        # Unrealistically long clue read (>60s signals bad Line IDs)
         read_duration = clue.host_finish_timestamp_ms - clue.host_start_timestamp_ms
         if read_duration > 60000:
             long_read_duration_count += 1
-
-        # Question-format spot check (Jeopardy answers must be phrased as questions)
-        if clue.correct_response and clue.correct_response.strip():
-            first_word = clue.correct_response.strip().lower().split()[0]
-            if first_word not in question_starters:
-                non_question_format_count += 1
 
         # Buzz before host starts reading (not finishes — buzz during reading is legal)
         for attempt in clue.attempts:
@@ -209,11 +200,6 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
     if buzz_before_host_start_count > 0:
         warnings.append(
             f"{buzz_before_host_start_count} clue(s) have buzz_timestamp before host_start (hallucinated buzz Line ID)"
-        )
-    if non_question_format_count > len(episode.clues) * 0.3:
-        warnings.append(
-            f"{non_question_format_count}/{len(episode.clues)} clue(s) have correct_response "
-            f"not in question format (expected 'What/Who/Where/When is...')"
         )
 
     # ── Category count sanity check ───────────────────────────────────
