@@ -39,26 +39,26 @@ CREATE TABLE IF NOT EXISTS episode_performances (
 
 CREATE TABLE IF NOT EXISTS clues (
     clue_id TEXT PRIMARY KEY,
-    episode_id TEXT REFERENCES episodes(episode_id),
-    round TEXT CHECK(round IN ('Jeopardy', 'Double Jeopardy', 'Final Jeopardy', 'Tiebreaker')),
-    category TEXT,
+    episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
+    round TEXT NOT NULL CHECK(round IN ('Jeopardy', 'Double Jeopardy', 'Final Jeopardy', 'Tiebreaker')),
+    category TEXT NOT NULL,
     board_row INTEGER,
     board_col INTEGER,
-    selection_order INTEGER,
-    
-    clue_text TEXT,
+    selection_order INTEGER NOT NULL,
+
+    clue_text TEXT NOT NULL,
     correct_response TEXT,
     is_daily_double BOOLEAN,
     is_triple_stumper BOOLEAN,
     daily_double_wager TEXT,
     wagerer_name TEXT,
-    
+
     requires_visual_context BOOLEAN,
     host_start_timestamp_ms REAL,
     host_finish_timestamp_ms REAL,
     clue_syllable_count INTEGER,
     host_speech_rate_wpm REAL,
-    
+
     selector_had_board_control BOOLEAN,
 
     clue_embedding BLOB,
@@ -68,18 +68,18 @@ CREATE TABLE IF NOT EXISTS clues (
 
 CREATE TABLE IF NOT EXISTS buzz_attempts (
     attempt_id TEXT PRIMARY KEY,
-    clue_id TEXT REFERENCES clues(clue_id),
-    contestant_id TEXT REFERENCES contestants(contestant_id),
-    
-    attempt_order INTEGER,
-    buzz_timestamp_ms REAL,
+    clue_id TEXT NOT NULL REFERENCES clues(clue_id),
+    contestant_id TEXT NOT NULL REFERENCES contestants(contestant_id),
+
+    attempt_order INTEGER NOT NULL,
+    buzz_timestamp_ms REAL NOT NULL,
     podium_light_timestamp_ms REAL,
     true_buzzer_latency_ms REAL,
-    is_lockout_inferred BOOLEAN,
-    
-    response_given TEXT,
-    is_correct BOOLEAN,
-    response_start_timestamp_ms REAL, 
+    is_lockout_inferred BOOLEAN NOT NULL,
+
+    response_given TEXT NOT NULL,
+    is_correct BOOLEAN NOT NULL,
+    response_start_timestamp_ms REAL,
     brain_freeze_duration_ms REAL,
     true_acoustic_confidence_score REAL,
     disfluency_count INTEGER,
@@ -88,14 +88,14 @@ CREATE TABLE IF NOT EXISTS buzz_attempts (
 
 CREATE TABLE IF NOT EXISTS wagers (
     wager_id TEXT PRIMARY KEY,
-    clue_id TEXT REFERENCES clues(clue_id),
-    contestant_id TEXT REFERENCES contestants(contestant_id),
-    
+    clue_id TEXT NOT NULL REFERENCES clues(clue_id),
+    contestant_id TEXT NOT NULL REFERENCES contestants(contestant_id),
+
     running_score_at_time INTEGER,
     opponent_1_score INTEGER,
     opponent_2_score INTEGER,
-    actual_wager INTEGER,
-    
+    actual_wager INTEGER NOT NULL,
+
     game_theory_optimal_wager INTEGER,
     wager_irrationality_delta INTEGER
 );
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS score_adjustments (
 
 CREATE TABLE IF NOT EXISTS job_telemetry (
     episode_id TEXT PRIMARY KEY REFERENCES pipeline_state(episode_id),
-    
+
     -- Hardware Resource Signatures
     peak_vram_mb REAL,
     avg_gpu_utilization_pct REAL,
@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS job_telemetry (
     gemini_total_cost_usd REAL,
     gemini_api_latency_ms REAL,
     pydantic_retry_count INTEGER,
-    
+
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

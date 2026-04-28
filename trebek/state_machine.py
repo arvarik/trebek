@@ -9,7 +9,7 @@ before committing relational data to the database.
 
 import structlog
 from typing import Dict, List, Optional
-from trebek.schemas import Clue, ScoreAdjustment
+from trebek.schemas import Clue, ScoreAdjustment, FinalJeopardy
 
 logger = structlog.get_logger()
 
@@ -145,3 +145,23 @@ class TrebekStateMachine:
                 remaining_adjustments.append(adj)
 
         self.pending_adjustments = remaining_adjustments
+
+    def process_final_jeopardy(self, fj: FinalJeopardy) -> None:
+        """Processes Final Jeopardy wagers and updates scores."""
+        for wager in fj.wagers_and_responses:
+            player = wager.contestant
+            if self.valid_contestants and player not in self.valid_contestants:
+                self.unknown_speaker_warnings += 1
+                if self.unknown_speaker_warnings <= 5:
+                    logger.warning(
+                        "State machine: skipping unknown speaker in FJ",
+                        speaker=player,
+                        valid_contestants=sorted(self.valid_contestants),
+                    )
+                continue
+
+            self.scores.setdefault(player, 0)
+            if wager.is_correct:
+                self.scores[player] += wager.wager
+            else:
+                self.scores[player] -= wager.wager

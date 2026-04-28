@@ -658,6 +658,8 @@ def validate_extraction(meta, clues, R):
     R.check("Clues: DJ round 15-30", 15 <= len(dj) <= 30, f"{len(dj)}")
     dd = sum(1 for c in clues if c["is_daily_double"])
     R.check("Clues: 1-3 Daily Doubles", 1 <= dd <= 3, f"{dd}")
+    dd_wagers = sum(1 for c in clues if c["is_daily_double"] and c.get("daily_double_wager") and c.get("wagerer_name"))
+    R.check("Clues: All DDs have wagers", dd == dd_wagers, f"{dd_wagers}/{dd}")
     jcats = {c["category"].lower().strip() for c in j}
     djcats = {c["category"].lower().strip() for c in dj}
     R.check("Clues: J has 5-6 categories", 5 <= len(jcats) <= 6, f"{len(jcats)}: {sorted(jcats)}")
@@ -679,6 +681,18 @@ def validate_extraction(meta, clues, R):
     R.check("Quality: no inverted timestamps", inverted == 0, f"{inverted} inverted")
     atts = sum(len(c["attempts"]) for c in clues)
     R.check("Quality: buzz attempts extracted", atts > 0, f"{atts} total")
+    invalid_buzz_ts = sum(
+        1
+        for c in clues
+        for a in c.get("attempts", [])
+        if a.get("buzz_timestamp_ms", 0) < c.get("host_finish_ms", 0) - 250
+    )
+    R.check("Quality: buzz timestamps valid", invalid_buzz_ts == 0, f"{invalid_buzz_ts} early buzzes")
+
+    fj = meta.final_jeopardy
+    R.check("FJ: category extracted", bool(fj.category.strip()), fj.category)
+    R.check("FJ: clue text extracted", bool(fj.clue_text.strip()), f"{len(fj.clue_text)} chars")
+    R.check("FJ: 1-3 wagers", 1 <= len(fj.wagers_and_responses) <= 3, f"{len(fj.wagers_and_responses)} wagers")
 
 
 def validate_state_machine(meta, clues, R):
@@ -715,6 +729,14 @@ def validate_state_machine(meta, clues, R):
                     break
                 else:
                     scores[p] -= val
+    for w in meta.final_jeopardy.wagers_and_responses:
+        p = w.contestant
+        scores.setdefault(p, 0)
+        if w.is_correct:
+            scores[p] += w.wager
+        else:
+            scores[p] -= w.wager
+
     for name, score in scores.items():
         R.check(f"Score: {name}", -10000 <= score <= 50000, f"${score:,}")
     R.check("Scores: at least one positive", any(s > 0 for s in scores.values()))

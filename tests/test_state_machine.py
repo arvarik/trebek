@@ -7,7 +7,7 @@ and chronologically anchored score adjustments.
 """
 
 from trebek.state_machine import TrebekStateMachine
-from trebek.schemas import Clue, BuzzAttempt, ScoreAdjustment
+from trebek.schemas import Clue, BuzzAttempt, ScoreAdjustment, FinalJeopardy, FinalJeopardyWager
 from typing import Literal, Union
 
 
@@ -295,3 +295,73 @@ class TestStateMachineContestantValidation:
         clue = _make_clue(row=1, attempts=[_make_attempt("AnyName", True)])
         sm.process_clue(clue)
         assert sm.scores["AnyName"] == 200
+
+
+class TestFinalJeopardy:
+    def test_final_jeopardy_scoring(self) -> None:
+        sm = TrebekStateMachine({"Alice": 10000, "Bob": 5000}, valid_contestants={"Alice", "Bob"})
+        fj = FinalJeopardy(
+            category="Math",
+            clue_text="1+1",
+            wagers_and_responses=[
+                FinalJeopardyWager(contestant="Alice", wager=5000, response="2", is_correct=True),
+                FinalJeopardyWager(contestant="Bob", wager=5000, response="3", is_correct=False),
+            ],
+        )
+        sm.process_final_jeopardy(fj)
+        assert sm.scores["Alice"] == 15000
+        assert sm.scores["Bob"] == 0
+
+    def test_final_jeopardy_unknown_speaker(self) -> None:
+        sm = TrebekStateMachine({"Alice": 1000}, valid_contestants={"Alice"})
+        fj = FinalJeopardy(
+            category="Math",
+            clue_text="1+1",
+            wagers_and_responses=[
+                FinalJeopardyWager(contestant="Unknown", wager=1000, response="2", is_correct=True),
+            ],
+        )
+        sm.process_final_jeopardy(fj)
+        assert "Unknown" not in sm.scores
+        assert sm.unknown_speaker_warnings == 1
+
+
+class TestFullGameSimulation:
+    def test_full_game_simulation(self) -> None:
+        sm = TrebekStateMachine(valid_contestants={"Alice", "Bob", "Charlie"})
+        # Round 1: 30 clues (Alice gets 10 correct, $200 each = $2000)
+        for i in range(10):
+            sm.process_clue(_make_clue(round="Jeopardy", row=1, order=i + 1, attempts=[_make_attempt("Alice", True)]))
+
+        # Round 2: 30 clues (Bob gets 10 correct, $400 each = $4000)
+        for i in range(10):
+            sm.process_clue(
+                _make_clue(round="Double Jeopardy", row=1, order=31 + i, attempts=[_make_attempt("Bob", True)])
+            )
+
+        # Daily Double: Charlie wagers $1000 and gets it right
+        sm.process_clue(
+            _make_clue(
+                round="Double Jeopardy",
+                dd=True,
+                wager=1000,
+                wagerer="Charlie",
+                attempts=[_make_attempt("Charlie", True)],
+            )
+        )
+
+        # FJ: Alice wagers $2000 correct, Bob wagers $4000 incorrect, Charlie wagers $1000 correct
+        fj = FinalJeopardy(
+            category="Final",
+            clue_text="Final",
+            wagers_and_responses=[
+                FinalJeopardyWager(contestant="Alice", wager=2000, response="X", is_correct=True),
+                FinalJeopardyWager(contestant="Bob", wager=4000, response="Y", is_correct=False),
+                FinalJeopardyWager(contestant="Charlie", wager=1000, response="Z", is_correct=True),
+            ],
+        )
+        sm.process_final_jeopardy(fj)
+
+        assert sm.scores["Alice"] == 4000
+        assert sm.scores["Bob"] == 0
+        assert sm.scores["Charlie"] == 2000

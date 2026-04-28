@@ -99,16 +99,31 @@ async def commit_episode_to_relational_tables(
             )
         )
 
+        if clue.is_daily_double and clue.daily_double_wager is not None and clue.wagerer_name:
+            wager_id = f"{clue_id}_dd"
+            contestant_id = f"{episode_id}_{clue.wagerer_name.replace(' ', '_').lower()}"
+            actual_wager = -1 if clue.daily_double_wager == "True Daily Double" else int(clue.daily_double_wager)
+            payload.append(
+                (
+                    "INSERT OR REPLACE INTO wagers "
+                    "(wager_id, clue_id, contestant_id, actual_wager) VALUES (?, ?, ?, ?)",
+                    (wager_id, clue_id, contestant_id, actual_wager),
+                )
+            )
+
         # Insert buzz_attempts for this clue
         for attempt in clue.attempts:
             attempt_id = f"{clue_id}_a{attempt.attempt_order}"
             contestant_id = f"{episode_id}_{attempt.speaker.replace(' ', '_').lower()}"
+
+            true_buzzer_latency_ms = attempt.buzz_timestamp_ms - clue.host_finish_timestamp_ms
+
             payload.append(
                 (
                     "INSERT OR REPLACE INTO buzz_attempts "
                     "(attempt_id, clue_id, contestant_id, attempt_order, buzz_timestamp_ms, "
-                    "response_given, is_correct, response_start_timestamp_ms, is_lockout_inferred) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "response_given, is_correct, response_start_timestamp_ms, is_lockout_inferred, true_buzzer_latency_ms) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         attempt_id,
                         clue_id,
@@ -119,6 +134,7 @@ async def commit_episode_to_relational_tables(
                         attempt.is_correct,
                         attempt.response_start_timestamp_ms,
                         attempt.is_lockout_inferred,
+                        true_buzzer_latency_ms,
                     ),
                 )
             )
@@ -141,6 +157,68 @@ async def commit_episode_to_relational_tables(
                     adj.points_adjusted,
                     adj.reason,
                     adj.effective_after_clue_selection_order,
+                ),
+            )
+        )
+
+    # 6. Insert Final Jeopardy
+    fj = episode_data.final_jeopardy
+    fj_clue_id = f"{episode_id}_fj"
+    is_fj_triple_stumper = len(fj.wagers_and_responses) == 0 or all(not w.is_correct for w in fj.wagers_and_responses)
+
+    payload.append(
+        (
+            "INSERT OR REPLACE INTO clues "
+            "(clue_id, episode_id, round, category, selection_order, clue_text, "
+            "is_daily_double, is_triple_stumper, requires_visual_context, "
+            "host_start_timestamp_ms, host_finish_timestamp_ms, clue_syllable_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                fj_clue_id,
+                episode_id,
+                "Final Jeopardy",
+                fj.category,
+                61,
+                fj.clue_text,
+                False,
+                is_fj_triple_stumper,
+                False,
+                0.0,
+                0.0,
+                0,
+            ),
+        )
+    )
+
+    for i, w in enumerate(fj.wagers_and_responses):
+        wager_id = f"{fj_clue_id}_{w.contestant.replace(' ', '_').lower()}"
+        contestant_id = f"{episode_id}_{w.contestant.replace(' ', '_').lower()}"
+
+        payload.append(
+            (
+                "INSERT OR REPLACE INTO wagers (wager_id, clue_id, contestant_id, actual_wager) VALUES (?, ?, ?, ?)",
+                (wager_id, fj_clue_id, contestant_id, w.wager),
+            )
+        )
+
+        attempt_id = f"{fj_clue_id}_a{i + 1}"
+        payload.append(
+            (
+                "INSERT OR REPLACE INTO buzz_attempts "
+                "(attempt_id, clue_id, contestant_id, attempt_order, buzz_timestamp_ms, "
+                "response_given, is_correct, response_start_timestamp_ms, is_lockout_inferred, true_buzzer_latency_ms) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    attempt_id,
+                    fj_clue_id,
+                    contestant_id,
+                    1,
+                    0.0,
+                    w.response,
+                    w.is_correct,
+                    0.0,
+                    False,
+                    0.0,
                 ),
             )
         )
