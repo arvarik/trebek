@@ -13,11 +13,13 @@
 <a href="https://github.com/arvarik/trebek/actions/workflows/ci.yml">
   <img alt="CI" src="https://github.com/arvarik/trebek/actions/workflows/ci.yml/badge.svg" />
 </a>
+<a href="https://pypi.org/project/trebek/">
+  <img alt="PyPI" src="https://img.shields.io/pypi/v/trebek" />
+</a>
+<a href="https://pypi.org/project/trebek/">
+  <img alt="PyPI - Downloads" src="https://img.shields.io/pypi/dm/trebek" />
+</a>
 <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white" />
-<img alt="SQLite" src="https://img.shields.io/badge/database-SQLite%20(WAL)-003B57?logo=sqlite&logoColor=white" />
-<img alt="Pydantic v2" src="https://img.shields.io/badge/pydantic-v2-e92063?logo=pydantic&logoColor=white" />
-<img alt="Google Gemini" src="https://img.shields.io/badge/LLM-Google%20Gemini-4285F4?logo=google&logoColor=white" />
-<img alt="WhisperX" src="https://img.shields.io/badge/ASR-WhisperX-green" />
 <img alt="Ruff" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json" />
 <img alt="Mypy" src="https://img.shields.io/badge/types-Mypy-blue.svg" />
 <img alt="License" src="https://img.shields.io/badge/license-AGPL_3.0-green" />
