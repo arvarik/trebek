@@ -29,7 +29,7 @@ def render_startup_banner(mode: str = "daemon") -> None:
         "stats": "[bold magenta]▶ Stats[/bold magenta] — Database analytics dashboard",
     }.get(mode, f"[white]▶ {mode}[/white]")
 
-    ascii_art = Text(TREBEK_ASCII.strip(), style="bold cyan")
+    ascii_art = Text(TREBEK_ASCII.strip("\n"), style="bold cyan")
     tagline = Text("  High-fidelity J! data extraction pipeline\n", style="dim white")
 
     panel = Panel(
