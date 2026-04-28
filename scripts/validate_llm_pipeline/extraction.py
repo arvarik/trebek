@@ -1,129 +1,17 @@
-#!/usr/bin/env python3
 """
-Standalone Trebek LLM Pipeline Validator — zero trebek imports.
-Copy to remote machine, pip install google-genai pydantic, run.
-
-Usage:
-  # Auto-detect files in gpu_outputs/
-  python validate_llm_pipeline.py --dir gpu_outputs/
-
-  # Explicit paths
-  python validate_llm_pipeline.py \
-    --transcript gpu_outputs/gpu_output_*.json.gz \
-    --audio gpu_outputs/*_interview_slice.mp3
-
-  # Skip Pass 1 (no audio slice)
-  python validate_llm_pipeline.py --transcript gpu_outputs/gpu_output_*.json.gz --skip-pass1
-
-  # Validate existing episode JSON only (no API calls)
-  python validate_llm_pipeline.py --episode-json gpu_outputs/episode_*.json
-
-Requires: pip install google-genai pydantic
-Env: GEMINI_API_KEY must be set
+GPU validation, Gemini API helpers, Pass 1 speaker anchoring, and Pass 2
+structured extraction — all LLM interaction lives here.
 """
 
-import argparse
 import asyncio
-import glob
-import gzip
 import json
 import os
-import sys
 import time
-from typing import Optional, Literal
-from pydantic import BaseModel, Field
 
-# ── Pydantic Schemas (inlined from trebek) ─────────────────────────
-
-
-class BuzzAttemptExt(BaseModel):
-    attempt_order: int
-    speaker: str
-    response_given: str
-    is_correct: bool
-    buzz_line_id: str
-    is_lockout_inferred: bool
-
-
-class ClueExt(BaseModel):
-    round: Literal["Jeopardy", "Double Jeopardy", "Final Jeopardy", "Tiebreaker"]
-    category: str
-    board_row: int
-    board_col: int
-    is_daily_double: bool
-    requires_visual_context: bool
-    host_read_start_line_id: str
-    host_read_end_line_id: str
-    daily_double_wager: Optional[str] = None
-    wagerer_name: Optional[str] = None
-    correct_response: str
-    attempts: list[BuzzAttemptExt] = []
-
-
-class PartialClues(BaseModel):
-    clues: list[ClueExt]
-
-
-class FJWager(BaseModel):
-    contestant: str
-    wager: int
-    response: str
-    is_correct: bool
-
-
-class FJ(BaseModel):
-    category: str
-    clue_text: str
-    wagers_and_responses: list[FJWager]
-
-
-class Contestant(BaseModel):
-    name: str
-    podium_position: int = Field(ge=1, le=3)
-    occupational_category: str
-    is_returning_champion: bool
-    description: str
-
-
-class ScoreAdj(BaseModel):
-    contestant: str
-    points_adjusted: int
-    reason: str
-    effective_after_clue_selection_order: int
-
-
-class PartialMeta(BaseModel):
-    episode_date: str
-    host_name: str
-    is_tournament: bool
-    contestants: list[Contestant]
-    final_jeopardy: FJ
-    score_adjustments: list[ScoreAdj]
-
-
-# ── Result Tracker ─────────────────────────────────────────────────
-
-
-class Results:
-    def __init__(self):
-        self.checks = []
-
-    def check(self, name, passed, detail=""):
-        self.checks.append({"name": name, "status": "PASS" if passed else "FAIL", "detail": detail})
-        icon = "✅" if passed else "❌"
-        print(f"  {icon} {name}" + (f" — {detail}" if detail else ""))
-
-    def warn(self, name, detail=""):
-        self.checks.append({"name": name, "status": "WARN", "detail": detail})
-        print(f"  ⚠️  {name} — {detail}")
-
-    def summary(self):
-        p = sum(1 for c in self.checks if c["status"] == "PASS")
-        f = sum(1 for c in self.checks if c["status"] == "FAIL")
-        w = sum(1 for c in self.checks if c["status"] == "WARN")
-        t = len(self.checks)
-        print(f"\n{'=' * 60}\n  RESULTS: {p}/{t} passed, {f} failed, {w} warnings\n{'=' * 60}")
-        return f
+from .schemas import (
+    PartialClues,
+    PartialMeta,
+)
 
 
 # ── GPU Output Validation ──────────────────────────────────────────
@@ -451,6 +339,11 @@ async def extract_with_retry(client, prompt, system, schema_cls, max_retries=3, 
 
 
 async def run_pass2(client, segs, speaker_mapping, R):
+    try:
+        from .diagnostics import print_chunk_diagnostics
+    except ImportError:
+        from validate_llm_pipeline.diagnostics import print_chunk_diagnostics
+
     print("\n── Pass 2: Structured Extraction ─────────────────────")
     comp_map = {abbrev(k): v for k, v in speaker_mapping.items()}
     transcript = fmt_transcript(segs)
@@ -460,6 +353,8 @@ async def run_pass2(client, segs, speaker_mapping, R):
         "Speaker IDs are abbreviated (S0=SPEAKER_00). "
         "Do NOT hallucinate names. Use Line IDs (e.g. L0, L105) for timestamps."
     )
+    api_calls = []  # Track all API calls for summary table
+
     # Meta extraction
     print("  Extracting episode metadata...")
     meta_prompt = f"Transcript:\n{transcript}\n\nExtract episode_date, host_name, is_tournament, contestants, final_jeopardy, score_adjustments. Do NOT extract clues."
@@ -469,6 +364,7 @@ async def run_pass2(client, segs, speaker_mapping, R):
     meta_txt = str(resp.text).replace("```json", "").replace("```", "").strip()
     meta = PartialMeta.model_validate_json(meta_txt)
     meta_ms = (time.perf_counter() - t0) * 1000
+    api_calls.append({"name": "Pass 2 Meta", "model": MODEL_PRO, **mu, "ms": meta_ms})
     R.check("Pass2 Meta: contestants", len(meta.contestants) > 0, f"{[c.name for c in meta.contestants]}")
     R.check("Pass2 Meta: host", bool(meta.host_name), meta.host_name)
     R.check("Pass2 Meta: FJ category", bool(meta.final_jeopardy.category), meta.final_jeopardy.category)
@@ -485,7 +381,10 @@ async def run_pass2(client, segs, speaker_mapping, R):
             cur = []
     if cur:
         chunks.append("\n".join(cur))
-    print(f"  Extracting clues from {len(chunks)} chunks...")
+
+    # Print chunk diagnostics before extraction
+    print_chunk_diagnostics(chunks, segs)
+    print(f"\n  Extracting clues from {len(chunks)} chunks...")
 
     all_clues = []
     total_usage = {"input": 0, "output": 0, "thinking": 0, "ms": 0}
@@ -499,6 +398,7 @@ async def run_pass2(client, segs, speaker_mapping, R):
         all_clues.extend(cdata.clues)
         for k in total_usage:
             total_usage[k] += cu.get(k, 0)
+        api_calls.append({"name": f"Pass 2 Chunk {ci + 1}/{len(chunks)}", "model": MODEL_PRO, **cu})
         print(f"    Chunk {ci + 1}/{len(chunks)}: {len(cdata.clues)} clues (attempt {att + 1})")
 
     R.check("Pass2: total clues > 0", len(all_clues) > 0, f"{len(all_clues)} raw clues")
@@ -623,7 +523,7 @@ async def run_pass2(client, segs, speaker_mapping, R):
     if normalized_count:
         print(f"  📋 Normalized {normalized_count} speaker references → full contestant names")
 
-    return meta, deduped
+    return meta, deduped, api_calls
 
 
 def _match_to_contestant(name, contestant_names):
@@ -645,248 +545,3 @@ def _match_to_contestant(name, contestant_names):
         if any(name_lower == p for p in parts):
             return cn
     return None
-
-
-# ── Validation ─────────────────────────────────────────────────────
-
-
-def validate_extraction(meta, clues, R):
-    print("\n── Extraction Quality ───────────────────────────────")
-    j = [c for c in clues if c["round"] == "Jeopardy"]
-    dj = [c for c in clues if c["round"] == "Double Jeopardy"]
-    R.check("Clues: J round 15-30", 15 <= len(j) <= 30, f"{len(j)}")
-    R.check("Clues: DJ round 15-30", 15 <= len(dj) <= 30, f"{len(dj)}")
-    dd = sum(1 for c in clues if c["is_daily_double"])
-    R.check("Clues: 1-3 Daily Doubles", 1 <= dd <= 3, f"{dd}")
-    dd_wagers = sum(1 for c in clues if c["is_daily_double"] and c.get("daily_double_wager") and c.get("wagerer_name"))
-    R.check("Clues: All DDs have wagers", dd == dd_wagers, f"{dd_wagers}/{dd}")
-    jcats = {c["category"].lower().strip() for c in j}
-    djcats = {c["category"].lower().strip() for c in dj}
-    R.check("Clues: J has 5-6 categories", 5 <= len(jcats) <= 6, f"{len(jcats)}: {sorted(jcats)}")
-    R.check("Clues: DJ has 5-6 categories", 5 <= len(djcats) <= 6, f"{len(djcats)}: {sorted(djcats)}")
-    cnames = {c.name.lower().strip() for c in meta.contestants}
-    unk = set()
-    for c in clues:
-        for a in c["attempts"]:
-            if a["speaker"].lower().strip() not in cnames:
-                unk.add(a["speaker"])
-    R.check("FK: all buzzers known", len(unk) == 0, f"unknown: {unk}" if unk else "all mapped")
-    fj_unk = [
-        w.contestant for w in meta.final_jeopardy.wagers_and_responses if w.contestant.lower().strip() not in cnames
-    ]
-    R.check("FK: FJ wagerers known", len(fj_unk) == 0, f"unknown: {fj_unk}" if fj_unk else "all mapped")
-    empty_txt = sum(1 for c in clues if not c["clue_text"].strip())
-    R.check("Quality: no empty clue texts", empty_txt == 0, f"{empty_txt} empty")
-    inverted = sum(1 for c in clues if c["host_finish_ms"] < c["host_start_ms"])
-    R.check("Quality: no inverted timestamps", inverted == 0, f"{inverted} inverted")
-    atts = sum(len(c["attempts"]) for c in clues)
-    R.check("Quality: buzz attempts extracted", atts > 0, f"{atts} total")
-    invalid_buzz_ts = sum(
-        1
-        for c in clues
-        for a in c.get("attempts", [])
-        if a.get("buzz_timestamp_ms", 0) < c.get("host_finish_ms", 0) - 250
-    )
-    R.check("Quality: buzz timestamps valid", invalid_buzz_ts == 0, f"{invalid_buzz_ts} early buzzes")
-
-    fj = meta.final_jeopardy
-    R.check("FJ: category extracted", bool(fj.category.strip()), fj.category)
-    R.check("FJ: clue text extracted", bool(fj.clue_text.strip()), f"{len(fj.clue_text)} chars")
-    R.check("FJ: 1-3 wagers", 1 <= len(fj.wagers_and_responses) <= 3, f"{len(fj.wagers_and_responses)} wagers")
-
-
-def validate_state_machine(meta, clues, R):
-    print("\n── State Machine ────────────────────────────────────")
-    scores = {}
-    for c in clues:
-        if c["round"] == "Jeopardy":
-            val = c["board_row"] * 200
-        elif c["round"] == "Double Jeopardy":
-            val = c["board_row"] * 400
-        else:
-            val = 0
-        if c["is_daily_double"] and c["daily_double_wager"] and c["wagerer_name"]:
-            w = c["wagerer_name"]
-            scores.setdefault(w, 0)
-            if c["daily_double_wager"] == "True Daily Double":
-                mx = 1000 if c["round"] == "Jeopardy" else 2000
-                wamt = max(scores[w], mx)
-            else:
-                try:
-                    wamt = int(c["daily_double_wager"])
-                except (ValueError, TypeError):
-                    wamt = val
-            if c["attempts"] and c["attempts"][0]["is_correct"]:
-                scores[w] += wamt
-            elif c["attempts"]:
-                scores[w] -= wamt
-        else:
-            for a in c["attempts"]:
-                p = a["speaker"]
-                scores.setdefault(p, 0)
-                if a["is_correct"]:
-                    scores[p] += val
-                    break
-                else:
-                    scores[p] -= val
-    for w in meta.final_jeopardy.wagers_and_responses:
-        p = w.contestant
-        scores.setdefault(p, 0)
-        if w.is_correct:
-            scores[p] += w.wager
-        else:
-            scores[p] -= w.wager
-
-    for name, score in scores.items():
-        R.check(f"Score: {name}", -10000 <= score <= 50000, f"${score:,}")
-    R.check("Scores: at least one positive", any(s > 0 for s in scores.values()))
-    return scores
-
-
-# ── Episode JSON Validation ────────────────────────────────────────
-
-
-def validate_episode_json(path, R):
-    """Validate a pre-extracted episode JSON file without API calls."""
-    print(f"\n── Validating Episode JSON: {os.path.basename(path)} ──")
-    with open(path) as f:
-        data = json.load(f)
-    R.check("JSON: has contestants", len(data.get("contestants", [])) > 0, f"{len(data.get('contestants', []))}")
-    R.check("JSON: has clues", len(data.get("clues", [])) > 0, f"{len(data.get('clues', []))}")
-    R.check("JSON: has host", bool(data.get("host_name")), data.get("host_name", ""))
-    R.check(
-        "JSON: has FJ",
-        bool(data.get("final_jeopardy", {}).get("category")),
-        data.get("final_jeopardy", {}).get("category", ""),
-    )
-    clues = data.get("clues", [])
-    j = [c for c in clues if c.get("round") == "Jeopardy"]
-    dj = [c for c in clues if c.get("round") == "Double Jeopardy"]
-    R.check("JSON: J clues 15-30", 15 <= len(j) <= 30, f"{len(j)}")
-    R.check("JSON: DJ clues 15-30", 15 <= len(dj) <= 30, f"{len(dj)}")
-    dd = sum(1 for c in clues if c.get("is_daily_double"))
-    R.check("JSON: 1-3 DDs", 1 <= dd <= 3, f"{dd}")
-    cnames = {c["name"].lower().strip() for c in data.get("contestants", [])}
-    unk = set()
-    for c in clues:
-        for a in c.get("attempts", []):
-            if a.get("speaker", "").lower().strip() not in cnames:
-                unk.add(a.get("speaker", "?"))
-    R.check("JSON FK: buzzers known", len(unk) == 0, f"unknown: {unk}" if unk else "all mapped")
-    return data
-
-
-# ── Main ───────────────────────────────────────────────────────────
-
-
-def main():
-    ap = argparse.ArgumentParser(description="Standalone Trebek LLM Pipeline Validator")
-    ap.add_argument("--dir", help="Directory containing GPU outputs (auto-detect files)")
-    ap.add_argument("--transcript", help="Path to gpu_output_*.json.gz")
-    ap.add_argument("--audio", help="Path to *_interview_slice.mp3")
-    ap.add_argument("--episode-json", help="Validate existing episode JSON only (no API)")
-    ap.add_argument("--skip-pass1", action="store_true", help="Skip Pass 1 speaker anchoring")
-    ap.add_argument("--save", help="Save extracted episode to this JSON path")
-    args = ap.parse_args()
-
-    R = Results()
-    print("=" * 60)
-    print("  Trebek LLM Pipeline Standalone Validator")
-    print("=" * 60)
-
-    # Auto-detect files
-    if args.dir:
-        if not os.path.isdir(args.dir):
-            print(f"  ❌ Directory not found: {args.dir}")
-            sys.exit(1)
-
-        # List actual files for debugging
-        all_files = os.listdir(args.dir)
-        print(f"  📁 Directory '{args.dir}' contains {len(all_files)} files:")
-        for f in sorted(all_files):
-            print(f"     {f}")
-
-        # Auto-detect transcript (.json.gz or .json with 'gpu_output' prefix)
-        gzs = glob.glob(os.path.join(args.dir, "gpu_output_*.json.gz"))
-        if not gzs:
-            gzs = glob.glob(os.path.join(args.dir, "*.json.gz"))
-        if not gzs:
-            # Fall back to any large JSON that looks like a transcript
-            gzs = [os.path.join(args.dir, f) for f in all_files if f.endswith(".json.gz")]
-
-        # Auto-detect audio slice
-        mp3s = glob.glob(os.path.join(args.dir, "*_interview_slice.mp3"))
-        if not mp3s:
-            mp3s = [os.path.join(args.dir, f) for f in all_files if f.endswith(".mp3")]
-
-        # Auto-detect episode JSON
-        epjs = glob.glob(os.path.join(args.dir, "episode_*.json"))
-        if not epjs:
-            epjs = [os.path.join(args.dir, f) for f in all_files if f.endswith(".json") and not f.endswith(".json.gz")]
-
-        if gzs and not args.transcript:
-            args.transcript = gzs[0]
-        if mp3s and not args.audio:
-            args.audio = mp3s[0]
-        if epjs and not args.episode_json and not args.transcript:
-            args.episode_json = epjs[0]
-        print("\n  Auto-detected:")
-        print(f"    transcript = {args.transcript}")
-        print(f"    audio      = {args.audio}")
-        print(f"    episode    = {args.episode_json}")
-
-    # Mode 1: Validate existing episode JSON only
-    if args.episode_json and not args.transcript:
-        validate_episode_json(args.episode_json, R)
-        fail = R.summary()
-        sys.exit(1 if fail else 0)
-
-    if not args.transcript:
-        print("❌ No --transcript or --dir provided")
-        sys.exit(1)
-
-    # Load GPU output
-    print(f"\n  Loading: {args.transcript}")
-    if args.transcript.endswith(".gz"):
-        with gzip.open(args.transcript, "rt") as f:
-            gpu = json.load(f)
-    else:
-        with open(args.transcript) as f:
-            gpu = json.load(f)
-    R.check("GPU: file loaded", True, f"{os.path.getsize(args.transcript):,} bytes")
-    segs = validate_gpu(gpu, R)
-    if not segs:
-        print("\n❌ No segments")
-        R.summary()
-        sys.exit(1)
-
-    # Run LLM pipeline
-    async def _run():
-        client = get_client()
-        mapping = {}
-        if not args.skip_pass1 and args.audio and os.path.exists(args.audio):
-            mapping = await run_pass1(client, args.audio, R)
-        elif args.skip_pass1:
-            R.warn("Pass1 skipped by flag")
-        else:
-            R.warn("Pass1 skipped — no audio slice found")
-        meta, clues = await run_pass2(client, segs, mapping, R)
-        return meta, clues
-
-    meta, clues = asyncio.run(_run())
-    validate_extraction(meta, clues, R)
-    scores = validate_state_machine(meta, clues, R)
-
-    # Save output
-    if args.save:
-        out = {"meta": meta.model_dump(), "clues": clues, "scores": scores}
-        with open(args.save, "w") as f:
-            json.dump(out, f, indent=2)
-        print(f"\n  💾 Saved to {args.save}")
-
-    fail = R.summary()
-    sys.exit(1 if fail else 0)
-
-
-if __name__ == "__main__":
-    main()

@@ -43,8 +43,12 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
         warnings.append(f"Double Jeopardy round has {len(dj_clues)} clues (max 30)")
     if len(j_clues) == 0:
         warnings.append("No Jeopardy round clues extracted")
+    elif len(j_clues) < 15:
+        warnings.append(f"Jeopardy round severely under-extracted: {len(j_clues)} clues (expected 25-30)")
     if len(dj_clues) == 0:
         warnings.append("No Double Jeopardy round clues extracted")
+    elif len(dj_clues) < 15:
+        warnings.append(f"Double Jeopardy round severely under-extracted: {len(dj_clues)} clues (expected 25-30)")
 
     # ── Timestamp ordering within rounds ─────────────────────────────
 

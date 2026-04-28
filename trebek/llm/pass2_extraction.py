@@ -188,6 +188,7 @@ async def execute_pass_2_data_extraction(
                 max_retries,
                 model=model,
                 invocation_context=ctx_label,
+                thinking_level="low",  # Clue extraction is mechanical, not reasoning-heavy
             )
 
     chunk_tasks = [extract_chunk(idx, chunk) for idx, chunk in enumerate(chunks)]
@@ -213,11 +214,75 @@ async def execute_pass_2_data_extraction(
             chunk=idx + 1,
             clues_extracted=len(chunk_data.clues),
         )
-        chunk_results.append(result)
+        chunk_results.append((result, idx))
+
+    # ── Auto-retry under-extracted chunks ──────────────────────────
+    # If a chunk has substantial transcript content (>100 lines) but
+    # yielded suspiciously few clues (<5), retry it once. This catches
+    # LLM non-determinism where the model prematurely stops generating.
+    UNDER_EXTRACTION_THRESHOLD = 5
+    MIN_CHUNK_LINES_FOR_RETRY = 100
+    retried_chunks = 0
+
+    final_chunk_results = []
+    for result_tuple, original_idx in chunk_results:
+        chunk_data, chunk_usage, chunk_att = result_tuple
+        chunk_text = chunks[original_idx]
+        chunk_line_count = len(chunk_text.split("\n"))
+
+        if len(chunk_data.clues) < UNDER_EXTRACTION_THRESHOLD and chunk_line_count > MIN_CHUNK_LINES_FOR_RETRY:
+            retried_chunks += 1
+            logger.warning(
+                "Chunk under-extracted, retrying",
+                chunk=original_idx + 1,
+                clues_found=len(chunk_data.clues),
+                chunk_lines=chunk_line_count,
+                threshold=UNDER_EXTRACTION_THRESHOLD,
+            )
+            try:
+                retry_result = await extract_chunk(original_idx, chunk_text)
+                retry_data, retry_usage, retry_att = retry_result
+                logger.info(
+                    "Chunk retry result",
+                    chunk=original_idx + 1,
+                    original_clues=len(chunk_data.clues),
+                    retry_clues=len(retry_data.clues),
+                )
+                # Use whichever extraction yielded more clues
+                if len(retry_data.clues) > len(chunk_data.clues):
+                    final_chunk_results.append(retry_result)
+                    logger.info(
+                        "Using retry result (more clues)",
+                        chunk=original_idx + 1,
+                        clues=len(retry_data.clues),
+                    )
+                else:
+                    final_chunk_results.append(result_tuple)
+                    logger.info(
+                        "Keeping original result (retry did not improve)",
+                        chunk=original_idx + 1,
+                        clues=len(chunk_data.clues),
+                    )
+            except Exception as retry_err:
+                logger.warning(
+                    "Chunk retry failed, keeping original",
+                    chunk=original_idx + 1,
+                    error=str(retry_err)[:200],
+                )
+                final_chunk_results.append(result_tuple)
+        else:
+            final_chunk_results.append(result_tuple)
+
+    if retried_chunks > 0:
+        logger.info(
+            "Under-extraction retry pass complete",
+            retried_chunks=retried_chunks,
+            total_chunks=len(chunks),
+        )
 
     logger.info(
         "All chunk extractions complete",
-        succeeded=len(chunk_results),
+        succeeded=len(final_chunk_results),
         failed=failed_chunks,
         total=len(chunks),
     )
@@ -230,7 +295,7 @@ async def execute_pass_2_data_extraction(
     fj_filtered_count = 0
     nonstandard_line_id_count = 0
 
-    for chunk_data, chunk_usage, chunk_att in chunk_results:
+    for chunk_data, chunk_usage, chunk_att in final_chunk_results:
         for ext_clue in chunk_data.clues:
             # Filter out Final Jeopardy clues — the prompt says skip FJ but
             # the LLM sometimes extracts them anyway. FJ is handled by meta.
@@ -469,6 +534,16 @@ async def execute_pass_2_data_extraction(
 
     # ── Episode Quality Score ────────────────────────────────────────
     quality_score = "PASS" if not integrity_warnings else ("DEGRADED" if len(integrity_warnings) <= 3 else "FAIL")
+
+    # Hard fail: severe under-extraction (standard episode = 60 clues)
+    if len(sorted_clues) < 45:
+        quality_score = "FAIL"
+        logger.error(
+            "Severe under-extraction detected",
+            clue_count=len(sorted_clues),
+            minimum_expected=45,
+        )
+
     logger.info(
         "Episode quality assessment",
         quality=quality_score,
