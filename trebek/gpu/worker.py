@@ -165,8 +165,7 @@ def gpu_worker_task(
                 )
                 diarize_segments = diarize_model(
                     audio_path,
-                    min_speakers=3,
-                    max_speakers=6,
+                    min_speakers=3,  # At least host + 2 contestants
                 )
                 transcript_data = whisperx.assign_word_speakers(diarize_segments, transcript_data)
                 speaker_set = {s.get("speaker", "?") for s in transcript_data.get("segments", [])}
