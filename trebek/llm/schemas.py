@@ -31,10 +31,11 @@ class ClueExtraction(BaseModel):
     host_read_start_line_id: str
     host_read_end_line_id: str
     daily_double_wager: Optional[str] = Field(
-        description="The wagered amount as a string (e.g. '2000', 'True Daily Double'), or null if not a Daily Double."
+        default=None,
+        description="The wagered amount as a string (e.g. '2000', 'True Daily Double'), or null if not a Daily Double.",
     )
     wagerer_name: Optional[str] = Field(
-        description="Name of the contestant who found the Daily Double, or null if not a Daily Double."
+        default=None, description="Name of the contestant who found the Daily Double, or null if not a Daily Double."
     )
     correct_response: str
     attempts: list[BuzzAttemptExtraction] = Field(

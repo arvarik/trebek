@@ -9,7 +9,7 @@ _ROUND_MARKERS = [
 ]
 
 
-def _chunk_by_semantic_boundaries(transcript_lines: list[str], max_chunk_lines: int = 400) -> list[str]:
+def _chunk_by_semantic_boundaries(transcript_lines: list[str], max_chunk_lines: int = 2000) -> list[str]:
     raw_chunks: list[list[str]] = []
     current_chunk: list[str] = []
 

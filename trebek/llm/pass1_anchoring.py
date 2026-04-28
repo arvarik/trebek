@@ -1,7 +1,7 @@
 import ast
 import json
 import structlog
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from trebek.config import MODEL_FLASH
 from trebek.llm.client import _get_client
@@ -155,9 +155,12 @@ def _extract_from_parsed(parsed: object) -> "Optional[Dict[str, str]]":
     if isinstance(parsed, list):
         # List of dicts: [{"speaker": "SPEAKER_00", "name": "Ken"}, ...]
         mapping: Dict[str, str] = {}
+        is_segments = False
         for item in parsed:
             if not isinstance(item, dict):
                 continue
+            if "text" in item and "speaker" in item:
+                is_segments = True
             # Try common key patterns
             speaker_key = None
             name_key = None
@@ -171,5 +174,178 @@ def _extract_from_parsed(parsed: object) -> "Optional[Dict[str, str]]":
                 mapping[str(item[speaker_key])] = str(item[name_key]).strip()
         if mapping:
             return mapping
+        elif is_segments:
+            logger.warning(
+                "Pass 1: LLM returned diarized segments instead of a mapping. Attempting heuristic inference."
+            )
+            inferred = _infer_speaker_mapping_from_segments(parsed)
+            if inferred:
+                return inferred
 
     return None
+
+
+def _infer_speaker_mapping_from_segments(segments: list[Any]) -> Dict[str, str]:
+    """
+    Infer SPEAKER_XX → Name mapping from a list of diarized transcript segments.
+    Fallback heuristic when the LLM returns the raw JSON segments instead of a mapping.
+    """
+    import re
+
+    # Count segments per speaker
+    speaker_counts: Dict[str, int] = {}
+    speaker_texts: Dict[str, list[str]] = {}
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+        spk = seg.get("speaker", "")
+        if not spk:
+            continue
+        speaker_counts[spk] = speaker_counts.get(spk, 0) + 1
+        speaker_texts.setdefault(spk, []).append(str(seg.get("text", "")))
+
+    if not speaker_counts:
+        return {}
+
+    # Host is the most frequent speaker (reads clues, narrates)
+    host_speaker = max(speaker_counts, key=lambda k: speaker_counts[k])
+
+    known_hosts = ["Ken Jennings", "Ryan Seacrest", "Mayim Bialik", "Alex Trebek", "Buzzy Cohen"]
+
+    # Extract contestant names mentioned by the host
+    host_text = " ".join(speaker_texts.get(host_speaker, []))
+    name_pattern = re.findall(r"\b([A-Z][a-z]{2,})\b", host_text)
+
+    common_words = {
+        "The",
+        "And",
+        "But",
+        "For",
+        "Not",
+        "You",
+        "Your",
+        "Yes",
+        "That",
+        "This",
+        "What",
+        "Who",
+        "Where",
+        "When",
+        "How",
+        "Which",
+        "Here",
+        "There",
+        "Back",
+        "Right",
+        "Correct",
+        "Answer",
+        "Daily",
+        "Double",
+        "Jeopardy",
+        "Final",
+        "Category",
+        "Categories",
+        "Clue",
+        "Score",
+        "Place",
+        "First",
+        "Second",
+        "Third",
+        "Let",
+        "Take",
+        "Look",
+        "Start",
+        "Pick",
+        "Select",
+        "Got",
+        "Put",
+        "Going",
+        "Come",
+        "Most",
+        "Last",
+        "Next",
+        "Okay",
+        "Well",
+        "Now",
+        "Get",
+        "See",
+        "Say",
+        "Try",
+        "Make",
+        "Give",
+        "Just",
+        "Also",
+        "Still",
+        "Much",
+        "Many",
+        "Some",
+        "More",
+        "Very",
+        "Than",
+        "Only",
+        "Good",
+        "Great",
+        "Nice",
+        "Excellent",
+        "Exactly",
+        "Time",
+        "Round",
+        "Board",
+        "Please",
+        "Today",
+        "Thanks",
+        "Thank",
+        "These",
+        "Those",
+        "They",
+        "Their",
+        "Them",
+        "Because",
+        "Would",
+        "Could",
+        "Should",
+        "Been",
+        "Have",
+        "Has",
+        "Had",
+        "Does",
+        "Did",
+    }
+    name_freq: Dict[str, int] = {}
+    for name in name_pattern:
+        if name not in common_words and len(name) > 2:
+            name_freq[name] = name_freq.get(name, 0) + 1
+
+    # Top 3 most-mentioned names are likely contestants
+    contestant_names = sorted(name_freq, key=lambda k: name_freq[k], reverse=True)[:3]
+
+    mapping: Dict[str, str] = {}
+
+    host_name = "Host"
+    for known in known_hosts:
+        if known.split()[0] in host_text or known.split()[-1] in host_text:
+            host_name = known
+            break
+    mapping[host_speaker] = host_name
+
+    # Match other speakers
+    non_host_speakers = sorted(
+        [s for s in speaker_counts if s != host_speaker],
+        key=lambda s: int(s.replace("SPEAKER_", "")) if s.startswith("SPEAKER_") else 999,
+    )
+
+    used_names: set[str] = set()
+    for spk in non_host_speakers:
+        best_name = None
+        for name in contestant_names:
+            if name not in used_names:
+                best_name = name
+                break
+        if best_name:
+            mapping[spk] = best_name
+            used_names.add(best_name)
+        else:
+            mapping[spk] = f"Contestant ({spk})"
+
+    logger.info("Pass 1: inferred speaker mapping from segments", inferred_mapping=mapping)
+    return mapping
