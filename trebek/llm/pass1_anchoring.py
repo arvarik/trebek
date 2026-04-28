@@ -241,7 +241,7 @@ def _infer_speaker_mapping_from_segments(segments: list[Any]) -> Dict[str, str]:
         "Answer",
         "Daily",
         "Double",
-        "Jeopardy",
+        "J!",
         "Final",
         "Category",
         "Categories",

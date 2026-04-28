@@ -46,12 +46,12 @@ class TestLargeRoundSubChunkOverlap:
     def test_single_large_round_subchunked_with_overlap(self) -> None:
         """A single round exceeding max_chunk_lines should be split with 40-line overlap."""
         # Make a transcript with markers early, then a huge second round
-        lines = [f"L{i} S0: Jeopardy text {i}" for i in range(50)]
-        lines.append("L50 S0: And now, Double Jeopardy!")
+        lines = [f"L{i} S0: J! text {i}" for i in range(50)]
+        lines.append("L50 S0: And now, Double J!")
         lines.extend([f"L{i} S0: DJ text {i}" for i in range(51, 551)])  # 500 lines
 
         chunks = _chunk_by_semantic_boundaries(lines, max_chunk_lines=200)
-        # First chunk = Jeopardy round (51 lines), then DJ sub-chunks
+        # First chunk = J! round (51 lines), then DJ sub-chunks
         assert len(chunks) >= 4  # 51 + 500/200 = at least 4
 
     def test_tiebreaker_marker_splits(self) -> None:

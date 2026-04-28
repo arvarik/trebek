@@ -15,15 +15,15 @@ from trebek.schemas import (
     Clue,
     BuzzAttempt,
     Contestant,
-    FinalJeopardy,
-    FinalJeopardyWager,
+    FinalJep,
+    FinalJepWager,
     ScoreAdjustment,
 )
 from typing import Literal
 
 
 def _make_clue(
-    round: Literal["Jeopardy", "Double Jeopardy", "Final Jeopardy", "Tiebreaker"] = "Jeopardy",
+    round: Literal["J!", "Double J!", "Final J!", "Tiebreaker"] = "J!",
     category: str = "History",
     row: int = 1,
     col: int = 1,
@@ -55,7 +55,7 @@ def _make_clue(
 def _make_episode(
     clues: list[Clue],
     contestants: list[Contestant] | None = None,
-    fj_wagers: list[FinalJeopardyWager] | None = None,
+    fj_wagers: list[FinalJepWager] | None = None,
     score_adjustments: list[ScoreAdjustment] | None = None,
 ) -> Episode:
     if contestants is None:
@@ -84,7 +84,7 @@ def _make_episode(
         ]
     if fj_wagers is None:
         fj_wagers = [
-            FinalJeopardyWager(contestant="Alice", wager=1000, response="What is X?", is_correct=True),
+            FinalJepWager(contestant="Alice", wager=1000, response="What is X?", is_correct=True),
         ]
     return Episode(
         episode_date="2024-01-01",
@@ -92,7 +92,7 @@ def _make_episode(
         is_tournament=False,
         contestants=contestants,
         clues=clues,
-        final_jeopardy=FinalJeopardy(
+        final_jep=FinalJep(
             category="Science",
             clue_text="Final clue",
             wagers_and_responses=fj_wagers,
@@ -157,8 +157,8 @@ class TestDeduplicateClues:
 
     def test_different_rounds_not_deduplicated(self) -> None:
         """Clues in different rounds at similar times are NOT duplicates."""
-        c1 = _make_clue(round="Jeopardy", start_ms=2500, category="History")
-        c2 = _make_clue(round="Double Jeopardy", start_ms=2600, category="History")
+        c1 = _make_clue(round="J!", start_ms=2500, category="History")
+        c2 = _make_clue(round="Double J!", start_ms=2600, category="History")
         result = _deduplicate_clues([c1, c2])
         assert len(result) == 2
 
@@ -179,13 +179,13 @@ class TestValidateExtractionIntegrity:
         j_categories = ["History", "Science", "Math", "Literature", "Geography"]
         dj_categories = ["Art", "Music", "Sports", "Politics", "Technology"]
         clues = []
-        # 25 Jeopardy clues: 5 categories × 5 rows, each category in its own column
+        # 25 J! clues: 5 categories × 5 rows, each category in its own column
         for col_idx, cat in enumerate(j_categories):
             for row in range(1, 6):
                 order = col_idx * 5 + row
                 clues.append(
                     _make_clue(
-                        round="Jeopardy",
+                        round="J!",
                         category=cat,
                         row=row,
                         col=col_idx + 1,
@@ -195,13 +195,13 @@ class TestValidateExtractionIntegrity:
                         correct_response="What is X?",
                     )
                 )
-        # 25 Double Jeopardy clues: 5 categories × 5 rows
+        # 25 Double J! clues: 5 categories × 5 rows
         for col_idx, cat in enumerate(dj_categories):
             for row in range(1, 6):
                 order = 26 + col_idx * 5 + row
                 clues.append(
                     _make_clue(
-                        round="Double Jeopardy",
+                        round="Double J!",
                         category=cat,
                         row=row,
                         col=col_idx + 1,
@@ -219,28 +219,28 @@ class TestValidateExtractionIntegrity:
         warnings = _validate_extraction_integrity(episode)
         assert len(warnings) == 0, f"Unexpected warnings: {warnings}"
 
-    def test_too_many_jeopardy_clues(self) -> None:
+    def test_too_many_jep_clues(self) -> None:
         clues = [
-            _make_clue(round="Jeopardy", row=(i % 5) + 1, col=1, order=i, start_ms=i * 2000, finish_ms=i * 2000 + 1000)
+            _make_clue(round="J!", row=(i % 5) + 1, col=1, order=i, start_ms=i * 2000, finish_ms=i * 2000 + 1000)
             for i in range(35)
         ]
-        clues.append(_make_clue(round="Double Jeopardy", row=1, col=1, order=36, start_ms=80000, finish_ms=81000))
+        clues.append(_make_clue(round="Double J!", row=1, col=1, order=36, start_ms=80000, finish_ms=81000))
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
-        assert any("Jeopardy round has 35 clues" in w for w in warnings)
+        assert any("J! round has 35 clues" in w for w in warnings)
 
-    def test_no_jeopardy_clues_warning(self) -> None:
-        clues = [_make_clue(round="Double Jeopardy", row=1, col=1, order=1, start_ms=1000, finish_ms=2000)]
+    def test_no_jep_clues_warning(self) -> None:
+        clues = [_make_clue(round="Double J!", row=1, col=1, order=1, start_ms=1000, finish_ms=2000)]
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
-        assert any("No Jeopardy round clues" in w for w in warnings)
+        assert any("No J! round clues" in w for w in warnings)
 
     def test_too_many_daily_doubles(self) -> None:
         clues = [
-            _make_clue(round="Jeopardy", row=1, col=1, order=1, dd=True, start_ms=0),
-            _make_clue(round="Jeopardy", row=2, col=1, order=2, dd=True, start_ms=2000),
-            _make_clue(round="Double Jeopardy", row=1, col=1, order=3, dd=True, start_ms=4000),
-            _make_clue(round="Double Jeopardy", row=2, col=1, order=4, dd=True, start_ms=6000),
+            _make_clue(round="J!", row=1, col=1, order=1, dd=True, start_ms=0),
+            _make_clue(round="J!", row=2, col=1, order=2, dd=True, start_ms=2000),
+            _make_clue(round="Double J!", row=1, col=1, order=3, dd=True, start_ms=4000),
+            _make_clue(round="Double J!", row=2, col=1, order=4, dd=True, start_ms=6000),
         ]
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
@@ -248,8 +248,8 @@ class TestValidateExtractionIntegrity:
 
     def test_invalid_board_position(self) -> None:
         clues = [
-            _make_clue(round="Jeopardy", row=0, col=1, order=1, start_ms=0),
-            _make_clue(round="Double Jeopardy", row=1, col=7, order=2, start_ms=2000),
+            _make_clue(round="J!", row=0, col=1, order=1, start_ms=0),
+            _make_clue(round="Double J!", row=1, col=7, order=2, start_ms=2000),
         ]
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
@@ -259,8 +259,8 @@ class TestValidateExtractionIntegrity:
     def test_unknown_buzzer_warning(self) -> None:
         att = _make_attempt(speaker="UnknownPlayer")
         clues = [
-            _make_clue(round="Jeopardy", row=1, col=1, order=1, attempts=[att]),
-            _make_clue(round="Double Jeopardy", row=1, col=1, order=2, start_ms=5000),
+            _make_clue(round="J!", row=1, col=1, order=1, attempts=[att]),
+            _make_clue(round="Double J!", row=1, col=1, order=2, start_ms=5000),
         ]
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
@@ -284,8 +284,8 @@ class TestValidateExtractionIntegrity:
     def test_empty_clue_text_warning(self) -> None:
         """Clues with empty text should be flagged."""
         clues = [
-            _make_clue(round="Jeopardy", text="", start_ms=0),
-            _make_clue(round="Double Jeopardy", text="Valid text", start_ms=5000),
+            _make_clue(round="J!", text="", start_ms=0),
+            _make_clue(round="Double J!", text="Valid text", start_ms=5000),
         ]
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
@@ -294,8 +294,8 @@ class TestValidateExtractionIntegrity:
     def test_empty_correct_response_warning(self) -> None:
         """Clues with empty correct_response should be flagged."""
         clues = [
-            _make_clue(round="Jeopardy", correct_response="", start_ms=0),
-            _make_clue(round="Double Jeopardy", start_ms=5000),
+            _make_clue(round="J!", correct_response="", start_ms=0),
+            _make_clue(round="Double J!", start_ms=5000),
         ]
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
@@ -303,32 +303,32 @@ class TestValidateExtractionIntegrity:
 
     def test_inverted_timestamps_warning(self) -> None:
         """Clues where host_finish < host_start should be flagged."""
-        clue = _make_clue(round="Jeopardy", start_ms=5000.0, finish_ms=3000.0)
-        episode = _make_episode([clue, _make_clue(round="Double Jeopardy", start_ms=10000)])
+        clue = _make_clue(round="J!", start_ms=5000.0, finish_ms=3000.0)
+        episode = _make_episode([clue, _make_clue(round="Double J!", start_ms=10000)])
         warnings = _validate_extraction_integrity(episode)
         assert any("inverted timestamps" in w for w in warnings)
 
     def test_zero_timestamp_mid_game_warning(self) -> None:
         """Mid-game clues with timestamp 0.0 signal Line ID resolution failure."""
-        clue = _make_clue(round="Jeopardy", order=10, start_ms=0.0)
-        episode = _make_episode([clue, _make_clue(round="Double Jeopardy", start_ms=5000)])
+        clue = _make_clue(round="J!", order=10, start_ms=0.0)
+        episode = _make_episode([clue, _make_clue(round="Double J!", start_ms=5000)])
         warnings = _validate_extraction_integrity(episode)
         assert any("host_start_timestamp_ms=0.0" in w for w in warnings)
 
     def test_buzz_before_host_start_warning(self) -> None:
         """Buzz timestamps before host starts reading signal hallucinated Line IDs."""
         att = _make_attempt(speaker="Alice", buzz_ms=100.0)
-        clue = _make_clue(round="Jeopardy", start_ms=5000.0, finish_ms=6000.0, attempts=[att])
-        episode = _make_episode([clue, _make_clue(round="Double Jeopardy", start_ms=10000)])
+        clue = _make_clue(round="J!", start_ms=5000.0, finish_ms=6000.0, attempts=[att])
+        episode = _make_episode([clue, _make_clue(round="Double J!", start_ms=10000)])
         warnings = _validate_extraction_integrity(episode)
         assert any("buzz_timestamp before host_start" in w for w in warnings)
 
     def test_fj_wager_unknown_contestant_warning(self) -> None:
         """FJ wager referencing an unknown contestant should be flagged."""
         fj_wagers = [
-            FinalJeopardyWager(contestant="UnknownPerson", wager=5000, response="What?", is_correct=True),
+            FinalJepWager(contestant="UnknownPerson", wager=5000, response="What?", is_correct=True),
         ]
-        clues = [_make_clue(round="Jeopardy"), _make_clue(round="Double Jeopardy", start_ms=5000)]
+        clues = [_make_clue(round="J!"), _make_clue(round="Double J!", start_ms=5000)]
         episode = _make_episode(clues, fj_wagers=fj_wagers)
         warnings = _validate_extraction_integrity(episode)
         assert any("FJ wager references unknown contestant" in w for w in warnings)
@@ -340,15 +340,15 @@ class TestValidateExtractionIntegrity:
                 contestant="Ghost", points_adjusted=200, reason="test", effective_after_clue_selection_order=1
             )
         ]
-        clues = [_make_clue(round="Jeopardy"), _make_clue(round="Double Jeopardy", start_ms=5000)]
+        clues = [_make_clue(round="J!"), _make_clue(round="Double J!", start_ms=5000)]
         episode = _make_episode(clues, score_adjustments=adj)
         warnings = _validate_extraction_integrity(episode)
         assert any("Score adjustment references unknown contestant" in w for w in warnings)
 
     def test_too_many_categories_warning(self) -> None:
         """More than 6 distinct categories in a round signals extraction failure."""
-        clues = [_make_clue(round="Jeopardy", category=f"Cat{i}", start_ms=i * 2000, order=i) for i in range(8)]
-        clues.append(_make_clue(round="Double Jeopardy", start_ms=50000))
+        clues = [_make_clue(round="J!", category=f"Cat{i}", start_ms=i * 2000, order=i) for i in range(8)]
+        clues.append(_make_clue(round="Double J!", start_ms=50000))
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
         assert any("distinct categories" in w for w in warnings)
@@ -356,9 +356,9 @@ class TestValidateExtractionIntegrity:
     def test_duplicate_board_position_warning(self) -> None:
         """Two clues in the same category+round with the same board_row should be flagged."""
         clues = [
-            _make_clue(round="Jeopardy", category="History", row=1, col=1, order=1, start_ms=0),
-            _make_clue(round="Jeopardy", category="History", row=1, col=1, order=2, start_ms=2000),
-            _make_clue(round="Double Jeopardy", row=1, col=1, order=3, start_ms=10000),
+            _make_clue(round="J!", category="History", row=1, col=1, order=1, start_ms=0),
+            _make_clue(round="J!", category="History", row=1, col=1, order=2, start_ms=2000),
+            _make_clue(round="Double J!", row=1, col=1, order=3, start_ms=10000),
         ]
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
@@ -369,8 +369,8 @@ class TestValidateExtractionIntegrity:
         att1 = _make_attempt(speaker="Alice", correct=False, buzz_ms=1500.0)
         att2 = _make_attempt(speaker="Bob", correct=True, buzz_ms=2000.0)
         clues = [
-            _make_clue(round="Jeopardy", row=1, col=1, order=1, dd=True, attempts=[att1, att2]),
-            _make_clue(round="Double Jeopardy", row=1, col=1, order=2, start_ms=5000),
+            _make_clue(round="J!", row=1, col=1, order=1, dd=True, attempts=[att1, att2]),
+            _make_clue(round="Double J!", row=1, col=1, order=2, start_ms=5000),
         ]
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
@@ -379,8 +379,8 @@ class TestValidateExtractionIntegrity:
     def test_daily_double_zero_wager_warning(self) -> None:
         """Daily Double wager of $0 or less should be flagged."""
         clues = [
-            _make_clue(round="Jeopardy", row=1, col=1, order=1, dd=True, start_ms=0),
-            _make_clue(round="Double Jeopardy", row=1, col=1, order=2, start_ms=5000),
+            _make_clue(round="J!", row=1, col=1, order=1, dd=True, start_ms=0),
+            _make_clue(round="Double J!", row=1, col=1, order=2, start_ms=5000),
         ]
         # Manually set wager to 0
         clues[0].daily_double_wager = 0
@@ -391,8 +391,8 @@ class TestValidateExtractionIntegrity:
     def test_daily_double_absurd_wager_warning(self) -> None:
         """Daily Double wager > $50,000 should be flagged as suspicious."""
         clues = [
-            _make_clue(round="Jeopardy", row=1, col=1, order=1, dd=True, start_ms=0),
-            _make_clue(round="Double Jeopardy", row=1, col=1, order=2, start_ms=5000),
+            _make_clue(round="J!", row=1, col=1, order=1, dd=True, start_ms=0),
+            _make_clue(round="Double J!", row=1, col=1, order=2, start_ms=5000),
         ]
         clues[0].daily_double_wager = 100000
         episode = _make_episode(clues)
@@ -401,18 +401,18 @@ class TestValidateExtractionIntegrity:
 
     def test_long_read_duration_warning(self) -> None:
         """Clue with host read duration > 60s should be flagged."""
-        clue = _make_clue(round="Jeopardy", start_ms=0.0, finish_ms=70000.0)
-        episode = _make_episode([clue, _make_clue(round="Double Jeopardy", start_ms=80000)])
+        clue = _make_clue(round="J!", start_ms=0.0, finish_ms=70000.0)
+        episode = _make_episode([clue, _make_clue(round="Double J!", start_ms=80000)])
         warnings = _validate_extraction_integrity(episode)
         assert any("read duration > 60s" in w for w in warnings)
 
     def test_category_undercounting_warning(self) -> None:
         """Many clues across too few categories should be flagged."""
         clues = [
-            _make_clue(round="Jeopardy", category="OnlyCat", row=(i % 5) + 1, col=1, order=i, start_ms=i * 2000)
+            _make_clue(round="J!", category="OnlyCat", row=(i % 5) + 1, col=1, order=i, start_ms=i * 2000)
             for i in range(20)
         ]
-        clues.append(_make_clue(round="Double Jeopardy", start_ms=50000))
+        clues.append(_make_clue(round="Double J!", start_ms=50000))
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
         assert any("category merge" in w for w in warnings)

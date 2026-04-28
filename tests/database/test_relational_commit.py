@@ -6,14 +6,14 @@ from trebek.schemas import (
     Clue,
     BuzzAttempt,
     Contestant,
-    FinalJeopardy,
-    FinalJeopardyWager,
+    FinalJep,
+    FinalJepWager,
     ScoreAdjustment,
 )
 from trebek.state_machine import TrebekStateMachine
 
 
-def _make_clue(round="Jeopardy", row=1, col=1, order=1, dd=False, text="C", is_correct=True, attempts=None):
+def _make_clue(round="J!", row=1, col=1, order=1, dd=False, text="C", is_correct=True, attempts=None):
     return Clue(
         round=round,
         category="Cat",
@@ -49,9 +49,9 @@ def sample_episode():
     # 30 J, 30 DJ (1 DD in J, 2 DD in DJ) -> 60 clues total
     clues = []
     for i in range(30):
-        clues.append(_make_clue(round="Jeopardy", order=i + 1, dd=(i == 15)))
+        clues.append(_make_clue(round="J!", order=i + 1, dd=(i == 15)))
     for i in range(30):
-        clues.append(_make_clue(round="Double Jeopardy", order=31 + i, dd=(i == 15 or i == 20)))
+        clues.append(_make_clue(round="Double J!", order=31 + i, dd=(i == 15 or i == 20)))
 
     return Episode(
         episode_date="2024-01-01",
@@ -66,12 +66,12 @@ def sample_episode():
             ),
         ],
         clues=clues,
-        final_jeopardy=FinalJeopardy(
+        final_jep=FinalJep(
             category="Sci",
             clue_text="FJ",
             wagers_and_responses=[
-                FinalJeopardyWager(contestant="Alice", wager=1000, response="X", is_correct=True),
-                FinalJeopardyWager(contestant="Bob", wager=2000, response="Y", is_correct=False),
+                FinalJepWager(contestant="Alice", wager=1000, response="X", is_correct=True),
+                FinalJepWager(contestant="Bob", wager=2000, response="Y", is_correct=False),
             ],
         ),
         score_adjustments=[
@@ -94,7 +94,7 @@ async def test_commit_episode_to_relational_tables(memory_db_path: str, sample_e
         state_machine.load_adjustments(sample_episode.score_adjustments)
         for clue in sample_episode.clues:
             state_machine.process_clue(clue)
-        state_machine.process_final_jeopardy(sample_episode.final_jeopardy)
+        state_machine.process_final_jep(sample_episode.final_jep)
 
         # Commit
         await commit_episode_to_relational_tables(writer, "ep_1", sample_episode, state_machine)

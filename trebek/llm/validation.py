@@ -34,25 +34,25 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
 
     # ── Round-level checks ───────────────────────────────────────────
 
-    j_clues = [c for c in episode.clues if c.round == "Jeopardy"]
-    dj_clues = [c for c in episode.clues if c.round == "Double Jeopardy"]
+    j_clues = [c for c in episode.clues if c.round == "J!"]
+    dj_clues = [c for c in episode.clues if c.round == "Double J!"]
 
     if len(j_clues) > 30:
-        warnings.append(f"Jeopardy round has {len(j_clues)} clues (max 30)")
+        warnings.append(f"J! round has {len(j_clues)} clues (max 30)")
     if len(dj_clues) > 30:
-        warnings.append(f"Double Jeopardy round has {len(dj_clues)} clues (max 30)")
+        warnings.append(f"Double J! round has {len(dj_clues)} clues (max 30)")
     if len(j_clues) == 0:
-        warnings.append("No Jeopardy round clues extracted")
+        warnings.append("No J! round clues extracted")
     elif len(j_clues) < 15:
-        warnings.append(f"Jeopardy round severely under-extracted: {len(j_clues)} clues (expected 25-30)")
+        warnings.append(f"J! round severely under-extracted: {len(j_clues)} clues (expected 25-30)")
     if len(dj_clues) == 0:
-        warnings.append("No Double Jeopardy round clues extracted")
+        warnings.append("No Double J! round clues extracted")
     elif len(dj_clues) < 15:
-        warnings.append(f"Double Jeopardy round severely under-extracted: {len(dj_clues)} clues (expected 25-30)")
+        warnings.append(f"Double J! round severely under-extracted: {len(dj_clues)} clues (expected 25-30)")
 
     # ── Timestamp ordering within rounds ─────────────────────────────
 
-    for round_name, round_clues in [("Jeopardy", j_clues), ("Double Jeopardy", dj_clues)]:
+    for round_name, round_clues in [("J!", j_clues), ("Double J!", dj_clues)]:
         sorted_round = sorted(round_clues, key=lambda c: c.host_start_timestamp_ms)
         for i in range(1, len(sorted_round)):
             if sorted_round[i].host_start_timestamp_ms < sorted_round[i - 1].host_finish_timestamp_ms:
@@ -73,9 +73,9 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
     if total_dd > 3:
         warnings.append(f"Found {total_dd} Daily Doubles (expected max 3)")
     if dd_j > 1:
-        warnings.append(f"Found {dd_j} Daily Doubles in Jeopardy round (expected 1)")
+        warnings.append(f"Found {dd_j} Daily Doubles in J! round (expected 1)")
     if dd_dj > 2:
-        warnings.append(f"Found {dd_dj} Daily Doubles in Double Jeopardy (expected 2)")
+        warnings.append(f"Found {dd_dj} Daily Doubles in Double J! (expected 2)")
 
     # ── Daily Double structural constraints ──────────────────────────
 
@@ -110,7 +110,7 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
         warnings.append(f"Unknown contestants in buzz attempts: {unknown_buzzers}")
 
     # Check FJ wager contestant names
-    for wager in episode.final_jeopardy.wagers_and_responses:
+    for wager in episode.final_jep.wagers_and_responses:
         if wager.contestant.lower().strip() not in contestant_names:
             warnings.append(
                 f"FJ wager references unknown contestant: '{wager.contestant}' "
@@ -128,7 +128,7 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
     # ── Board position bounds ────────────────────────────────────────
 
     for clue in episode.clues:
-        if clue.round in ("Jeopardy", "Double Jeopardy"):
+        if clue.round in ("J!", "Double J!"):
             if not (1 <= clue.board_row <= 5):
                 warnings.append(f"Clue '{clue.clue_text[:30]}' has invalid board_row: {clue.board_row}")
             if not (1 <= clue.board_col <= 6):
@@ -138,7 +138,7 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
     # The LLM frequently hallucidates board_row since it can't see the board.
     # Two clues in the same category+round should never share a board_row.
 
-    for round_name, round_clues in [("Jeopardy", j_clues), ("Double Jeopardy", dj_clues)]:
+    for round_name, round_clues in [("J!", j_clues), ("Double J!", dj_clues)]:
         seen_positions: dict[str, set[int]] = {}
         for clue in round_clues:
             cat_key = clue.category.lower().strip()
@@ -203,10 +203,10 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
         )
 
     # ── Category count sanity check ───────────────────────────────────
-    # A standard Jeopardy board has exactly 6 unique categories per round.
+    # A standard J! board has exactly 6 unique categories per round.
     # More than 6 suggests the LLM is generating variant spellings.
     # Fewer than 5 with many clues suggests categories are being collapsed.
-    for round_name, round_clues in [("Jeopardy", j_clues), ("Double Jeopardy", dj_clues)]:
+    for round_name, round_clues in [("J!", j_clues), ("Double J!", dj_clues)]:
         categories = {c.category.lower().strip() for c in round_clues}
         if len(categories) > 6:
             warnings.append(

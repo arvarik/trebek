@@ -8,12 +8,12 @@ unmapped Pass 1 names, and fuzzy matching on wagerers/FJ wagers.
 """
 
 from trebek.llm.speaker_normalization import _normalize_speaker_names, _fuzzy_match_contestant
-from trebek.schemas import Clue, BuzzAttempt, ScoreAdjustment, FinalJeopardyWager
+from trebek.schemas import Clue, BuzzAttempt, ScoreAdjustment, FinalJepWager
 
 
 def _make_clue(speaker: str, **kwargs) -> Clue:  # type: ignore[no-untyped-def]
     return Clue(
-        round="Jeopardy",
+        round="J!",
         category="Test",
         board_row=1,
         board_col=1,
@@ -113,7 +113,7 @@ class TestWagererFuzzyMatch:
     def test_wagerer_fuzzy_matched(self) -> None:
         """A wagerer_name with a typo should be fuzzy-matched."""
         clue = Clue(
-            round="Jeopardy",
+            round="J!",
             category="Test",
             board_row=1,
             board_col=1,
@@ -158,12 +158,12 @@ class TestScoreAdjustmentFuzzyMatch:
         assert adj.contestant == "Rachel Bernstein"
 
 
-class TestFinalJeopardyWagerFuzzyMatch:
+class TestFinalJepWagerFuzzyMatch:
     """Line 166: Fuzzy match FJ wager contestant name."""
 
     def test_fj_wager_fuzzy_matched(self) -> None:
         clues = [_make_clue("Rachel Bernstein")]
-        wager = FinalJeopardyWager(
+        wager = FinalJepWager(
             contestant="Rachael",  # Typo
             wager=5000,
             response="What is X?",
@@ -188,7 +188,7 @@ class TestHardCleanupCaseExactMatch:
     def test_exact_canonical_survives_hard_cleanup(self) -> None:
         """When the attempt speaker IS already a canonical name, it survives."""
         clue = Clue(
-            round="Jeopardy",
+            round="J!",
             category="Test",
             board_row=1,
             board_col=1,

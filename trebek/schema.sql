@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS episode_performances (
 CREATE TABLE IF NOT EXISTS clues (
     clue_id TEXT PRIMARY KEY,
     episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
-    round TEXT NOT NULL CHECK(round IN ('Jeopardy', 'Double Jeopardy', 'Final Jeopardy', 'Tiebreaker')),
+    round TEXT NOT NULL CHECK(round IN ('J!', 'Double J!', 'Final J!', 'Tiebreaker')),
     category TEXT NOT NULL,
     board_row INTEGER,
     board_col INTEGER,

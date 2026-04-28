@@ -7,8 +7,11 @@ from trebek.state_machine import TrebekStateMachine
 from trebek.schemas import Clue, BuzzAttempt
 
 
+from typing import Literal
+
+
 def _make_clue(
-    round: str = "Jeopardy",
+    round: Literal["J!", "Double J!", "Final J!", "Tiebreaker"] = "J!",
     row: int = 1,
     col: int = 1,
     selection_order: int = 1,
@@ -37,15 +40,15 @@ def _make_clue(
 
 
 class TestUnknownRoundType:
-    """Line 51: clue.round not Jeopardy or Double Jeopardy → clue_value = 0."""
+    """Line 51: clue.round not J! or Double J! → clue_value = 0."""
 
-    def test_final_jeopardy_clue_value_zero(self) -> None:
+    def test_final_jep_clue_value_zero(self) -> None:
         sm = TrebekStateMachine(
             initial_scores={"Alice": 0, "Bob": 0, "Carol": 0},
             valid_contestants={"Alice", "Bob", "Carol"},
         )
         clue = _make_clue(
-            round="Final Jeopardy",
+            round="Final J!",
             attempts=[
                 BuzzAttempt(
                     attempt_order=1,
@@ -93,7 +96,7 @@ class TestDailyDoubleWithoutWager:
             valid_contestants={"Alice", "Bob", "Carol"},
         )
         clue = _make_clue(
-            round="Jeopardy",
+            round="J!",
             row=3,
             is_dd=True,
             dd_wager=None,
@@ -120,7 +123,7 @@ class TestDailyDoubleWithoutWager:
             valid_contestants={"Alice", "Bob", "Carol"},
         )
         clue = _make_clue(
-            round="Jeopardy",
+            round="J!",
             row=2,
             is_dd=True,
             dd_wager=500,

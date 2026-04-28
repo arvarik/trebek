@@ -1,6 +1,6 @@
 from typing import Optional, Literal
 from pydantic import BaseModel, Field
-from trebek.schemas import Contestant, FinalJeopardy, ScoreAdjustment
+from trebek.schemas import Contestant, FinalJep, ScoreAdjustment
 
 
 class PartialEpisodeMeta(BaseModel):
@@ -8,7 +8,7 @@ class PartialEpisodeMeta(BaseModel):
     host_name: str
     is_tournament: bool
     contestants: list[Contestant]
-    final_jeopardy: FinalJeopardy
+    final_jep: FinalJep
     score_adjustments: list[ScoreAdjustment]
 
 
@@ -22,7 +22,7 @@ class BuzzAttemptExtraction(BaseModel):
 
 
 class ClueExtraction(BaseModel):
-    round: Literal["Jeopardy", "Double Jeopardy", "Final Jeopardy", "Tiebreaker"]
+    round: Literal["J!", "Double J!", "Final J!", "Tiebreaker"]
     category: str
     board_row: int
     board_col: int
@@ -49,7 +49,7 @@ class PartialClues(BaseModel):
 
 class EpisodeSkeleton(BaseModel):
     jeopardy_categories: list[str]
-    double_jeopardy_categories: list[str]
-    total_jeopardy_clues_played: int
-    total_double_jeopardy_clues_played: int
+    double_jep_categories: list[str]
+    total_jep_clues_played: int
+    total_double_jep_clues_played: int
     daily_double_count: int

@@ -71,11 +71,11 @@ class TestTryCloseTruncatedJson:
         """Simulate a realistic PartialClues truncation mid-clue."""
         truncated = (
             '{"clues": ['
-            '{"round": "Jeopardy", "category": "History", "board_row": 1, "board_col": 1, '
+            '{"round": "J!", "category": "History", "board_row": 1, "board_col": 1, '
             '"is_daily_double": false, "requires_visual_context": false, '
             '"host_read_start_line_id": "L5", "host_read_end_line_id": "L8", '
             '"correct_response": "What is Rome?", "attempts": []}, '
-            '{"round": "Jeopardy", "category": "Science", "board_row": 2, "board_col": 1, '
+            '{"round": "J!", "category": "Science", "board_row": 2, "board_col": 1, '
             '"is_daily_double": false, "requires_visual_context": false, '
             '"host_read_start_line_id": "L15", "host_read_end_line_id": "L18", '
             '"correct_response": "What is'

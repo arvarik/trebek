@@ -1,12 +1,12 @@
 """Tests for speaker name normalization — the most complex pure function in the codebase."""
 
 from trebek.llm.speaker_normalization import _normalize_speaker_names
-from trebek.schemas import Clue, BuzzAttempt, ScoreAdjustment, FinalJeopardyWager
+from trebek.schemas import Clue, BuzzAttempt, ScoreAdjustment, FinalJepWager
 
 
 def _make_clue_with_speaker(speaker: str, **kwargs) -> Clue:  # type: ignore[no-untyped-def]
     return Clue(
-        round="Jeopardy",
+        round="J!",
         category="Test",
         board_row=1,
         board_col=1,
@@ -95,7 +95,7 @@ class TestNormalizeSpeakerNames:
     def test_daily_double_wagerer_normalized(self) -> None:
         """wagerer_name on Daily Doubles should also be normalized."""
         clue = Clue(
-            round="Jeopardy",
+            round="J!",
             category="Test",
             board_row=1,
             board_col=1,
@@ -142,9 +142,9 @@ class TestNormalizeSpeakerNames:
         assert adj.contestant == "Lawrence Subba"
 
     def test_fj_wager_normalized(self) -> None:
-        """Final Jeopardy wager contestant names are also normalized."""
+        """Final J! wager contestant names are also normalized."""
         clues = [_make_clue_with_speaker("Rachel")]
-        wager = FinalJeopardyWager(
+        wager = FinalJepWager(
             contestant="Matt",
             wager=5000,
             response="What is X?",
@@ -235,7 +235,7 @@ class TestNormalizeSpeakerNames:
     def test_hard_cleanup_preserves_valid_speakers(self) -> None:
         """Valid speakers should never be dropped by the hard cleanup."""
         clue = Clue(
-            round="Jeopardy",
+            round="J!",
             category="Test",
             board_row=1,
             board_col=1,

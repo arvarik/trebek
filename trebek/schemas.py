@@ -23,7 +23,7 @@ class BuzzAttempt(BaseModel):
 
 
 class Clue(BaseModel):
-    round: Literal["Jeopardy", "Double Jeopardy", "Final Jeopardy", "Tiebreaker"]
+    round: Literal["J!", "Double J!", "Final J!", "Tiebreaker"]
     category: str
     board_row: int = Field(description="1 to 5 (e.g., $200 to $1000)")
     board_col: int = Field(description="1 to 6")
@@ -60,17 +60,17 @@ class ScoreAdjustment(BaseModel):
     )
 
 
-class FinalJeopardyWager(BaseModel):
+class FinalJepWager(BaseModel):
     contestant: str
     wager: int
     response: str
     is_correct: bool
 
 
-class FinalJeopardy(BaseModel):
+class FinalJep(BaseModel):
     category: str
     clue_text: str
-    wagers_and_responses: List[FinalJeopardyWager]
+    wagers_and_responses: List[FinalJepWager]
 
 
 class Contestant(BaseModel):
@@ -87,7 +87,7 @@ class Episode(BaseModel):
     is_tournament: bool = Field(description="True if this is a tournament episode.")
     contestants: List[Contestant]
     clues: List[Clue]
-    final_jeopardy: FinalJeopardy
+    final_jep: FinalJep
     score_adjustments: List[ScoreAdjustment]
 
 

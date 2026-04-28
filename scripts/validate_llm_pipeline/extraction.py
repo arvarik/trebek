@@ -55,12 +55,12 @@ def validate_gpu(gpu_data, R):
     if has_speakers and len(real_speakers) > 8:
         R.warn(
             "GPU: possible over-segmentation",
-            f"{len(real_speakers)} distinct speakers detected (expected 3-5 for standard Jeopardy)",
+            f"{len(real_speakers)} distinct speakers detected (expected 3-5 for standard J!)",
         )
     last = max((s.get("end", 0) or 0) for s in segs)
     R.check("GPU: duration 15-35 min", 15 <= last / 60 <= 35, f"{last / 60:.1f}m")
     txt = " ".join(s.get("text", "") for s in segs).lower()
-    R.check("GPU: Jeopardy markers found", any(m in txt for m in ["jeopardy", "daily double", "what is"]))
+    R.check("GPU: J! markers found", any(m in txt for m in ["j!", "daily double", "what is"]))
     # Monotonicity
     bad = sum(
         1 for i in range(1, len(segs)) if (segs[i].get("start", 0) or 0) < (segs[i - 1].get("start", 0) or 0) - 0.5
@@ -118,7 +118,7 @@ async def call_gemini(client, model, prompt, system, schema_cls=None, max_tokens
 async def run_pass1(client, audio_path, R):
     print("\n── Pass 1: Speaker Anchoring ─────────────────────────")
     sys_p = (
-        "You are a strict data extractor. Analyze the audio of the Jeopardy host interview segment. "
+        "You are a strict data extractor. Analyze the audio of the J! host interview segment. "
         "Identify the host and each contestant by their distinct voice. "
         "Return ONLY a JSON object mapping diarization speaker IDs to full names. "
         'Example: {"SPEAKER_00": "Ken Jennings", "SPEAKER_01": "Jane Doe", "SPEAKER_02": "John Smith"}. '
@@ -127,7 +127,7 @@ async def run_pass1(client, audio_path, R):
     t0 = time.perf_counter()
     uploaded = await asyncio.to_thread(client.files.upload, file=audio_path)
     prompt = [
-        "Listen to this Jeopardy interview audio. Identify who each SPEAKER_XX is. "
+        "Listen to this J! interview audio. Identify who each SPEAKER_XX is. "
         "Return a JSON dict mapping each SPEAKER_XX ID to their full name.",
         uploaded,
     ]
@@ -188,7 +188,7 @@ def _infer_speaker_mapping_from_segments(segments):
     # Host is the most frequent speaker (reads clues, narrates)
     host_speaker = max(speaker_counts, key=speaker_counts.get)
 
-    # Known Jeopardy hosts
+    # Known J! hosts
     known_hosts = ["Ken Jennings", "Ryan Seacrest", "Mayim Bialik", "Alex Trebek"]
 
     # Extract contestant names mentioned by the host
@@ -222,7 +222,7 @@ def _infer_speaker_mapping_from_segments(segments):
         "Answer",
         "Daily",
         "Double",
-        "Jeopardy",
+        "J!",
         "Final",
         "Category",
         "Categories",
@@ -348,7 +348,7 @@ async def run_pass2(client, segs, speaker_mapping, R):
     comp_map = {abbrev(k): v for k, v in speaker_mapping.items()}
     transcript = fmt_transcript(segs)
     base_sys = (
-        "You are Trebek, an expert Jeopardy data extraction pipeline. "
+        "You are Trebek, an expert J! data extraction pipeline. "
         f"CRITICAL: Map speakers using: {json.dumps(comp_map)}. "
         "Speaker IDs are abbreviated (S0=SPEAKER_00). "
         "Do NOT hallucinate names. Use Line IDs (e.g. L0, L105) for timestamps."
@@ -357,7 +357,7 @@ async def run_pass2(client, segs, speaker_mapping, R):
 
     # Meta extraction
     print("  Extracting episode metadata...")
-    meta_prompt = f"Transcript:\n{transcript}\n\nExtract episode_date, host_name, is_tournament, contestants, final_jeopardy, score_adjustments. Do NOT extract clues."
+    meta_prompt = f"Transcript:\n{transcript}\n\nExtract episode_date, host_name, is_tournament, contestants, final_jep, score_adjustments. Do NOT extract clues."
 
     t0 = time.perf_counter()
     resp, mu = await call_gemini(client, MODEL_PRO, meta_prompt, base_sys, PartialMeta, ctx="Meta")
@@ -367,12 +367,12 @@ async def run_pass2(client, segs, speaker_mapping, R):
     api_calls.append({"name": "Pass 2 Meta", "model": MODEL_PRO, **mu, "ms": meta_ms})
     R.check("Pass2 Meta: contestants", len(meta.contestants) > 0, f"{[c.name for c in meta.contestants]}")
     R.check("Pass2 Meta: host", bool(meta.host_name), meta.host_name)
-    R.check("Pass2 Meta: FJ category", bool(meta.final_jeopardy.category), meta.final_jeopardy.category)
+    R.check("Pass2 Meta: FJ category", bool(meta.final_jep.category), meta.final_jep.category)
     print(f"  📊 Meta: {meta_ms:.0f}ms | in={mu.get('input', 0)} out={mu.get('output', 0)}")
 
     # Chunk + extract clues
     lines = transcript.split("\n")
-    markers = ["double jeopardy", "final jeopardy", "tiebreaker"]
+    markers = ["double j!", "final j!", "tiebreaker"]
     chunks, cur = [], []
     for ln in lines:
         cur.append(ln)
@@ -391,7 +391,7 @@ async def run_pass2(client, segs, speaker_mapping, R):
     for ci, chunk in enumerate(chunks):
         prompt = (
             f"Transcript Chunk ({ci + 1}/{len(chunks)}):\n{chunk}\n\n"
-            "Extract ALL Jeopardy/Double Jeopardy clues. Do NOT extract Final Jeopardy. "
+            "Extract ALL J!/Double J! clues. Do NOT extract Final J!. "
             "Skip clues cut off at chunk boundaries. Use Line IDs for timestamps."
         )
         cdata, cu, att = await extract_with_retry(client, prompt, base_sys, PartialClues, ctx=f"Chunk{ci + 1}")
@@ -408,7 +408,7 @@ async def run_pass2(client, segs, speaker_mapping, R):
     clues_out = []
     dropped = 0
     for ec in all_clues:
-        if ec.round == "Final Jeopardy":
+        if ec.round == "Final J!":
             continue
         sid = ec.host_read_start_line_id.replace("L", "").replace("[", "").replace("]", "").strip()
         eid = ec.host_read_end_line_id.replace("L", "").replace("[", "").replace("]", "").strip()

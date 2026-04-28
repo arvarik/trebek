@@ -13,7 +13,7 @@ async def test_foreign_key_constraints_enforced(memory_db_path: str) -> None:
         with pytest.raises(sqlite3.IntegrityError):
             await writer.execute(
                 "INSERT INTO clues (clue_id, episode_id, round) VALUES (?, ?, ?)",
-                ("clue_1", "non_existent_ep", "Jeopardy"),
+                ("clue_1", "non_existent_ep", "J!"),
             )
     finally:
         await writer.stop()

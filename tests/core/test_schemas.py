@@ -28,7 +28,7 @@ def test_clue_daily_double_wager_types() -> None:
     from typing import Any
 
     clue_data: dict[str, Any] = {
-        "round": "Jeopardy",
+        "round": "J!",
         "category": "Math",
         "board_row": 1,
         "board_col": 1,

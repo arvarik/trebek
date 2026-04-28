@@ -51,11 +51,11 @@ class TestBuildSpeakerAbbreviationMap:
 class TestFormatTranscriptCompressed:
     def test_basic_formatting(self) -> None:
         segments = [
-            {"speaker": "SPEAKER_00", "text": "Welcome to Jeopardy", "start": 0.0, "end": 1.5},
+            {"speaker": "SPEAKER_00", "text": "Welcome to J!", "start": 0.0, "end": 1.5},
             {"speaker": "SPEAKER_01", "text": "Thank you", "start": 1.5, "end": 2.0},
         ]
         result = _format_transcript_compressed(segments)
-        assert result == "L0 S00: Welcome to Jeopardy\nL1 S01: Thank you"
+        assert result == "L0 S00: Welcome to J!\nL1 S01: Thank you"
 
     def test_line_id_indexing(self) -> None:
         """Line IDs should be 0-indexed and sequential."""

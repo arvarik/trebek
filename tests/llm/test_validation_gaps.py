@@ -3,12 +3,15 @@ Tests targeting uncovered validation branches — timestamp overlap warnings,
 DJ Daily Double count, and dedup tie-breaking by text length.
 """
 
-from trebek.schemas import Clue, BuzzAttempt, Episode, Contestant, FinalJeopardy
+from trebek.schemas import Clue, BuzzAttempt, Episode, Contestant, FinalJep
 from trebek.llm.validation import _validate_extraction_integrity, _deduplicate_clues
 
 
+from typing import Literal
+
+
 def _make_clue(
-    round: str = "Jeopardy",
+    round: Literal["J!", "Double J!", "Final J!", "Tiebreaker"] = "J!",
     category: str = "Test",
     row: int = 1,
     col: int = 1,
@@ -65,7 +68,7 @@ def _make_episode(clues: list[Clue]) -> Episode:
             ),
         ],
         clues=clues,
-        final_jeopardy=FinalJeopardy(
+        final_jep=FinalJep(
             category="Final Category",
             clue_text="Final clue",
             wagers_and_responses=[],
@@ -79,10 +82,8 @@ class TestTimestampOverlapWarning:
 
     def test_overlapping_j_clues_produce_warning(self) -> None:
         clues = [
-            _make_clue(round="Jeopardy", row=1, col=1, selection_order=1, host_start=0.0, host_finish=5000.0),
-            _make_clue(
-                round="Jeopardy", row=1, col=2, selection_order=2, host_start=3000.0, host_finish=8000.0
-            ),  # Overlaps!
+            _make_clue(round="J!", row=1, col=1, selection_order=1, host_start=0.0, host_finish=5000.0),
+            _make_clue(round="J!", row=1, col=2, selection_order=2, host_start=3000.0, host_finish=8000.0),  # Overlaps!
         ]
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
@@ -90,8 +91,8 @@ class TestTimestampOverlapWarning:
 
     def test_non_overlapping_clues_no_warning(self) -> None:
         clues = [
-            _make_clue(round="Jeopardy", row=1, col=1, selection_order=1, host_start=0.0, host_finish=5000.0),
-            _make_clue(round="Jeopardy", row=1, col=2, selection_order=2, host_start=6000.0, host_finish=10000.0),
+            _make_clue(round="J!", row=1, col=1, selection_order=1, host_start=0.0, host_finish=5000.0),
+            _make_clue(round="J!", row=1, col=2, selection_order=2, host_start=6000.0, host_finish=10000.0),
         ]
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
@@ -104,7 +105,7 @@ class TestDailyDoubleCount:
     def test_excess_dj_clues_warning(self) -> None:
         clues = [
             _make_clue(
-                round="Double Jeopardy",
+                round="Double J!",
                 row=i % 5 + 1,
                 col=i % 6 + 1,
                 selection_order=i,
@@ -115,12 +116,12 @@ class TestDailyDoubleCount:
         ]
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
-        assert any("Double Jeopardy round has 31 clues" in w for w in warnings)
+        assert any("Double J! round has 31 clues" in w for w in warnings)
 
     def test_excess_dj_daily_doubles_warning(self) -> None:
         clues = [
             _make_clue(
-                round="Double Jeopardy",
+                round="Double J!",
                 row=i + 1,
                 col=1,
                 selection_order=i,
@@ -132,18 +133,16 @@ class TestDailyDoubleCount:
         ]
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
-        assert any("3 Daily Doubles in Double Jeopardy" in w for w in warnings)
+        assert any("3 Daily Doubles in Double J!" in w for w in warnings)
 
 
 class TestDedupTieBreakByTextLength:
     """Lines 250-252: When attempts are equal, longer clue_text wins."""
 
     def test_longer_text_wins_dedup(self) -> None:
-        clue_short = _make_clue(
-            round="Jeopardy", category="History", row=1, col=1, host_start=1000.0, clue_text="Short"
-        )
+        clue_short = _make_clue(round="J!", category="History", row=1, col=1, host_start=1000.0, clue_text="Short")
         clue_long = _make_clue(
-            round="Jeopardy",
+            round="J!",
             category="History",
             row=1,
             col=1,
@@ -155,8 +154,8 @@ class TestDedupTieBreakByTextLength:
         assert "longer" in result[0].clue_text
 
     def test_same_length_keeps_first(self) -> None:
-        clue_a = _make_clue(round="Jeopardy", category="Science", row=2, col=1, host_start=2000.0, clue_text="AAAA")
-        clue_b = _make_clue(round="Jeopardy", category="Science", row=2, col=1, host_start=2000.0, clue_text="BBBB")
+        clue_a = _make_clue(round="J!", category="Science", row=2, col=1, host_start=2000.0, clue_text="AAAA")
+        clue_b = _make_clue(round="J!", category="Science", row=2, col=1, host_start=2000.0, clue_text="BBBB")
         result = _deduplicate_clues([clue_a, clue_b])
         assert len(result) == 1
         assert result[0].clue_text == "AAAA"  # First one kept

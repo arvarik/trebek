@@ -36,8 +36,8 @@ def _format_transcript_compressed(segments: list[Dict[str, Any]]) -> str:
     - Speaker IDs abbreviated (SPEAKER_00 → S0)
     - Bracket noise removed ([L0] → L0)
 
-    Before: [L0] [0.00s] SPEAKER_00: Welcome to Jeopardy
-    After:  L0 S0: Welcome to Jeopardy
+    Before: [L0] [0.00s] SPEAKER_00: Welcome to J!
+    After:  L0 S0: Welcome to J!
     """
     formatted_lines = []
     for i, seg in enumerate(segments):

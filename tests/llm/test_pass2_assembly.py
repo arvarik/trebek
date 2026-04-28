@@ -38,7 +38,7 @@ class TestSyllableEstimation:
         assert _count_syllables("nth") == 1
 
     def test_jeopardy_style_text(self) -> None:
-        """Jeopardy clues use academic vocabulary — should be reasonably accurate."""
+        """J! clues use academic vocabulary — should be reasonably accurate."""
         result = _count_syllables("This Mediterranean peninsula was home to the Roman Empire")
         # me-di-te-rra-ne-an pe-nin-su-la was home to the Ro-man Em-pire
         assert result >= 15

@@ -10,8 +10,8 @@ import os
 
 def validate_extraction(meta, clues, R):
     print("\n── Extraction Quality ───────────────────────────────")
-    j = [c for c in clues if c["round"] == "Jeopardy"]
-    dj = [c for c in clues if c["round"] == "Double Jeopardy"]
+    j = [c for c in clues if c["round"] == "J!"]
+    dj = [c for c in clues if c["round"] == "Double J!"]
 
     # ── Round-level clue counts ──────────────────────────────────────
     R.check("Clues: J round 15-30", 15 <= len(j) <= 30, f"{len(j)}")
@@ -27,9 +27,9 @@ def validate_extraction(meta, clues, R):
     dd_dj = sum(1 for c in dj if c["is_daily_double"])
     R.check("Clues: 1-3 Daily Doubles", 1 <= dd <= 3, f"{dd}")
     if dd_j > 1:
-        R.warn(f"Found {dd_j} DDs in Jeopardy round (expected 1)")
+        R.warn(f"Found {dd_j} DDs in J! round (expected 1)")
     if dd_dj > 2:
-        R.warn(f"Found {dd_dj} DDs in Double Jeopardy (expected max 2)")
+        R.warn(f"Found {dd_dj} DDs in Double J! (expected max 2)")
 
     # DD structural: wager + wagerer present, exactly 1 attempt
     dd_clues = [c for c in clues if c["is_daily_double"]]
@@ -59,14 +59,14 @@ def validate_extraction(meta, clues, R):
         R.warn(f"DJ has {len(djcats)} categories (>6 suggests variant spellings)")
 
     # ── Board position bounds ────────────────────────────────────────
-    oob_rows = sum(1 for c in clues if c["round"] in ("Jeopardy", "Double Jeopardy") and not (1 <= c["board_row"] <= 5))
-    oob_cols = sum(1 for c in clues if c["round"] in ("Jeopardy", "Double Jeopardy") and not (1 <= c["board_col"] <= 6))
+    oob_rows = sum(1 for c in clues if c["round"] in ("J!", "Double J!") and not (1 <= c["board_row"] <= 5))
+    oob_cols = sum(1 for c in clues if c["round"] in ("J!", "Double J!") and not (1 <= c["board_col"] <= 6))
     R.check("Board: row bounds [1-5]", oob_rows == 0, f"{oob_rows} out-of-bounds")
     R.check("Board: col bounds [1-6]", oob_cols == 0, f"{oob_cols} out-of-bounds")
 
     # ── Duplicate board positions per category+round ─────────────────
     dup_positions = 0
-    for rnd_name, rnd_clues in [("Jeopardy", j), ("Double Jeopardy", dj)]:
+    for rnd_name, rnd_clues in [("J!", j), ("Double J!", dj)]:
         seen = {}
         for c in rnd_clues:
             key = (c["category"].lower().strip(), c["board_row"])
@@ -83,9 +83,7 @@ def validate_extraction(meta, clues, R):
             if a["speaker"].lower().strip() not in cnames:
                 unk.add(a["speaker"])
     R.check("FK: all buzzers known", len(unk) == 0, f"unknown: {unk}" if unk else "all mapped")
-    fj_unk = [
-        w.contestant for w in meta.final_jeopardy.wagers_and_responses if w.contestant.lower().strip() not in cnames
-    ]
+    fj_unk = [w.contestant for w in meta.final_jep.wagers_and_responses if w.contestant.lower().strip() not in cnames]
     R.check("FK: FJ wagerers known", len(fj_unk) == 0, f"unknown: {fj_unk}" if fj_unk else "all mapped")
 
     # ── Per-clue data quality ────────────────────────────────────────
@@ -118,8 +116,7 @@ def validate_extraction(meta, clues, R):
     triple_stumpers = sum(
         1
         for c in clues
-        if c["round"] in ("Jeopardy", "Double Jeopardy")
-        and (not c["attempts"] or all(not a["is_correct"] for a in c["attempts"]))
+        if c["round"] in ("J!", "Double J!") and (not c["attempts"] or all(not a["is_correct"] for a in c["attempts"]))
     )
     rebounds = sum(1 for c in clues if len(c["attempts"]) > 1)
     print(f"  📊 Triple stumpers: {triple_stumpers} | Rebounds (multi-buzz): {rebounds}")
@@ -145,7 +142,7 @@ def validate_extraction(meta, clues, R):
         print(f"  📊 Timestamp span: {first_clue_ms / 1000:.0f}s – {last_clue_ms / 1000:.0f}s ({coverage_min:.1f} min)")
 
     # ── FJ validation ────────────────────────────────────────────────
-    fj = meta.final_jeopardy
+    fj = meta.final_jep
     R.check("FJ: category extracted", bool(fj.category.strip()), fj.category)
     R.check("FJ: clue text extracted", bool(fj.clue_text.strip()), f"{len(fj.clue_text)} chars")
     R.check("FJ: 1-3 wagers", 1 <= len(fj.wagers_and_responses) <= 3, f"{len(fj.wagers_and_responses)} wagers")
@@ -158,9 +155,9 @@ def validate_state_machine(meta, clues, R):
     board_control_trace = []
     current_control = None
     for c in clues:
-        if c["round"] == "Jeopardy":
+        if c["round"] == "J!":
             val = c["board_row"] * 200
-        elif c["round"] == "Double Jeopardy":
+        elif c["round"] == "Double J!":
             val = c["board_row"] * 400
         else:
             val = 0
@@ -169,7 +166,7 @@ def validate_state_machine(meta, clues, R):
             scores.setdefault(w, 0)
             coryat.setdefault(w, 0)
             if c["daily_double_wager"] == "True Daily Double":
-                mx = 1000 if c["round"] == "Jeopardy" else 2000
+                mx = 1000 if c["round"] == "J!" else 2000
                 wamt = max(scores[w], mx)
             else:
                 try:
@@ -200,7 +197,7 @@ def validate_state_machine(meta, clues, R):
                 else:
                     scores[p] -= val
                     coryat[p] -= val
-    for w in meta.final_jeopardy.wagers_and_responses:
+    for w in meta.final_jep.wagers_and_responses:
         p = w.contestant
         scores.setdefault(p, 0)
         if w.is_correct:
@@ -248,12 +245,12 @@ def validate_episode_json(path, R):
     R.check("JSON: has host", bool(data.get("host_name")), data.get("host_name", ""))
     R.check(
         "JSON: has FJ",
-        bool(data.get("final_jeopardy", {}).get("category")),
-        data.get("final_jeopardy", {}).get("category", ""),
+        bool(data.get("final_jep", {}).get("category")),
+        data.get("final_jep", {}).get("category", ""),
     )
     clues = data.get("clues", [])
-    j = [c for c in clues if c.get("round") == "Jeopardy"]
-    dj = [c for c in clues if c.get("round") == "Double Jeopardy"]
+    j = [c for c in clues if c.get("round") == "J!"]
+    dj = [c for c in clues if c.get("round") == "Double J!"]
     R.check("JSON: J clues 15-30", 15 <= len(j) <= 30, f"{len(j)}")
     R.check("JSON: DJ clues 15-30", 15 <= len(dj) <= 30, f"{len(dj)}")
     dd = sum(1 for c in clues if c.get("is_daily_double"))
@@ -304,10 +301,10 @@ def print_transcript_intelligence(segs, R):
     for i, s in enumerate(segs):
         text = s.get("text", "").lower()
         ts = s.get("start", 0) or 0
-        if "double jeopardy" in text:
-            markers_found.append(("Double Jeopardy", i, ts))
-        elif "final jeopardy" in text:
-            markers_found.append(("Final Jeopardy", i, ts))
+        if "double j!" in text:
+            markers_found.append(("Double J!", i, ts))
+        elif "final j!" in text:
+            markers_found.append(("Final J!", i, ts))
         elif "tiebreaker" in text:
             markers_found.append(("Tiebreaker", i, ts))
 
@@ -369,11 +366,11 @@ def print_chunk_diagnostics(chunks, segs):
 def print_round_summary_table(clues, meta):
     """Print per-round summary as a compact ASCII table."""
     print("\n── Per-Round Summary ─────────────────────────────────")
-    rounds = {"Jeopardy": [], "Double Jeopardy": [], "Final Jeopardy": []}
+    rounds = {"J!": [], "Double J!": [], "Final J!": []}
     for c in clues:
         rounds.setdefault(c["round"], []).append(c)
 
-    fj = meta.final_jeopardy
+    fj = meta.final_jep
     header = f"  {'Round':<18}│{'Clues':>6} │{'Cats':>5} │{'DDs':>4} │{'Buzzes':>7} │{'Stumps':>7} │{'Rebounds':>8} │{'Avg Wds':>8}"
     sep = f"  {'─' * 18}┼{'─' * 6}─┼{'─' * 5}─┼{'─' * 4}─┼{'─' * 7}─┼{'─' * 7}─┼{'─' * 8}─┼{'─' * 8}"
     print(header)
@@ -383,7 +380,7 @@ def print_round_summary_table(clues, meta):
     total_words = 0
     total_cats = 0
 
-    for rnd_name in ["Jeopardy", "Double Jeopardy"]:
+    for rnd_name in ["J!", "Double J!"]:
         rnd = rounds.get(rnd_name, [])
         cats = len({c["category"].lower().strip() for c in rnd})
         dds = sum(1 for c in rnd if c["is_daily_double"])
@@ -412,7 +409,7 @@ def print_round_summary_table(clues, meta):
     total_words += fj_words
     total_cats += 1
     print(
-        f"  {'Final Jeopardy':<18}│{'—':>6} │{'1':>5} │{'—':>4} │{fj_buzzes:>7} │{fj_stumps:>7} │{'—':>8} │{fj_words:>7.1f}"
+        f"  {'Final J!':<18}│{'—':>6} │{'1':>5} │{'—':>4} │{fj_buzzes:>7} │{fj_stumps:>7} │{'—':>8} │{fj_words:>7.1f}"
     )
     print(sep)
     avg_total = total_words / total_clues if total_clues else 0
@@ -423,7 +420,7 @@ def print_round_summary_table(clues, meta):
 
 def print_board_coverage(clues, R):
     """Print 5×6 board occupancy matrix per round."""
-    for rnd_name, mult in [("Jeopardy", 200), ("Double Jeopardy", 400)]:
+    for rnd_name, mult in [("J!", 200), ("Double J!", 400)]:
         rnd = [c for c in clues if c["round"] == rnd_name]
         if not rnd:
             continue
@@ -481,9 +478,9 @@ def print_contestant_matrix(scores, clues, meta):
     for name in cnames:
         pre_fj[name] = 0
     for c in clues:
-        if c["round"] == "Jeopardy":
+        if c["round"] == "J!":
             val = c["board_row"] * 200
-        elif c["round"] == "Double Jeopardy":
+        elif c["round"] == "Double J!":
             val = c["board_row"] * 400
         else:
             continue
@@ -509,7 +506,7 @@ def print_contestant_matrix(scores, clues, meta):
                 else:
                     pre_fj[p] -= val
 
-    fj = meta.final_jeopardy
+    fj = meta.final_jep
     fj_wagers = {w.contestant: w.wager for w in fj.wagers_and_responses}
 
     header = f"  {'Name':<20}│{'Buzz':>5} │{'Corr':>5} │{'Acc%':>6} │{'Pre-FJ':>9} │{'FJ Wager':>9} │{'Final':>9}"

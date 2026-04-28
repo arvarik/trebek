@@ -9,7 +9,7 @@ before committing relational data to the database.
 
 import structlog
 from typing import Dict, List, Optional
-from trebek.schemas import Clue, ScoreAdjustment, FinalJeopardy
+from trebek.schemas import Clue, ScoreAdjustment, FinalJep
 
 logger = structlog.get_logger()
 
@@ -43,9 +43,9 @@ class TrebekStateMachine:
         and chronologically anchored corrections. Tracks board control.
         """
         # 1. Determine clue value based on round
-        if clue.round == "Jeopardy":
+        if clue.round == "J!":
             clue_value = clue.board_row * 200
-        elif clue.round == "Double Jeopardy":
+        elif clue.round == "Double J!":
             clue_value = clue.board_row * 400
         else:
             clue_value = 0
@@ -65,7 +65,7 @@ class TrebekStateMachine:
 
             if clue.daily_double_wager == "True Daily Double":
                 current_score = self.scores[wagerer]
-                max_board_value = 1000 if clue.round == "Jeopardy" else 2000
+                max_board_value = 1000 if clue.round == "J!" else 2000
                 wager_amount = max(current_score, max_board_value)
                 logger.info(
                     "Resolved 'True Daily Double'",
@@ -153,8 +153,8 @@ class TrebekStateMachine:
 
         self.pending_adjustments = remaining_adjustments
 
-    def process_final_jeopardy(self, fj: FinalJeopardy) -> None:
-        """Processes Final Jeopardy wagers and updates scores."""
+    def process_final_jep(self, fj: FinalJep) -> None:
+        """Processes Final J! wagers and updates scores."""
         for wager in fj.wagers_and_responses:
             player = wager.contestant
             if self.valid_contestants and player not in self.valid_contestants:

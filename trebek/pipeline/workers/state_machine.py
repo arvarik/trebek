@@ -48,7 +48,7 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                     state_machine.load_adjustments(episode_data.score_adjustments)
                     for clue in episode_data.clues:
                         state_machine.process_clue(clue)
-                    state_machine.process_final_jeopardy(episode_data.final_jeopardy)
+                    state_machine.process_final_jep(episode_data.final_jep)
 
                     # Commit relational data to the analytical tables
                     await commit_episode_to_relational_tables(

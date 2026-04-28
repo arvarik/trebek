@@ -3,7 +3,7 @@ Relational data commit operations for episode data.
 
 Transforms Pydantic episode models into normalized relational rows
 and commits them to the analytical database tables (episodes, contestants,
-clues, buzz_attempts, final_jeopardy, score_adjustments) within a
+clues, buzz_attempts, final_jep, score_adjustments) within a
 single atomic transaction.
 """
 
@@ -162,8 +162,8 @@ async def commit_episode_to_relational_tables(
             )
         )
 
-    # 6. Insert Final Jeopardy
-    fj = episode_data.final_jeopardy
+    # 6. Insert Final J!
+    fj = episode_data.final_jep
     fj_clue_id = f"{episode_id}_fj"
     is_fj_triple_stumper = len(fj.wagers_and_responses) == 0 or all(not w.is_correct for w in fj.wagers_and_responses)
 
@@ -177,7 +177,7 @@ async def commit_episode_to_relational_tables(
             (
                 fj_clue_id,
                 episode_id,
-                "Final Jeopardy",
+                "Final J!",
                 fj.category,
                 61,
                 fj.clue_text,

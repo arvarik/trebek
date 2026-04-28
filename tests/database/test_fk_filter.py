@@ -18,7 +18,7 @@ from trebek.schemas import (
     Clue,
     BuzzAttempt,
     Contestant,
-    FinalJeopardy,
+    FinalJep,
     ScoreAdjustment,
 )
 from trebek.state_machine import TrebekStateMachine
@@ -66,7 +66,7 @@ def _make_episode_with_invalid_fk() -> Episode:
         ],
         clues=[
             Clue(
-                round="Jeopardy",
+                round="J!",
                 category="History",
                 board_row=1,
                 board_col=1,
@@ -100,7 +100,7 @@ def _make_episode_with_invalid_fk() -> Episode:
                 ],
             ),
         ],
-        final_jeopardy=FinalJeopardy(
+        final_jep=FinalJep(
             category="Science",
             clue_text="Final clue",
             wagers_and_responses=[],
@@ -185,7 +185,7 @@ class TestFkFilterDropsInvalidContestants:
                 ],
                 clues=[
                     Clue(
-                        round="Jeopardy",
+                        round="J!",
                         category="Test",
                         board_row=1,
                         board_col=1,
@@ -210,7 +210,7 @@ class TestFkFilterDropsInvalidContestants:
                         ],
                     ),
                 ],
-                final_jeopardy=FinalJeopardy(
+                final_jep=FinalJep(
                     category="Final",
                     clue_text="Final clue",
                     wagers_and_responses=[],

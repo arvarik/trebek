@@ -158,7 +158,7 @@ def _normalize_speaker_names(
             if canonical:
                 adj.contestant = canonical
 
-    # Normalize FinalJeopardyWager contestant names (for future FK safety)
+    # Normalize FinalJepWager contestant names (for future FK safety)
     for wager in fj_wagers:
         if hasattr(wager, "contestant") and wager.contestant:
             canonical = variant_map.get(wager.contestant.lower())

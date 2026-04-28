@@ -249,7 +249,7 @@ job_telemetry
 | `Clue` | Board position, temporal bounds, Daily Double metadata, buzz attempts |
 | `BuzzAttempt` | Per-buzz reaction data: timestamps, lockout inference, response text |
 | `Contestant` | Name, podium position, occupation category, champion status |
-| `FinalJeopardy` | Category, clue text, per-contestant wagers and responses |
+| `FinalJep` | Category, clue text, per-contestant wagers and responses |
 | `ScoreAdjustment` | Chronologically anchored point corrections with reasons |
 | `JobTelemetry` | Hardware signatures, token usage, latency, cost tracking |
 

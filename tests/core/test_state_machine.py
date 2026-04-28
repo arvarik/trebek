@@ -1,13 +1,13 @@
 """
-Tests for the deterministic Jeopardy state machine.
+Tests for the deterministic J! state machine.
 
 Covers: basic scoring, rebounds, triple stumpers, Daily Doubles (including
-True Daily Double with negative/zero scores), Double Jeopardy value scaling,
+True Daily Double with negative/zero scores), Double J! value scaling,
 and chronologically anchored score adjustments.
 """
 
 from trebek.state_machine import TrebekStateMachine
-from trebek.schemas import Clue, BuzzAttempt, ScoreAdjustment, FinalJeopardy, FinalJeopardyWager
+from trebek.schemas import Clue, BuzzAttempt, ScoreAdjustment, FinalJep, FinalJepWager
 from typing import Literal, Union
 
 
@@ -24,7 +24,7 @@ def _make_attempt(speaker: str, correct: bool, order: int = 1) -> BuzzAttempt:
 
 
 def _make_clue(
-    round: Literal["Jeopardy", "Double Jeopardy", "Final Jeopardy", "Tiebreaker"] = "Jeopardy",
+    round: Literal["J!", "Double J!", "Final J!", "Tiebreaker"] = "J!",
     row: int = 1,
     col: int = 1,
     order: int = 1,
@@ -147,7 +147,7 @@ class TestDailyDoubles:
         """True Daily Double: wager = max(current_score, max_board_value)."""
         sm = TrebekStateMachine({"A": 3000})
         clue = _make_clue(
-            round="Jeopardy",
+            round="J!",
             dd=True,
             wager="True Daily Double",
             wagerer="A",
@@ -161,7 +161,7 @@ class TestDailyDoubles:
         """True DD with $0: wager should be max_board_value (not $0)."""
         sm = TrebekStateMachine({"A": 0})
         clue = _make_clue(
-            round="Jeopardy",
+            round="J!",
             dd=True,
             wager="True Daily Double",
             wagerer="A",
@@ -175,7 +175,7 @@ class TestDailyDoubles:
         """True DD with negative score: wager should be max_board_value."""
         sm = TrebekStateMachine({"A": -200})
         clue = _make_clue(
-            round="Jeopardy",
+            round="J!",
             dd=True,
             wager="True Daily Double",
             wagerer="A",
@@ -186,10 +186,10 @@ class TestDailyDoubles:
         assert sm.scores["A"] == 800
 
     def test_true_daily_double_dj_max_value(self) -> None:
-        """True DD in Double Jeopardy uses $2000 as max board value."""
+        """True DD in Double J! uses $2000 as max board value."""
         sm = TrebekStateMachine({"A": 500})
         clue = _make_clue(
-            round="Double Jeopardy",
+            round="Double J!",
             dd=True,
             wager="True Daily Double",
             wagerer="A",
@@ -200,13 +200,13 @@ class TestDailyDoubles:
         assert sm.scores["A"] == 2500
 
 
-class TestDoubleJeopardyValues:
+class TestDoubleJepValues:
     def test_dj_row_values(self) -> None:
-        """Double Jeopardy values are row * $400 (not * $200)."""
+        """Double J! values are row * $400 (not * $200)."""
         sm = TrebekStateMachine({"A": 0})
         for row in range(1, 6):
             clue = _make_clue(
-                round="Double Jeopardy",
+                round="Double J!",
                 row=row,
                 order=row,
                 attempts=[_make_attempt("A", True)],
@@ -297,31 +297,31 @@ class TestStateMachineContestantValidation:
         assert sm.scores["AnyName"] == 200
 
 
-class TestFinalJeopardy:
-    def test_final_jeopardy_scoring(self) -> None:
+class TestFinalJep:
+    def test_final_jep_scoring(self) -> None:
         sm = TrebekStateMachine({"Alice": 10000, "Bob": 5000}, valid_contestants={"Alice", "Bob"})
-        fj = FinalJeopardy(
+        fj = FinalJep(
             category="Math",
             clue_text="1+1",
             wagers_and_responses=[
-                FinalJeopardyWager(contestant="Alice", wager=5000, response="2", is_correct=True),
-                FinalJeopardyWager(contestant="Bob", wager=5000, response="3", is_correct=False),
+                FinalJepWager(contestant="Alice", wager=5000, response="2", is_correct=True),
+                FinalJepWager(contestant="Bob", wager=5000, response="3", is_correct=False),
             ],
         )
-        sm.process_final_jeopardy(fj)
+        sm.process_final_jep(fj)
         assert sm.scores["Alice"] == 15000
         assert sm.scores["Bob"] == 0
 
-    def test_final_jeopardy_unknown_speaker(self) -> None:
+    def test_final_jep_unknown_speaker(self) -> None:
         sm = TrebekStateMachine({"Alice": 1000}, valid_contestants={"Alice"})
-        fj = FinalJeopardy(
+        fj = FinalJep(
             category="Math",
             clue_text="1+1",
             wagers_and_responses=[
-                FinalJeopardyWager(contestant="Unknown", wager=1000, response="2", is_correct=True),
+                FinalJepWager(contestant="Unknown", wager=1000, response="2", is_correct=True),
             ],
         )
-        sm.process_final_jeopardy(fj)
+        sm.process_final_jep(fj)
         assert "Unknown" not in sm.scores
         assert sm.unknown_speaker_warnings == 1
 
@@ -331,18 +331,16 @@ class TestFullGameSimulation:
         sm = TrebekStateMachine(valid_contestants={"Alice", "Bob", "Charlie"})
         # Round 1: 30 clues (Alice gets 10 correct, $200 each = $2000)
         for i in range(10):
-            sm.process_clue(_make_clue(round="Jeopardy", row=1, order=i + 1, attempts=[_make_attempt("Alice", True)]))
+            sm.process_clue(_make_clue(round="J!", row=1, order=i + 1, attempts=[_make_attempt("Alice", True)]))
 
         # Round 2: 30 clues (Bob gets 10 correct, $400 each = $4000)
         for i in range(10):
-            sm.process_clue(
-                _make_clue(round="Double Jeopardy", row=1, order=31 + i, attempts=[_make_attempt("Bob", True)])
-            )
+            sm.process_clue(_make_clue(round="Double J!", row=1, order=31 + i, attempts=[_make_attempt("Bob", True)]))
 
         # Daily Double: Charlie wagers $1000 and gets it right
         sm.process_clue(
             _make_clue(
-                round="Double Jeopardy",
+                round="Double J!",
                 dd=True,
                 wager=1000,
                 wagerer="Charlie",
@@ -351,16 +349,16 @@ class TestFullGameSimulation:
         )
 
         # FJ: Alice wagers $2000 correct, Bob wagers $4000 incorrect, Charlie wagers $1000 correct
-        fj = FinalJeopardy(
+        fj = FinalJep(
             category="Final",
             clue_text="Final",
             wagers_and_responses=[
-                FinalJeopardyWager(contestant="Alice", wager=2000, response="X", is_correct=True),
-                FinalJeopardyWager(contestant="Bob", wager=4000, response="Y", is_correct=False),
-                FinalJeopardyWager(contestant="Charlie", wager=1000, response="Z", is_correct=True),
+                FinalJepWager(contestant="Alice", wager=2000, response="X", is_correct=True),
+                FinalJepWager(contestant="Bob", wager=4000, response="Y", is_correct=False),
+                FinalJepWager(contestant="Charlie", wager=1000, response="Z", is_correct=True),
             ],
         )
-        sm.process_final_jeopardy(fj)
+        sm.process_final_jep(fj)
 
         assert sm.scores["Alice"] == 4000
         assert sm.scores["Bob"] == 0

@@ -122,7 +122,7 @@ async def execute_pass_2_data_extraction(
     meta_prompt = (
         f"Transcript Data:\n{full_transcript}\n\n"
         "Output strict JSON matching the requested schema. "
-        "EXTRACT ONLY: episode_date, host_name, is_tournament, contestants, final_jeopardy, and score_adjustments. "
+        "EXTRACT ONLY: episode_date, host_name, is_tournament, contestants, final_jep, and score_adjustments. "
         "DO NOT extract individual clues."
     )
     meta_data, meta_usage, meta_att = await _extract_part(
@@ -176,8 +176,8 @@ async def execute_pass_2_data_extraction(
 
             prompt = (
                 f"Transcript Chunk ({chunk_idx + 1} of {len(chunks)}):\n{chunk_text}\n\n"
-                "Extract ALL Jeopardy and Double Jeopardy clues found in this chunk. "
-                "Do NOT extract Final Jeopardy — it is handled separately. "
+                "Extract ALL J! and Double J! clues found in this chunk. "
+                "Do NOT extract Final J! — it is handled separately. "
                 "Skip clues cut off at chunk boundaries. "
                 "Use Line IDs for timestamps (e.g. 'L105')."
             )
@@ -297,9 +297,9 @@ async def execute_pass_2_data_extraction(
 
     for chunk_data, chunk_usage, chunk_att in final_chunk_results:
         for ext_clue in chunk_data.clues:
-            # Filter out Final Jeopardy clues — the prompt says skip FJ but
+            # Filter out Final J! clues — the prompt says skip FJ but
             # the LLM sometimes extracts them anyway. FJ is handled by meta.
-            if ext_clue.round == "Final Jeopardy":
+            if ext_clue.round == "Final J!":
                 fj_filtered_count += 1
                 continue
 
@@ -494,7 +494,7 @@ async def execute_pass_2_data_extraction(
         contestant_names,
         host_name=meta_data.host_name,
         score_adjustments=meta_data.score_adjustments,
-        fj_wagers=meta_data.final_jeopardy.wagers_and_responses,
+        fj_wagers=meta_data.final_jep.wagers_and_responses,
     )
 
     # ── Stage 5: Assemble Episode ───────────────────────────────────
@@ -504,7 +504,7 @@ async def execute_pass_2_data_extraction(
         is_tournament=meta_data.is_tournament,
         contestants=meta_data.contestants,
         clues=sorted_clues,
-        final_jeopardy=meta_data.final_jeopardy,
+        final_jep=meta_data.final_jep,
         score_adjustments=meta_data.score_adjustments,
     )
 

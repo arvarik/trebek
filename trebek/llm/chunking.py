@@ -3,8 +3,8 @@ import structlog
 logger = structlog.get_logger()
 
 _ROUND_MARKERS = [
-    "double jeopardy",
-    "final jeopardy",
+    "double j!",
+    "final j!",
     "tiebreaker",
 ]
 

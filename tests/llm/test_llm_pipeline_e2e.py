@@ -162,22 +162,22 @@ def validate_gpu_output(gpu_data: dict[str, Any], result: ValidationResult) -> l
         "GPU: <5% empty text segments", empty_text / len(segments) < 0.05, f"{empty_text}/{len(segments)} empty"
     )
 
-    # Jeopardy content markers
+    # J! content markers
     full_text = " ".join(s.get("text", "") for s in segments).lower()
     has_jeopardy_markers = any(
         m in full_text
         for m in [
-            "jeopardy",
-            "double jeopardy",
+            "j!",
+            "double j!",
             "daily double",
-            "final jeopardy",
+            "final j!",
             "what is",
             "who is",
             "correct",
             "right",
         ]
     )
-    result.check("GPU: Jeopardy content markers found", has_jeopardy_markers)
+    result.check("GPU: J! content markers found", has_jeopardy_markers)
 
     return list(segments)
 
@@ -206,13 +206,13 @@ def validate_episode(episode: Any, result: ValidationResult, segments: list[dict
     print("\n── Clue Extraction Quality ───────────────────────────")
 
     # Clue counts
-    j_clues = [c for c in episode.clues if c.round == "Jeopardy"]
-    dj_clues = [c for c in episode.clues if c.round == "Double Jeopardy"]
+    j_clues = [c for c in episode.clues if c.round == "J!"]
+    dj_clues = [c for c in episode.clues if c.round == "Double J!"]
     total = len(episode.clues)
 
     result.check("Clues: total > 0", total > 0, f"{total} clues")
-    result.check("Clues: Jeopardy round 20-30", 20 <= len(j_clues) <= 30, f"{len(j_clues)} J clues")
-    result.check("Clues: Double Jeopardy round 20-30", 20 <= len(dj_clues) <= 30, f"{len(dj_clues)} DJ clues")
+    result.check("Clues: J! round 20-30", 20 <= len(j_clues) <= 30, f"{len(j_clues)} J clues")
+    result.check("Clues: Double J! round 20-30", 20 <= len(dj_clues) <= 30, f"{len(dj_clues)} DJ clues")
 
     # Daily Doubles
     dd_count = sum(1 for c in episode.clues if c.is_daily_double)
@@ -254,8 +254,8 @@ def validate_episode(episode: Any, result: ValidationResult, segments: list[dict
         f"unknown: {unknown}" if unknown else "all mapped",
     )
 
-    print("\n── Final Jeopardy ───────────────────────────────────")
-    fj = episode.final_jeopardy
+    print("\n── Final J! ───────────────────────────────────")
+    fj = episode.final_jep
     result.check("FJ: category extracted", bool(fj.category), fj.category)
     result.check(
         "FJ: clue text extracted",

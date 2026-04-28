@@ -22,7 +22,7 @@ class BuzzAttemptExt(BaseModel):
 
 
 class ClueExt(BaseModel):
-    round: Literal["Jeopardy", "Double Jeopardy", "Final Jeopardy", "Tiebreaker"]
+    round: Literal["J!", "Double J!", "Final J!", "Tiebreaker"]
     category: str
     board_row: int
     board_col: int
@@ -73,7 +73,7 @@ class PartialMeta(BaseModel):
     host_name: str
     is_tournament: bool
     contestants: list[Contestant]
-    final_jeopardy: FJ
+    final_jep: FJ
     score_adjustments: list[ScoreAdj]
 
 

@@ -12,23 +12,23 @@ def test_single_round_no_split() -> None:
     assert "L49" in chunks[0]
 
 
-def test_splits_on_double_jeopardy_marker() -> None:
-    """Transcript containing 'double jeopardy' should split into 2+ chunks."""
-    lines = [f"L{i} S0: Jeopardy clue text {i}" for i in range(50)]
-    lines.append("L50 S0: And now, Double Jeopardy!")
+def test_splits_on_double_jep_marker() -> None:
+    """Transcript containing 'double j!' should split into 2+ chunks."""
+    lines = [f"L{i} S0: J! clue text {i}" for i in range(50)]
+    lines.append("L50 S0: And now, Double J!")
     lines.extend([f"L{i} S0: DJ clue text {i}" for i in range(51, 100)])
     chunks = _chunk_by_semantic_boundaries(lines)
     assert len(chunks) >= 2
-    # First chunk should contain Jeopardy content
-    assert "Jeopardy clue text" in chunks[0]
+    # First chunk should contain J! content
+    assert "J! clue text" in chunks[0]
     # Second chunk should start with or include the DJ marker
-    assert "Double Jeopardy" in chunks[0] or "Double Jeopardy" in chunks[1]
+    assert "Double J!" in chunks[0] or "Double J!" in chunks[1]
 
 
-def test_splits_on_final_jeopardy_marker() -> None:
-    """Transcript with Final Jeopardy marker should produce a chunk boundary."""
+def test_splits_on_final_jep_marker() -> None:
+    """Transcript with Final J! marker should produce a chunk boundary."""
     lines = [f"L{i} S0: Some text {i}" for i in range(30)]
-    lines.append("L30 S0: It's time for Final Jeopardy!")
+    lines.append("L30 S0: It's time for Final J!")
     lines.extend([f"L{i} S0: FJ text {i}" for i in range(31, 50)])
     chunks = _chunk_by_semantic_boundaries(lines)
     assert len(chunks) >= 2
@@ -61,7 +61,7 @@ def test_no_round_markers_falls_back_to_sized_chunking() -> None:
 
 def test_round_marker_ignored_if_chunk_too_small() -> None:
     """A round marker within the first 10 lines should NOT trigger a split (anti-false-positive)."""
-    lines = ["L0 S0: double jeopardy in intro"]
+    lines = ["L0 S0: double j! in intro"]
     lines.extend([f"L{i} S0: rest of text {i}" for i in range(1, 50)])
     chunks = _chunk_by_semantic_boundaries(lines)
     # The marker at line 0 should be ignored because chunk < 10 lines
