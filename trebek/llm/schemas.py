@@ -87,7 +87,7 @@ def create_dynamic_clue_schema(categories: list[str], contestants: list[str]) ->
         attempts=(
             list[DynamicBuzzAttempt],  # type: ignore
             Field(
-                default_factory=list,  # type: ignore
+                default_factory=lambda: [],
                 description="Chronological list of buzz attempts. Empty list for Triple Stumpers.",
             ),
         ),
