@@ -47,6 +47,19 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     MODEL_PRO: {"input": 2.00, "output": 12.00},
 }
 
+# Canonical J! host names — used for host validation and speaker reconciliation.
+# The LLM sometimes misidentifies contestants as hosts; this list provides a
+# ground-truth allowlist for override logic.
+KNOWN_HOSTS: frozenset[str] = frozenset(
+    {
+        "Ken Jennings",
+        "Ryan Seacrest",
+        "Mayim Bialik",
+        "Alex Trebek",
+        "Buzzy Cohen",
+    }
+)
+
 
 class Settings(BaseSettings):
     db_path: str = Field(default="trebek.db", description="Path to the SQLite database")

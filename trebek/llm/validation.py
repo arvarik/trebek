@@ -218,6 +218,21 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
                 f"categories — possible category merge or extraction failure"
             )
 
+    # ── Final J! completeness ────────────────────────────────────────
+    # All contestants must participate in Final J! in a standard game.
+    # Missing wagers indicate either LLM extraction failure or speaker
+    # normalization dropping a contestant's FJ data.
+    if episode.contestants and episode.final_jep and episode.final_jep.wagers_and_responses:
+        contestant_name_set = {c.name.lower().strip() for c in episode.contestants}
+        fj_contestants = set()
+        for w in episode.final_jep.wagers_and_responses:
+            if hasattr(w, "contestant") and w.contestant:
+                fj_contestants.add(w.contestant.lower().strip())
+        missing_fj = contestant_name_set - fj_contestants
+        if missing_fj:
+            missing_names = [c.name for c in episode.contestants if c.name.lower().strip() in missing_fj]
+            warnings.append(f"Final J! missing wagers for {len(missing_fj)} contestant(s): {missing_names}")
+
     return warnings
 
 

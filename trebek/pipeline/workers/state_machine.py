@@ -7,6 +7,7 @@ from trebek.ui import get_stage_display
 from trebek.schemas import Episode
 from trebek.state_machine import TrebekStateMachine
 from trebek.database import commit_episode_to_relational_tables
+from trebek.llm.validation import _validate_extraction_integrity
 from trebek.status import PipelineStatus
 
 if TYPE_CHECKING:
@@ -49,6 +50,22 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                     for clue in episode_data.clues:
                         state_machine.process_clue(clue)
                     state_machine.process_final_jep(episode_data.final_jep)
+
+                    # ── Quality Gate ──────────────────────────────────
+                    # Re-validate before commit. Episodes with too many
+                    # integrity failures are rejected to prevent
+                    # corrupted data from polluting the analytical tables.
+                    integrity_warnings = _validate_extraction_integrity(episode_data)
+                    clue_count = len(episode_data.clues)
+                    is_fail = len(integrity_warnings) > 3 or clue_count < 45
+
+                    if is_fail:
+                        for w in integrity_warnings:
+                            logger.warning("Quality gate integrity issue", issue=w)
+                        raise ValueError(
+                            f"Quality gate FAIL: {len(integrity_warnings)} integrity warnings, "
+                            f"{clue_count} clues (minimum 45). Episode will not be committed."
+                        )
 
                     # Commit relational data to the analytical tables
                     await commit_episode_to_relational_tables(

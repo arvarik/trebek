@@ -284,3 +284,110 @@ def _levenshtein(s1: str, s2: str) -> int:
         prev_row = curr_row
 
     return prev_row[-1]
+
+
+def _reconcile_speaker_mapping(
+    speaker_mapping: "Dict[str, str]",
+    contestant_names: "list[str]",
+    host_name: str = "",
+) -> "Dict[str, str]":
+    """
+    Reconcile Pass 1 audio-derived speaker names against Pass 2 contestant names.
+
+    Pass 1 (audio anchoring via Flash) produces speaker names from vocal timbre
+    recognition — fast and cheap but phonetically approximate (e.g., "Paulo").
+    Pass 2 (full transcript analysis via Pro) produces definitive contestant
+    names (e.g., "Paolo Pasco").
+
+    Without reconciliation, the clue extraction prompt contains contradictory
+    instructions: the system prompt says ``S3 = Paulo`` while the schema
+    constrains speakers to ``Literal["Paolo Pasco"]``. This causes the LLM to
+    output inconsistent speaker names, which the FK pre-commit filter then drops.
+
+    This function fuzzy-matches each Pass 1 name against the Pass 2 contestant
+    list and replaces mismatches with the canonical name, ensuring the clue
+    extraction prompt is self-consistent.
+    """
+    from trebek.config import KNOWN_HOSTS
+
+    reconciled: Dict[str, str] = {}
+    host_lower = host_name.lower().strip() if host_name else ""
+    contestant_lower_map = {c.lower().strip(): c for c in contestant_names}
+    known_hosts_lower = {h.lower() for h in KNOWN_HOSTS}
+
+    for speaker_id, pass1_name in speaker_mapping.items():
+        p1_lower = pass1_name.lower().strip()
+
+        # 1. Exact match to contestant → keep
+        if p1_lower in contestant_lower_map:
+            reconciled[speaker_id] = contestant_lower_map[p1_lower]
+            continue
+
+        # 2. Known host → keep
+        if p1_lower in known_hosts_lower or p1_lower == host_lower:
+            reconciled[speaker_id] = pass1_name
+            continue
+
+        # 3. Substring match (e.g., "Ame" matches "Ame Fluitt")
+        substring_match = None
+        for cname in contestant_names:
+            if p1_lower in cname.lower() or cname.lower().startswith(p1_lower):
+                substring_match = cname
+                break
+        if substring_match:
+            if substring_match != pass1_name:
+                logger.info(
+                    "Speaker reconciliation: substring match",
+                    pass1_name=pass1_name,
+                    resolved_to=substring_match,
+                    speaker_id=speaker_id,
+                )
+            reconciled[speaker_id] = substring_match
+            continue
+
+        # 4. Fuzzy match (Levenshtein ≤ 3)
+        fuzzy_match = _fuzzy_match_contestant(pass1_name, contestant_names, max_distance=3)
+        if fuzzy_match:
+            logger.warning(
+                "Speaker reconciliation: fuzzy-resolved Pass 1 name",
+                pass1_name=pass1_name,
+                resolved_to=fuzzy_match,
+                speaker_id=speaker_id,
+            )
+            reconciled[speaker_id] = fuzzy_match
+            continue
+
+        # 5. No match — keep original (will be handled downstream)
+        logger.warning(
+            "Speaker reconciliation: unresolvable Pass 1 name",
+            pass1_name=pass1_name,
+            speaker_id=speaker_id,
+            contestant_names=contestant_names,
+        )
+        reconciled[speaker_id] = pass1_name
+
+    return reconciled
+
+
+def _resolve_host_from_pass1(
+    speaker_mapping: "Dict[str, str]",
+) -> "Optional[str]":
+    """
+    Extract the host identity from the Pass 1 speaker mapping.
+
+    Checks if any Pass 1 mapped name matches a known J! host. Returns the
+    canonical host name if found, else None.
+    """
+    from trebek.config import KNOWN_HOSTS
+
+    known_lower = {h.lower(): h for h in KNOWN_HOSTS}
+    for _speaker_id, name in speaker_mapping.items():
+        name_lower = name.lower().strip()
+        if name_lower in known_lower:
+            return known_lower[name_lower]
+        # Check partial match (e.g., "Ken" matches "Ken Jennings")
+        for known_name in KNOWN_HOSTS:
+            parts = known_name.lower().split()
+            if name_lower in parts:
+                return known_name
+    return None

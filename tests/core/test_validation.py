@@ -85,6 +85,8 @@ def _make_episode(
     if fj_wagers is None:
         fj_wagers = [
             FinalJepWager(contestant="Alice", wager=1000, response="What is X?", is_correct=True),
+            FinalJepWager(contestant="Bob", wager=500, response="What is Y?", is_correct=False),
+            FinalJepWager(contestant="Charlie", wager=800, response="What is Z?", is_correct=False),
         ]
     return Episode(
         episode_date="2024-01-01",
@@ -416,6 +418,16 @@ class TestValidateExtractionIntegrity:
         episode = _make_episode(clues)
         warnings = _validate_extraction_integrity(episode)
         assert any("category merge" in w for w in warnings)
+
+    def test_fj_missing_contestant_wager(self) -> None:
+        """When FJ wagers are missing for some contestants, it should be flagged."""
+        fj_wagers = [
+            FinalJepWager(contestant="Alice", wager=1000, response="What is X?", is_correct=True),
+        ]
+        clues = [_make_clue(round="J!"), _make_clue(round="Double J!", start_ms=5000)]
+        episode = _make_episode(clues, fj_wagers=fj_wagers)
+        warnings = _validate_extraction_integrity(episode)
+        assert any("Final J! missing wagers for 2 contestant(s)" in w for w in warnings)
 
 
 # ── Dedup Boundary Tests ────────────────────────────────────────────

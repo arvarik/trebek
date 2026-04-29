@@ -97,7 +97,7 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                         )
 
                         pass2_start = time.perf_counter()
-                        data, usage2, retries = await execute_pass_2_data_extraction(
+                        data, usage2, retries, quality = await execute_pass_2_data_extraction(
                             segments,
                             speaker_mapping,
                             model=orchestrator.llm_model,
@@ -118,6 +118,7 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                             episode_id=episode_id,
                             clues_extracted=len(data.clues),
                             contestants=[c.name for c in data.contestants],
+                            quality=quality,
                             pass2_ms=round(pass2_ms, 0),
                             total_input_tokens=total_input,
                             total_output_tokens=total_output,

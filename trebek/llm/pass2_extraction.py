@@ -22,8 +22,12 @@ from trebek.llm.chunking import _chunk_by_semantic_boundaries
 from trebek.llm.validation import _validate_extraction_integrity, _deduplicate_clues
 from trebek.llm.utils import _extract_part
 from trebek.llm.transcript import _abbreviate_speaker, _format_transcript_compressed
-from trebek.llm.speaker_normalization import _normalize_speaker_names
-from trebek.config import MODEL_PRO
+from trebek.llm.speaker_normalization import (
+    _normalize_speaker_names,
+    _reconcile_speaker_mapping,
+    _resolve_host_from_pass1,
+)
+from trebek.config import MODEL_PRO, KNOWN_HOSTS
 
 logger = structlog.get_logger()
 GEMINI_CONCURRENCY = 3
@@ -52,17 +56,22 @@ async def execute_pass_2_data_extraction(
     speaker_mapping: Dict[str, str],
     max_retries: int = 4,
     model: str = MODEL_PRO,
-) -> "tuple[Episode, dict[str, float], int]":
+) -> "tuple[Episode, dict[str, float], int, str]":
     """
     Pass 2: Production-grade map-reduce extraction.
 
     Architecture:
     1. Extract Episode Meta (contestants, FJ, score adjustments) — full transcript
-    2. Semantic chunking by round boundaries (not arbitrary line counts)
-    3. Semaphore-bounded concurrent clue extraction per chunk (Line-Indexed)
-    4. Reconstruct clue texts and timestamps directly from parsed WhisperX JSON
-    5. Composite-key deduplication for overlapping chunk regions
-    6. Deterministic integrity validation encoding J! domain rules
+    2. Speaker mapping reconciliation (Pass 1 → Pass 2 name alignment)
+    3. Semantic chunking by round boundaries
+    4. Semaphore-bounded concurrent clue extraction per chunk (Line-Indexed)
+    5. Reconstruct clue texts and timestamps directly from parsed WhisperX JSON
+    6. Composite-key deduplication for overlapping chunk regions
+    7. Deterministic integrity validation encoding J! domain rules
+
+    Returns:
+        Tuple of (Episode, usage_dict, max_retries_used, quality_score).
+        quality_score is one of "PASS", "DEGRADED", or "FAIL".
 
     Cost optimizations:
     - Prompt compression: timestamps stripped, speaker IDs abbreviated
@@ -77,12 +86,6 @@ async def execute_pass_2_data_extraction(
         model=model,
     )
 
-    # ── Prompt Compression ───────────────────────────────────────────
-    # Build compressed speaker mapping for the system prompt
-    compressed_mapping: Dict[str, str] = {}
-    for speaker_id, name in speaker_mapping.items():
-        compressed_mapping[_abbreviate_speaker(speaker_id)] = name
-
     full_transcript = _format_transcript_compressed(segments)
     logger.info(
         "Transcript formatted (compressed)",
@@ -90,6 +93,12 @@ async def execute_pass_2_data_extraction(
         transcript_chars=len(full_transcript),
         compression="timestamps_removed, speakers_abbreviated",
     )
+
+    # Build initial compressed mapping for meta extraction (pre-reconciliation).
+    # This will be rebuilt after meta extraction with reconciled names.
+    compressed_mapping: Dict[str, str] = {}
+    for speaker_id, name in speaker_mapping.items():
+        compressed_mapping[_abbreviate_speaker(speaker_id)] = name
 
     base_system = (
         "You are Trebek, an expert data extraction pipeline for J! game transcripts. "
@@ -145,11 +154,59 @@ async def execute_pass_2_data_extraction(
         meta_retries=meta_att,
     )
 
+    # ── Stage 1b: Host Validation ───────────────────────────────────
+    # The LLM sometimes misidentifies a contestant as the host (e.g.,
+    # "Lisa" instead of "Ken Jennings"). Validate against KNOWN_HOSTS
+    # and fall back to Pass 1 mapping or the default modern host.
+    known_hosts_lower = {h.lower() for h in KNOWN_HOSTS}
+    extracted_host = meta_data.host_name.strip()
+    if extracted_host.lower() not in known_hosts_lower:
+        contestant_names_lower = {c.name.lower() for c in meta_data.contestants}
+        is_contestant_confusion = extracted_host.lower() in contestant_names_lower
+        pass1_host = _resolve_host_from_pass1(speaker_mapping)
+        corrected_host = pass1_host or "Ken Jennings"
+        logger.error(
+            "Host misidentified — overriding",
+            extracted_host=extracted_host,
+            is_contestant_confusion=is_contestant_confusion,
+            corrected_host=corrected_host,
+            source="pass1" if pass1_host else "default",
+        )
+        meta_data.host_name = corrected_host
+
+    # ── Stage 1c: Speaker Mapping Reconciliation ────────────────────
+    # Pass 1 (audio anchoring) may spell names differently than Pass 2
+    # (transcript analysis). e.g., "Paulo" vs "Paolo Pasco".
+    # Reconcile before building the clue extraction prompt to ensure
+    # the system prompt and schema constraints are self-consistent.
+    contestant_names = [c.name for c in meta_data.contestants]
+    reconciled_mapping = _reconcile_speaker_mapping(speaker_mapping, contestant_names, host_name=meta_data.host_name)
+    if reconciled_mapping != speaker_mapping:
+        logger.info(
+            "Speaker mapping reconciled (Pass 1 → Pass 2 alignment)",
+            original=speaker_mapping,
+            reconciled=reconciled_mapping,
+        )
+
+    # Rebuild compressed mapping with reconciled names for clue extraction
+    compressed_mapping = {}
+    for speaker_id, name in reconciled_mapping.items():
+        compressed_mapping[_abbreviate_speaker(speaker_id)] = name
+    base_system = (
+        "You are Trebek, an expert data extraction pipeline for J! game transcripts. "
+        "Extract game events into the provided JSON schema with surgical precision. "
+        f"CRITICAL CONSTRAINT: Map speakers using this exact dictionary: {json.dumps(compressed_mapping)}. "
+        "Speaker IDs are abbreviated (e.g., S0 = SPEAKER_00, S1 = SPEAKER_01). "
+        "Do NOT hallucinate names outside this mapping. "
+        "Do NOT perform any running score math — extract only observable facts. "
+        "Line IDs (e.g., L0, L105) reference exact transcript positions. "
+        "Use Line IDs for all timestamp-related fields."
+    )
+
     # ── Stage 2: Semantic Chunking ──────────────────────────────────
     from trebek.llm.schemas import create_dynamic_clue_schema
 
     all_categories = meta_data.jeopardy_categories + meta_data.double_jep_categories
-    contestant_names = [c.name for c in meta_data.contestants]
     DynamicPartialClues = create_dynamic_clue_schema(all_categories, contestant_names)
 
     lines = full_transcript.split("\n")
@@ -226,10 +283,11 @@ async def execute_pass_2_data_extraction(
         chunk_results.append((result, idx))
 
     # ── Auto-retry under-extracted chunks ──────────────────────────
-    # If a chunk has substantial transcript content (>100 lines) but
-    # yielded suspiciously few clues (<15), extract the remaining lines.
-    UNDER_EXTRACTION_THRESHOLD = 15
-    MIN_CHUNK_LINES_FOR_RETRY = 100
+    # Dynamic threshold: expect ~1 clue per 8-10 transcript lines.
+    # A 480-line transcript should yield ~50-60 clues; the old static
+    # threshold of 15 missed S42E04 which produced 45 clues (> 15)
+    # but was still catastrophically under-extracted (15/30 J! clues).
+    MIN_CHUNK_LINES_FOR_RETRY = 50
     retried_chunks = 0
 
     final_chunk_results = []
@@ -239,7 +297,10 @@ async def execute_pass_2_data_extraction(
         chunk_lines_list = chunk_text.split("\n")
         chunk_line_count = len(chunk_lines_list)
 
-        if len(chunk_data.clues) < UNDER_EXTRACTION_THRESHOLD and chunk_line_count > MIN_CHUNK_LINES_FOR_RETRY:
+        # Dynamic threshold: scale with chunk size, minimum 15
+        expected_clues = max(15, chunk_line_count // 10)
+
+        if len(chunk_data.clues) < expected_clues and chunk_line_count > MIN_CHUNK_LINES_FOR_RETRY:
             retried_chunks += 1
             logger.warning(
                 "Chunk under-extracted, triggering sliding window retry",
@@ -454,12 +515,18 @@ async def execute_pass_2_data_extraction(
 
             syllable_estimate = _count_syllables(clue_text)
 
+            # Clamp hallucinated board positions to valid J! grid ranges.
+            # The LLM can't see the physical board — these fields are always
+            # inferred from category order, so out-of-range values are common.
+            clamped_row = max(1, min(ext_clue.board_row, 5))
+            clamped_col = max(1, min(ext_clue.board_col, 6))
+
             all_clues.append(
                 Clue(
                     round=ext_clue.round,
                     category=ext_clue.category,
-                    board_row=ext_clue.board_row,
-                    board_col=ext_clue.board_col,
+                    board_row=clamped_row,
+                    board_col=clamped_col,
                     selection_order=0,  # Computed later via chronological sort
                     is_daily_double=ext_clue.is_daily_double,
                     requires_visual_context=ext_clue.requires_visual_context,
@@ -511,10 +578,10 @@ async def execute_pass_2_data_extraction(
     )
 
     # ── Stage 4b: Speaker Name Normalization ────────────────────────
-    contestant_names = [c.name for c in meta_data.contestants]
+    # Use reconciled mapping (not raw Pass 1 mapping) for normalization
     _normalize_speaker_names(
         sorted_clues,
-        speaker_mapping,
+        reconciled_mapping,
         contestant_names,
         host_name=meta_data.host_name,
         score_adjustments=meta_data.score_adjustments,
@@ -579,4 +646,4 @@ async def execute_pass_2_data_extraction(
         buzz_fallbacks=buzz_fallback_count,
     )
 
-    return episode, total_usage, max_attempt_reached
+    return episode, total_usage, max_attempt_reached, quality_score

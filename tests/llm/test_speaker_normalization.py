@@ -324,3 +324,78 @@ class TestFuzzyMatchContestant:
 
         result = _fuzzy_match_contestant("XYZABC", ["Rachel Bernstein", "Matt Amodio"])
         assert result is None
+
+
+class TestReconcileSpeakerMapping:
+    """Test Pass 1 → Pass 2 speaker name reconciliation."""
+
+    def test_paulo_to_paolo(self) -> None:
+        """The exact S42E04 bug: 'Paulo' fuzzy-matches to 'Paolo Pasco'."""
+        from trebek.llm.speaker_normalization import _reconcile_speaker_mapping
+
+        mapping = {"SPEAKER_00": "Ken Jennings", "SPEAKER_03": "Paulo"}
+        result = _reconcile_speaker_mapping(mapping, ["Paolo Pasco", "Andy Miller", "Jill"], host_name="Ken Jennings")
+        assert result["SPEAKER_03"] == "Paolo Pasco"
+        assert result["SPEAKER_00"] == "Ken Jennings"
+
+    def test_exact_match_passthrough(self) -> None:
+        """When Pass 1 name exactly matches a contestant, no change needed."""
+        from trebek.llm.speaker_normalization import _reconcile_speaker_mapping
+
+        mapping = {"SPEAKER_01": "Paolo Pasco"}
+        result = _reconcile_speaker_mapping(mapping, ["Paolo Pasco", "Andy Miller"])
+        assert result["SPEAKER_01"] == "Paolo Pasco"
+
+    def test_known_host_retained(self) -> None:
+        """Known host names should be kept as-is, not matched to contestants."""
+        from trebek.llm.speaker_normalization import _reconcile_speaker_mapping
+
+        mapping = {"SPEAKER_00": "Ken Jennings", "SPEAKER_01": "Alice"}
+        result = _reconcile_speaker_mapping(mapping, ["Alice Smith", "Bob Jones"], host_name="Ken Jennings")
+        assert result["SPEAKER_00"] == "Ken Jennings"
+        assert result["SPEAKER_01"] == "Alice Smith"
+
+    def test_substring_match(self) -> None:
+        """'Lisa' should match 'Lisa Mueller' via substring."""
+        from trebek.llm.speaker_normalization import _reconcile_speaker_mapping
+
+        mapping = {"SPEAKER_02": "Lisa"}
+        result = _reconcile_speaker_mapping(mapping, ["Lisa Mueller", "James Thajuddin"])
+        assert result["SPEAKER_02"] == "Lisa Mueller"
+
+    def test_unresolvable_kept(self) -> None:
+        """Names that don't match anything should be kept for downstream handling."""
+        from trebek.llm.speaker_normalization import _reconcile_speaker_mapping
+
+        mapping = {"SPEAKER_05": "CommercialVoice"}
+        result = _reconcile_speaker_mapping(mapping, ["Alice Smith", "Bob Jones"])
+        assert result["SPEAKER_05"] == "CommercialVoice"
+
+
+class TestResolveHostFromPass1:
+    """Test host resolution from Pass 1 speaker mapping."""
+
+    def test_finds_ken_jennings(self) -> None:
+        from trebek.llm.speaker_normalization import _resolve_host_from_pass1
+
+        mapping = {"SPEAKER_00": "Ken Jennings", "SPEAKER_01": "Alice"}
+        assert _resolve_host_from_pass1(mapping) == "Ken Jennings"
+
+    def test_finds_partial_name(self) -> None:
+        """'Ken' alone should still resolve to 'Ken Jennings'."""
+        from trebek.llm.speaker_normalization import _resolve_host_from_pass1
+
+        mapping = {"SPEAKER_00": "Ken", "SPEAKER_01": "Alice"}
+        assert _resolve_host_from_pass1(mapping) == "Ken Jennings"
+
+    def test_no_host_found(self) -> None:
+        from trebek.llm.speaker_normalization import _resolve_host_from_pass1
+
+        mapping = {"SPEAKER_00": "Alice", "SPEAKER_01": "Bob"}
+        assert _resolve_host_from_pass1(mapping) is None
+
+    def test_finds_alex_trebek(self) -> None:
+        from trebek.llm.speaker_normalization import _resolve_host_from_pass1
+
+        mapping = {"SPEAKER_00": "Alex Trebek"}
+        assert _resolve_host_from_pass1(mapping) == "Alex Trebek"
