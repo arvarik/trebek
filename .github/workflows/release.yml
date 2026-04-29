@@ -35,6 +35,9 @@ jobs:
   publish-docker:
     name: Publish to GHCR
     runs-on: self-hosted
+    concurrency:
+      group: docker-build
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write

@@ -41,6 +41,12 @@ jobs:
     needs: test
     runs-on: self-hosted
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Prevent CI and Release Docker builds from racing on the same runner.
+    # The Release workflow (triggered by tags) uses the same group and
+    # cancel-in-progress: false, so it always wins when both fire.
+    concurrency:
+      group: docker-build
+      cancel-in-progress: true
     permissions:
       contents: read
       packages: write
@@ -73,10 +79,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          cache-from: type=local,src=/home/arvarik/.buildx-cache
+          cache-to: type=local,dest=/home/arvarik/.buildx-cache-new,mode=max
 
       - name: Move cache
         run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          rm -rf /home/arvarik/.buildx-cache
+          mv /home/arvarik/.buildx-cache-new /home/arvarik/.buildx-cache
