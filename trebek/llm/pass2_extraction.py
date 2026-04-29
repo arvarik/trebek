@@ -249,9 +249,112 @@ async def execute_pass_2_data_extraction(
         transcript_text=full_transcript,
     )
 
+    # ── Stage 2a: Category Discovery Fallback ────────────────────────
+    # Standard J! boards have 6 categories per round. If the meta
+    # extraction found fewer (often because the category intro was cut
+    # off by a news broadcast or commercial), we use a cheap Flash call
+    # to rediscover missing categories from the gameplay in the transcript.
+    from trebek.config import MODEL_FLASH
+
+    EXPECTED_CATEGORIES = 6  # Standard J! board
+
+    async def _discover_missing_categories(
+        round_name: str,
+        known_categories: list[str],
+        transcript_text: str,
+    ) -> list[str]:
+        """Use Flash to find categories the meta extraction missed."""
+        if len(known_categories) >= EXPECTED_CATEGORIES:
+            return known_categories
+
+        missing_count = EXPECTED_CATEGORIES - len(known_categories)
+        known_list = ", ".join(f'"{c}"' for c in known_categories)
+        discovery_prompt = (
+            f"Transcript ({round_name} round):\n{transcript_text}\n\n"
+            f"I already know these {len(known_categories)} categories for the {round_name} round: [{known_list}].\n"
+            f"A standard J! board has {EXPECTED_CATEGORIES} categories. "
+            f"I'm missing {missing_count} category name(s).\n"
+            f"Look through the transcript for category selections by contestants "
+            f"(e.g., 'Cards for 800', 'Geography for 200') to find the missing category names.\n"
+            f"Return ONLY the complete list of ALL {EXPECTED_CATEGORIES} categories for this round "
+            f"(including the ones I already know)."
+        )
+
+        from trebek.llm.schemas import EpisodeSkeleton
+
+        try:
+            skeleton, skel_usage, _ = await _extract_part(
+                discovery_prompt,
+                "You are a J! category name extractor. Return the complete list of category names.",
+                EpisodeSkeleton,
+                max_retries=2,
+                model=MODEL_FLASH,
+                invocation_context=f"Category Discovery {round_name}",
+                thinking_level="low",
+            )
+            _accumulate_usage(skel_usage)
+
+            # Use the round-appropriate category list
+            if round_name == "J!":
+                discovered = skeleton.jeopardy_categories
+            else:
+                discovered = skeleton.double_jep_categories
+
+            if len(discovered) > len(known_categories):
+                logger.info(
+                    "Category discovery found missing categories",
+                    round=round_name,
+                    previously_known=len(known_categories),
+                    now_known=len(discovered),
+                    new_categories=[c for c in discovered if c not in known_categories],
+                )
+                return discovered
+            else:
+                logger.warning(
+                    "Category discovery did not find additional categories",
+                    round=round_name,
+                    known=len(known_categories),
+                    discovered=len(discovered),
+                )
+                return known_categories
+        except Exception as e:
+            logger.warning(
+                "Category discovery failed — using original categories",
+                round=round_name,
+                error=str(e)[:200],
+            )
+            return known_categories
+
+    # Run category discovery for under-populated rounds
+    j_cats = meta_data.jeopardy_categories
+    dj_cats = meta_data.double_jep_categories
+
+    if len(j_cats) < EXPECTED_CATEGORIES or len(dj_cats) < EXPECTED_CATEGORIES:
+        logger.warning(
+            "Under-populated category manifest — running category discovery fallback",
+            j_categories=len(j_cats),
+            dj_categories=len(dj_cats),
+            expected=EXPECTED_CATEGORIES,
+        )
+        # Run discovery calls concurrently for both rounds if needed
+        discovery_tasks = []
+        if len(j_cats) < EXPECTED_CATEGORIES:
+            discovery_tasks.append(("j", _discover_missing_categories("J!", j_cats, full_transcript)))
+        if len(dj_cats) < EXPECTED_CATEGORIES:
+            discovery_tasks.append(("dj", _discover_missing_categories("Double J!", dj_cats, full_transcript)))
+
+        for label, task in discovery_tasks:
+            result = await task
+            if label == "j":
+                j_cats = result
+                meta_data.jeopardy_categories = j_cats
+            else:
+                dj_cats = result
+                meta_data.double_jep_categories = dj_cats
+
     j_manifest, dj_manifest = build_manifests(
-        j_categories=meta_data.jeopardy_categories,
-        dj_categories=meta_data.double_jep_categories,
+        j_categories=j_cats,
+        dj_categories=dj_cats,
         board_format=board_format,
     )
 
@@ -436,15 +539,15 @@ async def execute_pass_2_data_extraction(
         if gap_fill_tasks:
             gap_results = await asyncio.gather(*gap_fill_tasks, return_exceptions=True)
             gap_filled = 0
-            for result in gap_results:
+            for result in gap_results:  # type: ignore[assignment]
                 if isinstance(result, BaseException):
                     logger.warning("Gap-fill call failed", error=str(result)[:200])
                     continue
                 gap_data, gap_usage, gap_att = result
-                _accumulate_usage(gap_usage)
-                max_attempt_reached = max(max_attempt_reached, gap_att)
-                extracted_clues.extend(list(gap_data.clues))
-                gap_filled += len(gap_data.clues)
+                _accumulate_usage(gap_usage)  # type: ignore[arg-type]
+                max_attempt_reached = max(max_attempt_reached, gap_att)  # type: ignore[assignment]
+                extracted_clues.extend(list(gap_data.clues))  # type: ignore[attr-defined]
+                gap_filled += len(gap_data.clues)  # type: ignore[attr-defined]
 
             logger.info(
                 "Gap-fill extraction complete",

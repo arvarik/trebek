@@ -219,19 +219,17 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
             )
 
     # ── Final J! completeness ────────────────────────────────────────
-    # All contestants must participate in Final J! in a standard game.
-    # Missing wagers indicate either LLM extraction failure or speaker
-    # normalization dropping a contestant's FJ data.
+    # In standard games, contestants with negative scores at the end of
+    # DJ! are eliminated before FJ and do NOT wager. So 2/3 wagers is
+    # valid when one contestant was eliminated. We only warn if the
+    # count seems implausibly low (0 or 1 wager).
     if episode.contestants and episode.final_jep and episode.final_jep.wagers_and_responses:
-        contestant_name_set = {c.name.lower().strip() for c in episode.contestants}
-        fj_contestants = set()
-        for w in episode.final_jep.wagers_and_responses:
-            if hasattr(w, "contestant") and w.contestant:
-                fj_contestants.add(w.contestant.lower().strip())
-        missing_fj = contestant_name_set - fj_contestants
-        if missing_fj:
-            missing_names = [c.name for c in episode.contestants if c.name.lower().strip() in missing_fj]
-            warnings.append(f"Final J! missing wagers for {len(missing_fj)} contestant(s): {missing_names}")
+        fj_wager_count = len(episode.final_jep.wagers_and_responses)
+        if fj_wager_count < 2:
+            warnings.append(
+                f"Final J! has only {fj_wager_count} wager(s) — expected at least 2 "
+                f"(3 contestants, minus at most 1 eliminated)"
+            )
 
     return warnings
 

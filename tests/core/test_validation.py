@@ -420,14 +420,29 @@ class TestValidateExtractionIntegrity:
         assert any("category merge" in w for w in warnings)
 
     def test_fj_missing_contestant_wager(self) -> None:
-        """When FJ wagers are missing for some contestants, it should be flagged."""
+        """When FJ has only 1 wager (implausibly low), it should be flagged.
+
+        In a standard game, at least 2 contestants play FJ (3 minus at most 1
+        eliminated for negative score). Only 0 or 1 wager is suspicious.
+        """
         fj_wagers = [
             FinalJepWager(contestant="Alice", wager=1000, response="What is X?", is_correct=True),
         ]
         clues = [_make_clue(round="J!"), _make_clue(round="Double J!", start_ms=5000)]
         episode = _make_episode(clues, fj_wagers=fj_wagers)
         warnings = _validate_extraction_integrity(episode)
-        assert any("Final J! missing wagers for 2 contestant(s)" in w for w in warnings)
+        assert any("Final J! has only 1 wager(s)" in w for w in warnings)
+
+    def test_fj_two_wagers_no_warning(self) -> None:
+        """Two FJ wagers should not trigger a warning (one contestant eliminated)."""
+        fj_wagers = [
+            FinalJepWager(contestant="Alice", wager=1000, response="What is X?", is_correct=True),
+            FinalJepWager(contestant="Bob", wager=500, response="What is Y?", is_correct=False),
+        ]
+        clues = [_make_clue(round="J!"), _make_clue(round="Double J!", start_ms=5000)]
+        episode = _make_episode(clues, fj_wagers=fj_wagers)
+        warnings = _validate_extraction_integrity(episode)
+        assert not any("Final J!" in w for w in warnings)
 
 
 # ── Dedup Boundary Tests ────────────────────────────────────────────
