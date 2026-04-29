@@ -867,6 +867,8 @@ async def execute_pass_2_data_extraction(
                     wagerer_name=ext_clue.wagerer_name,
                     clue_text=clue_text,
                     correct_response=ext_clue.correct_response,
+                    is_verified=ext_clue.is_verified,
+                    original_response=ext_clue.original_response,
                     attempts=attempts,
                 )
             )

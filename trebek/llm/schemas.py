@@ -58,6 +58,14 @@ class ClueExtraction(BaseModel):
             "If no one answered correctly, extract the answer the host reveals after time expires."
         )
     )
+    is_verified: bool = Field(
+        default=False,
+        description="Whether this clue was verified by Stage 3.5 post-extraction verification.",
+    )
+    original_response: Optional[str] = Field(
+        default=None,
+        description="The original LLM-extracted correct_response before Stage 3.5 corrections, if corrected.",
+    )
     attempts: list[BuzzAttemptExtraction] = Field(
         default_factory=list, description="Chronological list of buzz attempts. Empty list for Triple Stumpers."
     )

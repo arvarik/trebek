@@ -37,7 +37,8 @@ The resulting dataset doesn't just capture questions and answers. It captures th
 - ⚡ **Millisecond-precision buzzer latencies** — cross-referenced from visual podium illumination and acoustic buzz detection
 - 🗣️ **Speech disfluency tracking** — ums, uhs, and stutters from WhisperX logprobs, not LLM hallucinations
 - 🎲 **Game-theory optimal wager analysis** — calculated wagers compared against actual contestant choices
-- 🧠 **Semantic lateral distance** — cosine distance on embeddings distinguishing wordplay from direct recall
+- 🔍 **Post-extraction verification** — Stage 5.5 cross-validates every clue against transcript context to correct ASR errors
+- 🧠 **Semantic lateral distance** — cosine distance on embeddings distinguishing wordplay from direct recall *(schema ready, see `docs/embeddings_feature.md`)*
 - 🏗️ **Board control & Forrest Bounce detection** — strategic selection pattern analysis
 - 📊 **Coryat scores** — calculated deterministically per contestant per episode
 
@@ -56,7 +57,7 @@ Existing J! datasets are **static text scrapes** — frozen lists of clues and r
 | **Board control** | ❌ Not available | ✅ Full selection order + Forrest Bounce index |
 | **Score adjustments** | Sometimes noted | ✅ Chronologically anchored to exact clue index |
 | **Visual clues** | Text description | ✅ Multimodal extraction from video frames |
-| **Semantic analysis** | ❌ Not available | ✅ Clue-response embedding distances |
+| **Semantic analysis** | ❌ Not available | ✅ Embedding schema ready (see `docs/embeddings_feature.md`) |
 | **Data format** | Flat HTML / CSV | ✅ Normalized relational DB (9 tables) |
 | **Freshness** | Depends on scraper maintenance | ✅ Process your own recordings on demand |
 | **Coryat scores** | Manual fan calculation | ✅ Deterministic, per-contestant |
@@ -101,7 +102,7 @@ Database-backed queueing via SQLite `pipeline_state`. Kill the daemon at any poi
 ### 🧠 Multi-Pass LLM Architecture
 - **Pass 1** (Flash-Lite): Speaker anchoring from host interview audio
 - **Pass 2** (Pro): Manifest-Verify-Fill structured extraction with category gap detection
-- **Verification Pass** (Flash-Lite): Cross-validation of extracted clues against transcript context to correct ASR errors
+- **Stage 5.5** (Flash-Lite): Post-extraction verification — cross-validates every clue against transcript context, corrects ASR errors, normalizes response formatting, and tracks `is_verified` / `original_response` metadata
 - **Pass 3** (Pro): Multimodal visual clue reconstruction + podium illumination detection
 
 ### ⚙️ Deterministic State Machine
@@ -114,7 +115,7 @@ Instead of relying on LLM hallucinations for grid positions, Trebek parses exact
 PyTorch/WhisperX model weights stay resident in VRAM. No cold starts. Automatic OOM recovery with pool restarts. Explicit memory management for multi-day inference runs.
 
 ### 🎯 Physics Engine
-Cross-references visual podium illumination (Gemini Vision) with WhisperX acoustic boundaries to compute true contestant reaction speeds. Also calculates acoustic confidence scores and semantic lateral distance.
+Cross-references visual podium illumination (Gemini Vision) with WhisperX acoustic boundaries to compute true contestant reaction speeds. Also calculates acoustic confidence scores, brain freeze durations, and semantic lateral distance.
 
 ### 🗄️ Actor-Pattern Database
 All SQLite writes serialized through a single `DatabaseWriter` actor (`asyncio.Queue` + `Future`). No `database is locked` exceptions. Atomic transactions for high-throughput batched commits.
@@ -184,21 +185,23 @@ make typecheck    # mypy strict mode
 trebek/
 ├── trebek/
 │   ├── cli.py              # CLI parser + Docker orchestration
-│   ├── config.py           # Pydantic Settings + validators
-│   ├── schemas.py          # Pydantic v2 data contracts
-│   ├── schema.sql          # SQLite DDL (9 tables)
+│   ├── config.py           # Pydantic Settings + model constants + pricing
+│   ├── schemas.py          # Pydantic v2 data contracts (Episode, Clue, etc.)
+│   ├── schema.sql          # SQLite DDL (9 tables + schema_version)
 │   ├── state_machine.py    # Deterministic game state replay
-│   ├── database/           # Actor-pattern writer + pipeline ops
+│   ├── status.py           # Pipeline status enum (StrEnum)
+│   ├── database/           # Actor-pattern writer + relational commit ops
 │   ├── gpu/                # Warm Worker pool + VRAM management
-│   ├── llm/                # Multi-pass Gemini extraction pipeline
-│   ├── pipeline/           # Async orchestrator + stage workers
-│   ├── analysis/           # Post-extraction analytics (embeddings)
+│   ├── llm/                # Multi-pass Gemini extraction (anchoring, extraction, verify, multimodal)
+│   ├── pipeline/           # Async orchestrator + stage workers (ingestion, gpu, llm, state_machine)
+│   ├── analysis/           # Post-extraction analytics (buzzer physics, embeddings math)
 │   └── ui/                 # Rich console dashboard + rendering
-├── tests/                  # Comprehensive test suite
-├── docs/                   # Design documents and plans
-├── Dockerfile              # GPU-enabled container
+├── tests/                  # Comprehensive test suite (512+ tests)
+├── scripts/                # Local testing + validation utilities
+├── docs/                   # Design docs, embedding feature plan, archived architecture
+├── Dockerfile              # GPU-enabled container (CUDA + WhisperX + Pyannote)
 ├── docker-compose.yml      # One-command deployment
-├── Makefile                # Developer shortcuts
+├── Makefile                # Developer shortcuts (test, lint, typecheck)
 └── pyproject.toml          # Build system + tool config
 ```
 

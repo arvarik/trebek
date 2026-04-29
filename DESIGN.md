@@ -57,12 +57,13 @@ Each episode flows through a rigorous sequence of stages, with `pipeline_state` 
 |-------|------|--------|-------------|
 | 1 | **Ingestion** | Filesystem polling | New video files registered as `PENDING` |
 | 2–3 | **GPU Extraction** | FFmpeg + WhisperX | Audio extraction, transcription, diarization |
-| 4 | **Commercial Filtering** | Gemini Flash-Lite | Ad removal preserving word-level timings |
+| 4 | **Commercial Filtering** | Gemini 3.1 Flash-Lite | Ad removal preserving word-level timings |
 | 5 | **Manifest-Verify-Fill Extraction** | Flash-Lite + Pro | Speaker anchoring → targeted structured extraction |
-| 5.5 | **Verification & Correction** | Gemini Flash-Lite | Post-extraction ASR correction & response verification |
-| 6 | **Multimodal Augmentation** | Gemini Pro | Visual clue + podium illumination detection |
-| 7 | **State Verification** | `TrebekStateMachine` | Deterministic score/adjustment validation |
-| 8–9 | **Relational & Semantic Commit** | `DatabaseWriter` | Normalized INSERT + vector embeddings |
+| 5.5 | **Verification & Correction** | Gemini 3.1 Flash-Lite | Post-extraction ASR correction & response verification |
+| 6 | **Multimodal Augmentation** | Gemini 3.1 Pro | Visual clue + podium illumination detection |
+| 7 | **State Verification** | `TrebekStateMachine` | Deterministic score/adjustment validation + quality gate |
+| 8 | **Relational Commit** | `DatabaseWriter` | Normalized INSERT into 9 analytical tables |
+| 9 | **Semantic Vectorization** | *Not yet implemented* | Text embeddings + cosine distance (see `docs/embeddings_feature.md`) |
 
 Each stage is **idempotent** — re-running only processes unfinished episodes. If any stage fails, the episode is marked `FAILED` and the daemon continues with others.
 
@@ -183,7 +184,8 @@ PyTorch/WhisperX operations run inside a `ProcessPoolExecutor` (`spawn`):
 pipeline_state
 ├── episode_id (PK)
 ├── status           PENDING → TRANSCRIBING → TRANSCRIPT_READY →
-│                    CLEANED → SAVING → VECTORIZING → COMPLETED
+│                    CLEANED → SAVING → MULTIMODAL_PROCESSING →
+│                    MULTIMODAL_DONE → VECTORIZING → COMPLETED
 ├── transcript_path
 ├── retry_count
 ├── last_error
@@ -207,11 +209,14 @@ clues
 ├── episode_id (FK) / round / category
 ├── board_row / board_col / selection_order
 ├── clue_text / correct_response
-├── is_daily_double / daily_double_wager
+├── is_verified / original_response        ← Stage 5.5 verification metadata
+├── is_daily_double / is_triple_stumper
+├── daily_double_wager / wagerer_name
 ├── host_start_timestamp_ms / host_finish_timestamp_ms
-├── clue_syllable_count / requires_visual_context
-├── clue_embedding / response_embedding (BLOB)
-├── semantic_lateral_distance
+├── clue_syllable_count / host_speech_rate_wpm
+├── requires_visual_context / selector_had_board_control
+├── clue_embedding / response_embedding (BLOB)  ← Not yet populated (Stage 9)
+├── semantic_lateral_distance                    ← Not yet populated (Stage 9)
 
 buzz_attempts
 ├── attempt_id (PK)
@@ -221,11 +226,13 @@ buzz_attempts
 ├── is_lockout_inferred / response_given / is_correct
 ├── brain_freeze_duration_ms
 ├── true_acoustic_confidence_score / disfluency_count
+├── phonetic_similarity_score
 
 wagers
 ├── wager_id (PK)
 ├── clue_id (FK) / contestant_id (FK)
-├── running_score_at_time / actual_wager
+├── running_score_at_time / opponent_1_score / opponent_2_score
+├── actual_wager
 ├── game_theory_optimal_wager / wager_irrationality_delta
 
 score_adjustments
@@ -241,19 +248,24 @@ job_telemetry
 ├── gemini_total_input/output/cached_tokens
 ├── gemini_total_cost_usd / gemini_api_latency_ms
 ├── pydantic_retry_count
+
+schema_version
+├── version (PK) / name / applied_at
 ```
 
 ### Pydantic Data Contracts
 
-| Model | Description |
-|-------|-------------|
-| `Episode` | Top-level container: contestants, clues, Final J!, score adjustments |
-| `Clue` | Board position, temporal bounds, Daily Double metadata, buzz attempts |
-| `BuzzAttempt` | Per-buzz reaction data: timestamps, lockout inference, response text |
-| `Contestant` | Name, podium position, occupation category, champion status |
-| `FinalJep` | Category, clue text, per-contestant wagers and responses |
-| `ScoreAdjustment` | Chronologically anchored point corrections with reasons |
-| `JobTelemetry` | Hardware signatures, token usage, latency, cost tracking |
+| Model | Module | Description |
+|-------|--------|-------------|
+| `Episode` | `schemas` | Top-level container: contestants, clues, Final J!, score adjustments |
+| `Clue` | `schemas` | Board position, temporal bounds, verification status, Daily Double metadata, buzz attempts |
+| `BuzzAttempt` | `schemas` | Per-buzz reaction data: timestamps, lockout inference, response text |
+| `Contestant` | `schemas` | Name, podium position, occupation category, champion status |
+| `FinalJep` | `schemas` | Category, clue text, per-contestant wagers and responses |
+| `ScoreAdjustment` | `schemas` | Chronologically anchored point corrections with reasons |
+| `JobTelemetry` | `schemas` | Hardware signatures, token usage, latency, cost tracking |
+| `ClueExtraction` | `llm/schemas` | Intermediate extraction model with `is_verified` / `original_response` for Stage 5.5 |
+| `BuzzAttemptExtraction` | `llm/schemas` | Extraction-time buzz attempt with line ID references |
 
 ---
 
@@ -264,8 +276,9 @@ job_telemetry
 | **Local GPU** | WhisperX / Pyannote | 2–3 | Large-v3 float16 transcription, diarization |
 | **Google** | Gemini 3.1 Flash-Lite | 4–5 | Speaker anchoring, commercial filtering |
 | **Google** | Gemini 3.1 Pro | 5 | Structured extraction + Pydantic self-healing |
+| **Google** | Gemini 3.1 Flash-Lite | 5.5 | Post-extraction verification & ASR correction |
 | **Google** | Gemini 3.1 Pro | 6 | Visual clue + podium illumination detection |
-| **Local/API** | Text Embeddings | 9 | Cosine distance for semantic lateral distance |
+| **Google/Local** | Text Embeddings | 9 | Cosine distance for semantic lateral distance *(not yet implemented)* |
 
 ---
 

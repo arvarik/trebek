@@ -26,12 +26,16 @@ async def run_ingestion_pass(orchestrator: "TrebekPipelineOrchestrator", input_d
                 source_path = os.path.join(dirpath, fname)
 
                 result = await orchestrator.db_writer.execute(
-                    "INSERT OR IGNORE INTO pipeline_state (episode_id, status, source_filename) VALUES (?, ?, ?)",
+                    "INSERT OR IGNORE INTO pipeline_state (episode_id, status, source_filename) "
+                    "VALUES (?, ?, ?) RETURNING episode_id",
                     (episode_id, "PENDING", source_path),
                 )
 
-                # Only count genuinely new insertions (lastrowid > 0 means a row was inserted)
-                is_new = result is not None and isinstance(result, int) and result > 0
+                # RETURNING gives a list of rows if a row was actually inserted,
+                # or an empty list if the INSERT was ignored (row already exists).
+                # This is reliable, unlike cursor.lastrowid which returns stale
+                # values for INSERT OR IGNORE no-ops.
+                is_new = isinstance(result, list) and len(result) > 0
 
                 # Notify GPU worker that work is ready
                 orchestrator.gpu_work_ready.set()
