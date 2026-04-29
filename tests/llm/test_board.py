@@ -73,7 +73,7 @@ class TestParseDollarValue:
     def test_comma_separated(self) -> None:
         assert _parse_dollar_value("$1,200") == 1200
 
-    def test_no_dollar_sign(self) -> None:
+    def test_spoken_value_for_pattern(self) -> None:
         assert _parse_dollar_value("for 600") == 600
 
     def test_large_value(self) -> None:
@@ -87,6 +87,14 @@ class TestParseDollarValue:
 
     def test_embedded_in_sentence(self) -> None:
         assert _parse_dollar_value("Let's try Songwriters for $800 please") == 800
+
+    def test_bare_number_rejected(self) -> None:
+        """Bare numbers without $ or 'for' should NOT match (avoids Line ID false positives)."""
+        assert _parse_dollar_value("line 12 of text") is None
+
+    def test_year_not_matched(self) -> None:
+        """Years like 2025 should not match without $ or 'for' prefix."""
+        assert _parse_dollar_value("in the year 2025") is None
 
 
 class TestInferBoardRow:

@@ -70,11 +70,20 @@ def split_transcript_by_round(
     dj_boundary: int | None = None
     fj_boundary: int | None = None
 
+    # DJ boundary markers (order: most specific → least specific)
+    _DJ_MARKERS = ["double j!", "double jeopardy"]
+    _FJ_MARKERS = ["final j!", "final jeopardy"]
+
     for i, line in enumerate(transcript_lines):
         lower = line.lower()
-        if dj_boundary is None and "double j!" in lower and i > 10:
+        if dj_boundary is None and any(m in lower for m in _DJ_MARKERS) and i > 10:
             dj_boundary = i
-        elif dj_boundary is not None and fj_boundary is None and "final j!" in lower and i > dj_boundary + 10:
+        elif (
+            dj_boundary is not None
+            and fj_boundary is None
+            and any(m in lower for m in _FJ_MARKERS)
+            and i > dj_boundary + 10
+        ):
             fj_boundary = i
 
     if dj_boundary is None:

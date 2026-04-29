@@ -93,18 +93,37 @@ def detect_board_format(
 # ── Value-to-Row Parsing ────────────────────────────────────────────
 
 # Regex: captures "$800" from "Let's try Songwriters for $800"
-# Also handles "the $1,200 clue", "$1200", and "for 800"
-_VALUE_PATTERN = re.compile(r"\$?([\d,]+)")
+# REQUIRES the $ sign to avoid matching bare numbers (Line IDs, years, etc.)
+# Also handles "$1,200" and "$1200"
+_VALUE_PATTERN = re.compile(r"\$([\d,]+)")
+
+# Secondary pattern for spoken values: "for 800", "the 1200 clue"
+# Only matches 3-4 digit numbers that look like J! values
+_SPOKEN_VALUE_PATTERN = re.compile(r"\bfor\s+(\d{3,4})\b")
 
 
 def _parse_dollar_value(text: str) -> Optional[int]:
-    """Extract a dollar value from text like '$800', '$1,200', '800'."""
+    """Extract a clue dollar value from transcript text.
+
+    Prioritizes explicit '$800' format. Falls back to spoken "for 800"
+    pattern only if no $ sign is found.
+    """
+    # First: look for explicit $ values
     match = _VALUE_PATTERN.search(text)
     if match:
         try:
             return int(match.group(1).replace(",", ""))
         except ValueError:
-            return None
+            pass
+
+    # Fallback: spoken value "for 800"
+    match = _SPOKEN_VALUE_PATTERN.search(text)
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            pass
+
     return None
 
 

@@ -24,6 +24,8 @@ trebek.db
 trebek.db-shm
 trebek.db-wal
 gpu_outputs/
+input_videos/
+local_episode_*.json
 
 # Distribution / packaging
 build/
@@ -48,7 +50,6 @@ wheels/
 *.swp
 *.swo
 .DS_Store
-input_videos/
 
 # Agent state
 .agent/
