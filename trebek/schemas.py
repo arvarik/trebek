@@ -45,6 +45,12 @@ class Clue(BaseModel):
     wagerer_name: Optional[str] = Field(default=None, description="Name of the contestant who found the Daily Double.")
     clue_text: str = Field(description="The text read by the host (the answer).")
     correct_response: str = Field(description="The accepted correct response (the question).")
+    is_verified: bool = Field(
+        default=False, description="Whether the response was verified and corrected by Stage 3.5."
+    )
+    original_response: Optional[str] = Field(
+        default=None, description="The original LLM extracted response before Stage 3.5 corrections."
+    )
 
     attempts: List[BuzzAttempt] = Field(
         default_factory=list, description="Chronological list of buzz attempts. Empty list for Triple Stumpers."

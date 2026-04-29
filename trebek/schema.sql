@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS clues (
 
     clue_text TEXT NOT NULL,
     correct_response TEXT,
+    is_verified BOOLEAN DEFAULT FALSE,
+    original_response TEXT,
     is_daily_double BOOLEAN,
     is_triple_stumper BOOLEAN,
     daily_double_wager TEXT,

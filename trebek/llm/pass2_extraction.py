@@ -895,6 +895,10 @@ async def execute_pass_2_data_extraction(
     logger.info("Raw clues before deduplication", count=len(all_clues))
     unique_clues = _deduplicate_clues(all_clues)
 
+    from trebek.llm.validation import resolve_duplicate_board_rows
+
+    resolve_duplicate_board_rows(unique_clues)
+
     # Sort chronologically and re-index selection_order
     sorted_clues = sorted(unique_clues, key=lambda c: c.host_start_timestamp_ms)
     for i, clue in enumerate(sorted_clues):

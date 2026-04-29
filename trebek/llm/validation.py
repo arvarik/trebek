@@ -234,6 +234,50 @@ def _validate_extraction_integrity(episode: Episode) -> list[str]:
     return warnings
 
 
+def resolve_duplicate_board_rows(clues: list[Clue]) -> int:
+    """
+    Detects and resolves duplicate board_row assignments within the same category
+    and round. Reassigns duplicates to the lowest available missing row (1-5).
+    Returns the number of clues modified.
+    """
+    fixed_count = 0
+    from collections import defaultdict
+
+    groups = defaultdict(list)
+    for clue in clues:
+        if clue.round in ("J!", "Double J!"):
+            cat_key = clue.category.lower().strip()
+            groups[(clue.round, cat_key)].append(clue)
+
+    for (rnd, cat), group_clues in groups.items():
+        seen_rows = set()
+        duplicates = []
+        for clue in group_clues:
+            if clue.board_row in seen_rows or not (1 <= clue.board_row <= 5):
+                duplicates.append(clue)
+            else:
+                seen_rows.add(clue.board_row)
+
+        if duplicates:
+            available_rows = sorted(set(range(1, 6)) - seen_rows)
+            for clue in duplicates:
+                if available_rows:
+                    new_row = available_rows.pop(0)
+                    logger.debug(
+                        "Resolved duplicate/invalid board_row",
+                        category=clue.category,
+                        old_row=clue.board_row,
+                        new_row=new_row,
+                    )
+                    clue.board_row = new_row
+                    fixed_count += 1
+
+    if fixed_count > 0:
+        logger.info("Resolved duplicate board rows", fixed_count=fixed_count)
+
+    return fixed_count
+
+
 def _deduplicate_clues(all_clues: list[Clue]) -> list[Clue]:
     """
     Deduplicates clues from overlapping chunk regions using a composite key

@@ -74,10 +74,10 @@ async def commit_episode_to_relational_tables(
             (
                 "INSERT OR REPLACE INTO clues "
                 "(clue_id, episode_id, round, category, board_row, board_col, selection_order, "
-                "clue_text, correct_response, is_daily_double, is_triple_stumper, "
+                "clue_text, correct_response, is_verified, original_response, is_daily_double, is_triple_stumper, "
                 "daily_double_wager, wagerer_name, requires_visual_context, "
                 "host_start_timestamp_ms, host_finish_timestamp_ms, clue_syllable_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     clue_id,
                     episode_id,
@@ -88,6 +88,8 @@ async def commit_episode_to_relational_tables(
                     clue.selection_order,
                     clue.clue_text,
                     clue.correct_response,
+                    clue.is_verified,
+                    clue.original_response,
                     clue.is_daily_double,
                     is_triple_stumper,
                     dd_wager_str,
@@ -171,9 +173,9 @@ async def commit_episode_to_relational_tables(
         (
             "INSERT OR REPLACE INTO clues "
             "(clue_id, episode_id, round, category, selection_order, clue_text, correct_response, "
-            "is_daily_double, is_triple_stumper, requires_visual_context, "
+            "is_verified, original_response, is_daily_double, is_triple_stumper, requires_visual_context, "
             "host_start_timestamp_ms, host_finish_timestamp_ms, clue_syllable_count) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 fj_clue_id,
                 episode_id,
@@ -182,6 +184,8 @@ async def commit_episode_to_relational_tables(
                 61,
                 fj.clue_text,
                 fj.correct_response or None,
+                False,
+                None,
                 False,
                 is_fj_triple_stumper,
                 False,

@@ -58,7 +58,8 @@ Each episode flows through a rigorous sequence of stages, with `pipeline_state` 
 | 1 | **Ingestion** | Filesystem polling | New video files registered as `PENDING` |
 | 2–3 | **GPU Extraction** | FFmpeg + WhisperX | Audio extraction, transcription, diarization |
 | 4 | **Commercial Filtering** | Gemini Flash-Lite | Ad removal preserving word-level timings |
-| 5 | **Structured Extraction** | Flash-Lite + Pro | Speaker anchoring → full event extraction |
+| 5 | **Manifest-Verify-Fill Extraction** | Flash-Lite + Pro | Speaker anchoring → targeted structured extraction |
+| 5.5 | **Verification & Correction** | Gemini Flash-Lite | Post-extraction ASR correction & response verification |
 | 6 | **Multimodal Augmentation** | Gemini Pro | Visual clue + podium illumination detection |
 | 7 | **State Verification** | `TrebekStateMachine` | Deterministic score/adjustment validation |
 | 8–9 | **Relational & Semantic Commit** | `DatabaseWriter` | Normalized INSERT + vector embeddings |
@@ -80,23 +81,24 @@ Fast extraction targeting the host interview segment. Generates a rigid `{SPEAKE
 
 This prevents name hallucinations in later passes.
 
-### Pass 2: Map-Reduce Structured Extraction (Gemini 3.1 Pro)
+### Pass 2: Manifest-Verify-Fill Extraction (Gemini 3.1 Pro + Flash-Lite)
 
 The core extraction pipeline:
 
-1. **Meta extraction** — contestants, Final J!, score adjustments (full transcript)
-2. **Semantic chunking** — splits by round boundaries (not arbitrary line counts)
-3. **Concurrent clue extraction** — semaphore-bounded (3 concurrent) per chunk
-4. **Timestamp reconstruction** — Line IDs resolved against parsed WhisperX JSON
-5. **Composite-key deduplication** — time bucket + round + category keys
-6. **Speaker normalization** — fuzzy matching against contestant roster
-7. **Integrity validation** — deterministic domain rules
+1. **Meta extraction** — contestants, categories, Final J!, score adjustments (full transcript)
+2. **Board Manifest Construction** — splits transcript by round (J! vs Double J!) and builds grid bounds.
+3. **Category Discovery Fallback** — uses Flash to find categories missed during truncations.
+4. **Concurrent Round Extraction** — independent, category-aware extraction per round.
+5. **Gap Detection & Targeted Fill** — compares extracted clues to the manifest and surgically re-extracts missing rows.
+6. **Verify & Correct** — uses Flash to cross-validate clue texts and correct ASR errors.
+7. **Deterministic Board Inference** — maps exact dollar values (e.g., "$800") to board rows, overriding LLM guesses.
+8. **Normalization** — fuzzy speaker reconciliation and strict "What is/Who is" response formatting.
 
 Includes a **Pydantic self-healing retry loop**: if LLM output fails schema validation, the `ValidationError` is injected back into the prompt for automatic correction (up to 2 retries).
 
 **Cost optimizations:**
 - Prompt compression: timestamps stripped, speaker IDs abbreviated
-- Inline chunk extraction: avoids 2.5x cost penalty of context caching
+- Targeted Gap Fills: only missing categories are re-queried, avoiding full chunk retries.
 
 ### Pass 3: Multimodal Augmentation (Gemini 3.1 Pro Vision)
 
@@ -278,11 +280,12 @@ Post-extraction validation encodes hard domain rules:
 | **DD structural** | Exactly 1 attempt per DD; wager > 0 and ≤ 50,000 |
 | **Board bounds** | row ∈ [1,5], col ∈ [1,6] |
 | **Position uniqueness** | No duplicate board_row within same category+round |
-| **Contestant FK** | All buzz speakers and FJ wagerers must match roster |
+| **Pre-Commit FK Firewall**| Drops buzzes, wagers, or adjustments tied to unknown speakers |
+| **Format Normalization** | All correct responses forced into proper J! question format |
 | **Timestamp ordering** | No overlapping clue reads within a round |
-| **Data completeness** | Non-empty clue_text and correct_response |
+| **Final J! Completeness** | Validates wager count against eliminated contestants |
 | **Category sanity** | Max 6 unique categories per round |
-| **Overall quality** | < 45 clues = FAIL; ≤ 3 warnings = DEGRADED |
+| **Overall quality** | < 45 clues = FAIL; severity-weighted warnings > 3 = DEGRADED |
 
 ---
 

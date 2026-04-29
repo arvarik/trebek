@@ -306,6 +306,7 @@ async def verify_and_correct_clues(
                         batch_corrections.append(correction)
                         # Apply the correction to the clue object
                         original_clue.clue_text = v.verified_clue_text
+                        original_clue.is_verified = True
 
                     # Check for correct_response corrections
                     if v.confidence == "corrected" and v.verified_correct_response != original_clue.correct_response:
@@ -319,12 +320,15 @@ async def verify_and_correct_clues(
                         }
                         batch_corrections.append(correction)
                         # Apply the correction
+                        original_clue.original_response = original_clue.correct_response
                         original_clue.correct_response = v.verified_correct_response
+                        original_clue.is_verified = True
 
                     # Even for "verified" clues, adopt the verified text if it's
                     # meaningfully different (the verifier may have cleaned up
                     # without flagging as "corrected")
                     if v.confidence == "verified":
+                        original_clue.is_verified = True
                         # Adopt verified clue_text if it's cleaner (no preamble)
                         if (
                             v.verified_clue_text

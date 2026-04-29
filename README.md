@@ -100,11 +100,15 @@ Database-backed queueing via SQLite `pipeline_state`. Kill the daemon at any poi
 
 ### 🧠 Multi-Pass LLM Architecture
 - **Pass 1** (Flash-Lite): Speaker anchoring from host interview audio
-- **Pass 2** (Pro): Map-reduce structured extraction with Pydantic self-healing retry
+- **Pass 2** (Pro): Manifest-Verify-Fill structured extraction with category gap detection
+- **Verification Pass** (Flash-Lite): Cross-validation of extracted clues against transcript context to correct ASR errors
 - **Pass 3** (Pro): Multimodal visual clue reconstruction + podium illumination detection
 
 ### ⚙️ Deterministic State Machine
 Pure Python `TrebekStateMachine` replays game events chronologically. LLMs extract facts; the state machine does all arithmetic. Running scores, True Daily Double resolution, Coryat scores, and game-theory optimal wagers — all calculated deterministically.
+
+### 🎯 Deterministic Inference
+Instead of relying on LLM hallucinations for grid positions, Trebek parses exact dollar values ("for $800") and deterministically maps them to the correct board row based on the round format. Response formats are strictly normalized into J! question form.
 
 ### 🔥 Warm Worker GPU Architecture
 PyTorch/WhisperX model weights stay resident in VRAM. No cold starts. Automatic OOM recovery with pool restarts. Explicit memory management for multi-day inference runs.

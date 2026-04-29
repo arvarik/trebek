@@ -8,8 +8,8 @@ class PartialEpisodeMeta(BaseModel):
     host_name: str
     is_tournament: bool
     contestants: list[Contestant]
-    jeopardy_categories: list[str]
-    double_jep_categories: list[str]
+    jeopardy_categories: list[str] = Field(..., min_length=6, max_length=6)
+    double_jep_categories: list[str] = Field(..., min_length=6, max_length=6)
     final_jep: FinalJep
     score_adjustments: list[ScoreAdjustment]
 
@@ -22,7 +22,9 @@ class BuzzAttemptExtraction(BaseModel):
     )
     is_correct: bool
     buzz_line_id: str
-    is_lockout_inferred: bool
+    is_lockout_inferred: bool = Field(
+        description="True if the transcript suggests the contestant buzzed early and suffered a 0.25s lockout penalty (e.g. host was interrupted, or contestant stuttered struggling to answer initially)."
+    )
 
 
 class ClueExtraction(BaseModel):
@@ -36,7 +38,7 @@ class ClueExtraction(BaseModel):
     host_read_end_line_id: str
     daily_double_wager: Optional[str] = Field(
         default=None,
-        description="The wagered amount as a string (e.g. '2000', 'True Daily Double'), or null if not a Daily Double.",
+        description="The wagered amount (e.g., '2000', 'True Daily Double'). For Daily Doubles, look in the transcript BEFORE the host reads the clue to find where the contestant declares their wager. Null if not a Daily Double.",
     )
     wagerer_name: Optional[str] = Field(
         default=None, description="Name of the contestant who found the Daily Double, or null if not a Daily Double."
@@ -66,8 +68,8 @@ class PartialClues(BaseModel):
 
 
 class EpisodeSkeleton(BaseModel):
-    jeopardy_categories: list[str]
-    double_jep_categories: list[str]
+    jeopardy_categories: list[str] = Field(..., min_length=6, max_length=6)
+    double_jep_categories: list[str] = Field(..., min_length=6, max_length=6)
     total_jep_clues_played: int
     total_double_jep_clues_played: int
     daily_double_count: int
