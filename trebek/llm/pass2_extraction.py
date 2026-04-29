@@ -20,7 +20,7 @@ from typing import Any, Dict, Literal, Union, Optional
 
 from trebek.schemas import Episode, Clue, BuzzAttempt
 from trebek.llm.schemas import PartialEpisodeMeta
-from trebek.llm.validation import _validate_extraction_integrity, _deduplicate_clues
+from trebek.llm.validation import _validate_extraction_integrity, _deduplicate_clues, normalize_response_format
 from trebek.llm.utils import _extract_part
 from trebek.llm.transcript import _abbreviate_speaker, _format_transcript_compressed
 from trebek.llm.speaker_normalization import (
@@ -221,6 +221,8 @@ async def execute_pass_2_data_extraction(
         "Speaker IDs are abbreviated (e.g., S0 = SPEAKER_00, S1 = SPEAKER_01). "
         "Do NOT hallucinate names outside this mapping. "
         "Do NOT perform any running score math — extract only observable facts. "
+        "RESPONSE FORMAT: Every correct_response MUST be in J! question form "
+        "(e.g., 'What is Paris?', 'Who is Shakespeare?'). Never output a bare answer word. "
         "Line IDs (e.g., L0, L105) reference exact transcript positions. "
         "Use Line IDs for all timestamp-related fields."
     )
@@ -702,6 +704,11 @@ async def execute_pass_2_data_extraction(
         score_adjustments=meta_data.score_adjustments,
         fj_wagers=meta_data.final_jep.wagers_and_responses,
     )
+
+    # ── Stage 4c: Response Format Normalization ─────────────────────
+    # Ensure all correct_response values are in J! question format
+    # (e.g., "What is Paris?" not just "Paris")
+    _response_fixes = normalize_response_format(sorted_clues)
 
     # ── Stage 5: Assemble Episode ───────────────────────────────────
     episode = Episode(

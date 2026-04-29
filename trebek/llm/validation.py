@@ -289,3 +289,128 @@ def _deduplicate_clues(all_clues: list[Clue]) -> list[Clue]:
         )
 
     return list(unique_clues.values())
+
+
+# ── Response Format Normalization ────────────────────────────────────
+# J! responses must be in question form: "What is Paris?" not "Paris"
+
+# Common question prefixes used in J! (including contractions)
+_VALID_PREFIXES = (
+    "what is",
+    "what are",
+    "what was",
+    "what were",
+    "what's",
+    "who is",
+    "who are",
+    "who was",
+    "who were",
+    "who's",
+    "where is",
+    "where are",
+    "where was",
+    "where's",
+    "when is",
+    "when was",
+    "when did",
+    "how many",
+    "how much",
+    "how did",
+    "which",
+    "name",
+)
+
+# Heuristic to determine if the answer is a person (→ "Who is")
+_PERSON_INDICATORS = {
+    "president",
+    "king",
+    "queen",
+    "author",
+    "actor",
+    "actress",
+    "singer",
+    "poet",
+    "composer",
+    "painter",
+    "artist",
+    "writer",
+    "director",
+    "emperor",
+    "general",
+    "captain",
+    "doctor",
+    "pope",
+    "saint",
+    "mr.",
+    "mrs.",
+    "ms.",
+    "dr.",
+    "sir",
+    "lord",
+    "lady",
+}
+
+
+def _is_likely_person(answer: str) -> bool:
+    """Heuristic: does this answer refer to a person?"""
+    lower = answer.lower()
+    # Check for person-related words
+    if any(ind in lower for ind in _PERSON_INDICATORS):
+        return True
+    # Multiple capitalized words that look like a full name (e.g., "Charles Dickens")
+    words = answer.strip().split()
+    if 2 <= len(words) <= 4 and all(w[0].isupper() for w in words if w):
+        return True
+    return False
+
+
+def normalize_response_format(clues: list[Clue]) -> int:
+    """Ensure all correct_response values are in J! question format.
+
+    Fixes bare answers like "Paris" → "What is Paris?"
+    and "Shakespeare" → "Who is Shakespeare?"
+
+    Returns the number of responses that were fixed.
+    """
+    fixed_count = 0
+
+    for clue in clues:
+        resp = clue.correct_response.strip()
+        if not resp:
+            continue
+
+        # Already in question format?
+        lower = resp.lower()
+        if any(lower.startswith(prefix) for prefix in _VALID_PREFIXES):
+            continue
+
+        # Not in question format — fix it
+        if _is_likely_person(resp):
+            prefix = "Who is"
+        else:
+            prefix = "What is"
+
+        # Default to singular "is" — the LLM prompt instructs proper
+        # question format, so plural responses should already arrive as
+        # "What are...". We avoid guessing plural here because too many
+        # singular words end in 's' (Paris, Mars, Jaws).
+
+        new_response = f"{prefix} {resp}?"
+        logger.debug(
+            "Response format normalized",
+            original=clue.correct_response,
+            normalized=new_response,
+            category=clue.category,
+        )
+        clue.correct_response = new_response
+        fixed_count += 1
+
+    if fixed_count > 0:
+        logger.info(
+            "Response format normalization complete",
+            total_clues=len(clues),
+            fixed=fixed_count,
+            already_correct=len(clues) - fixed_count,
+        )
+
+    return fixed_count

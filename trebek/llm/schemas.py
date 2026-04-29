@@ -17,7 +17,9 @@ class PartialEpisodeMeta(BaseModel):
 class BuzzAttemptExtraction(BaseModel):
     attempt_order: int
     speaker: str
-    response_given: str
+    response_given: str = Field(
+        description="The literal text of what the contestant said, verbatim from the transcript."
+    )
     is_correct: bool
     buzz_line_id: str
     is_lockout_inferred: bool
@@ -39,7 +41,14 @@ class ClueExtraction(BaseModel):
     wagerer_name: Optional[str] = Field(
         default=None, description="Name of the contestant who found the Daily Double, or null if not a Daily Double."
     )
-    correct_response: str
+    correct_response: str = Field(
+        description=(
+            "The correct response in J! question format. MUST start with 'What is', 'Who is', 'What are', "
+            "'Who are', 'Where is', etc. For example: 'What is Paris?' not just 'Paris'. "
+            "If the contestant gave the correct response, use their exact phrasing. "
+            "If no one answered correctly, construct the proper question form."
+        )
+    )
     attempts: list[BuzzAttemptExtraction] = Field(
         default_factory=list, description="Chronological list of buzz attempts. Empty list for Triple Stumpers."
     )
