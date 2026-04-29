@@ -1,6 +1,6 @@
 """Tests for semantic chunking logic — the core of transcript splitting for parallel extraction."""
 
-from trebek.llm.chunking import _chunk_by_semantic_boundaries
+from trebek.llm.chunking import _chunk_by_semantic_boundaries, split_transcript_by_round
 
 
 def test_single_round_no_split() -> None:
@@ -72,3 +72,84 @@ def test_empty_transcript() -> None:
     """An empty transcript should return an empty list."""
     chunks = _chunk_by_semantic_boundaries([])
     assert len(chunks) == 0
+
+
+# ── split_transcript_by_round tests ──────────────────────────────────
+
+
+def _make_round_transcript(j_lines: int = 200, dj_lines: int = 200, fj_lines: int = 50) -> list[str]:
+    """Generate a mock transcript with round markers."""
+    lines = []
+    for i in range(j_lines):
+        lines.append(f"L{i} S0: J! round clue text line {i}")
+    lines.append(f"L{j_lines} S0: And now we move to Double J!")
+    for i in range(dj_lines):
+        idx = j_lines + 1 + i
+        lines.append(f"L{idx} S0: DJ! round clue text line {i}")
+    fj_start = j_lines + 1 + dj_lines
+    lines.append(f"L{fj_start} S0: It's time for Final J!")
+    for i in range(fj_lines):
+        idx = fj_start + 1 + i
+        lines.append(f"L{idx} S0: FJ content line {i}")
+    return lines
+
+
+def test_split_into_three_regions() -> None:
+    lines = _make_round_transcript()
+    j_text, dj_text, fj_text = split_transcript_by_round(lines)
+    assert j_text
+    assert dj_text
+    assert fj_text
+
+
+def test_split_j_text_contains_j_clues() -> None:
+    lines = _make_round_transcript()
+    j_text, _, _ = split_transcript_by_round(lines)
+    assert "J! round clue text" in j_text
+
+
+def test_split_dj_text_contains_dj_clues() -> None:
+    lines = _make_round_transcript()
+    _, dj_text, _ = split_transcript_by_round(lines)
+    assert "DJ! round clue text" in dj_text
+
+
+def test_split_fj_text_contains_fj_content() -> None:
+    lines = _make_round_transcript()
+    _, _, fj_text = split_transcript_by_round(lines)
+    assert "Final J!" in fj_text
+
+
+def test_split_no_dj_marker_returns_full_transcript() -> None:
+    lines = [f"L{i} S0: Some text line {i}" for i in range(100)]
+    j_text, dj_text, fj_text = split_transcript_by_round(lines)
+    assert j_text
+    assert dj_text == ""
+    assert fj_text == ""
+
+
+def test_split_overlap_extends_boundaries() -> None:
+    lines = _make_round_transcript(j_lines=100, dj_lines=100)
+    j_text, dj_text, _ = split_transcript_by_round(lines, overlap_lines=20)
+    j_lines_count = len(j_text.split("\n"))
+    assert j_lines_count > 100  # Must exceed J! line count due to overlap
+
+
+def test_split_zero_overlap() -> None:
+    lines = _make_round_transcript(j_lines=100, dj_lines=100)
+    j_text, dj_text, _ = split_transcript_by_round(lines, overlap_lines=0)
+    j_set = set(j_text.split("\n"))
+    dj_set = set(dj_text.split("\n"))
+    overlap = j_set & dj_set
+    assert len(overlap) <= 1
+
+
+def test_split_early_dj_marker_ignored() -> None:
+    """DJ! marker within first 10 lines should be ignored (false positive)."""
+    lines = ["L0 S0: Welcome to Double J! preview"] + [f"L{i} S0: intro line {i}" for i in range(1, 5)]
+    lines += [f"L{i} S0: J! content {i}" for i in range(5, 200)]
+    lines.append("L200 S0: Now it's time for Double J!")
+    lines += [f"L{i} S0: DJ content {i}" for i in range(201, 300)]
+    j_text, dj_text, _ = split_transcript_by_round(lines)
+    assert "DJ content" in dj_text
+    assert "J! content" in j_text

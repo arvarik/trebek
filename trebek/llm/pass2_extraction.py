@@ -1,13 +1,15 @@
 """
-Pass 2: Map-Reduce structured data extraction from J! transcripts.
+Pass 2: Manifest-Verify-Fill structured data extraction from J! transcripts.
 
 Orchestrates the full extraction pipeline:
 1. Episode metadata extraction (contestants, FJ, score adjustments)
-2. Semantic chunking by round boundaries
-3. Semaphore-bounded concurrent clue extraction per chunk (Line-Indexed)
-4. Timestamp reconstruction from parsed WhisperX JSON
-5. Composite-key deduplication for overlapping chunk regions
-6. Deterministic integrity validation encoding J! domain rules
+2. Board manifest construction (category lists, value grids)
+3. Round-split concurrent clue extraction (J! and DJ! independently)
+4. Category gap detection and targeted re-extraction
+5. Timestamp reconstruction from parsed WhisperX JSON
+6. Board row inference from clue dollar values in transcript
+7. Composite-key deduplication for overlapping regions
+8. Deterministic integrity validation encoding J! domain rules
 """
 
 import json
@@ -18,7 +20,6 @@ from typing import Any, Dict, Literal, Union, Optional
 
 from trebek.schemas import Episode, Clue, BuzzAttempt
 from trebek.llm.schemas import PartialEpisodeMeta
-from trebek.llm.chunking import _chunk_by_semantic_boundaries
 from trebek.llm.validation import _validate_extraction_integrity, _deduplicate_clues
 from trebek.llm.utils import _extract_part
 from trebek.llm.transcript import _abbreviate_speaker, _format_transcript_compressed
@@ -224,195 +225,249 @@ async def execute_pass_2_data_extraction(
         "Use Line IDs for all timestamp-related fields."
     )
 
-    # ── Stage 2: Semantic Chunking ──────────────────────────────────
+    # ── Stage 2: Manifest-Verify-Fill Extraction ─────────────────────
+    # Instead of extracting all 60 clues in one massive call, we:
+    # 1. Split transcript into J! and DJ! regions
+    # 2. Extract each round independently (concurrent, category-aware)
+    # 3. Detect category-level gaps (expected 5 per category)
+    # 4. Surgically re-extract only the missing clues
+
     from trebek.llm.schemas import create_dynamic_clue_schema
-
-    all_categories = meta_data.jeopardy_categories + meta_data.double_jep_categories
-    DynamicPartialClues = create_dynamic_clue_schema(all_categories, contestant_names)
-
-    lines = full_transcript.split("\n")
-    chunks = _chunk_by_semantic_boundaries(lines)
-    logger.info(
-        "Chunked transcript for concurrent clue extraction",
-        num_chunks=len(chunks),
-        strategy="semantic_round_boundaries",
-        mode="inline_chunks",
+    from trebek.llm.chunking import split_transcript_by_round
+    from trebek.llm.board import (
+        detect_board_format,
+        build_manifests,
+        RoundManifest,
     )
 
-    # ── Stage 3: Semaphore-Bounded Concurrent Clue Extraction ──────
+    board_format = detect_board_format(
+        is_tournament=meta_data.is_tournament,
+        j_categories=meta_data.jeopardy_categories,
+        dj_categories=meta_data.double_jep_categories,
+        transcript_text=full_transcript,
+    )
+
+    j_manifest, dj_manifest = build_manifests(
+        j_categories=meta_data.jeopardy_categories,
+        dj_categories=meta_data.double_jep_categories,
+        board_format=board_format,
+    )
+
+    logger.info(
+        "Board manifest built",
+        format=board_format.name,
+        j_categories=len(j_manifest.categories),
+        dj_categories=len(dj_manifest.categories),
+        expected_j_clues=j_manifest.expected_total,
+        expected_dj_clues=dj_manifest.expected_total,
+    )
+
+    lines = full_transcript.split("\n")
+    j_text, dj_text, _fj_text = split_transcript_by_round(lines)
+
+    # Build round-scoped dynamic schemas for category validation
+    j_schema = create_dynamic_clue_schema(meta_data.jeopardy_categories, contestant_names)
+    dj_schema = create_dynamic_clue_schema(meta_data.double_jep_categories, contestant_names)
+
     semaphore = asyncio.Semaphore(GEMINI_CONCURRENCY)
 
-    async def extract_chunk(
-        chunk_idx: int, chunk_text: str, is_retry: bool = False
+    async def _extract_round(
+        round_name: str,
+        transcript_text: str,
+        categories: list[str],
+        schema_cls: Any,
+        manifest: RoundManifest,
+        is_gap_fill: bool = False,
+        gap_context: str = "",
     ) -> "tuple[Any, dict[str, float], int]":
+        """Extract clues for a single round with category-manifest awareness."""
         async with semaphore:
-            chunk_lines_list = chunk_text.split("\n")
-            chunk_line_count = len(chunk_lines_list)
+            if is_gap_fill:
+                prompt = (
+                    f"Transcript (targeted excerpt for {round_name}):\n{transcript_text}\n\n"
+                    f"You are filling GAPS in a previous extraction. {gap_context}\n"
+                    f"Extract ONLY the missing clues listed above. "
+                    f"Use Line IDs for timestamps (e.g. 'L105')."
+                )
+                ctx_label = f"Pass 2 Gap-Fill {round_name}"
+            else:
+                cat_list = ", ".join(f'"{c}"' for c in categories)
+                prompt = (
+                    f"Transcript ({round_name} round):\n{transcript_text}\n\n"
+                    f"Extract ALL {round_name} clues from this transcript section. "
+                    f"The {round_name} board has these {len(categories)} categories: [{cat_list}]. "
+                    f"Each category has exactly {manifest.clues_per_category} clues (rows 1-{manifest.clues_per_category}). "
+                    f"You should find approximately {manifest.expected_total} clues total. "
+                    f"Do NOT extract clues from other rounds (Double J!, Final J!, etc.). "
+                    f"Use Line IDs for timestamps (e.g. 'L105')."
+                )
+                ctx_label = f"Pass 2 {round_name}"
 
-            # Extract Line ID range for debugging
-            first_line_id = chunk_lines_list[0].split(" ")[0] if chunk_lines_list else "?"
-            last_line_id = chunk_lines_list[-1].split(" ")[0] if chunk_lines_list else "?"
-
-            ctx_label = f"Pass 2 Chunk {chunk_idx + 1}/{len(chunks)}" + (" (Retry)" if is_retry else "")
             logger.info(
-                f"Extracting clues from chunk {chunk_idx + 1}/{len(chunks)}",
-                lines=chunk_line_count,
-                line_range=f"{first_line_id}–{last_line_id}",
-                is_retry=is_retry,
+                f"Extracting {round_name} clues",
+                categories=len(categories),
+                transcript_chars=len(transcript_text),
+                is_gap_fill=is_gap_fill,
             )
 
-            prompt = (
-                f"Transcript Chunk ({chunk_idx + 1} of {len(chunks)}):\n{chunk_text}\n\n"
-                "Extract ALL J! and Double J! clues found in this chunk. "
-                "Do NOT extract Final J! — it is handled separately. "
-                "Skip clues cut off at chunk boundaries. "
-                "Use Line IDs for timestamps (e.g. 'L105')."
-            )
             return await _extract_part(
                 prompt,
                 base_system,
-                DynamicPartialClues,
+                schema_cls,
                 max_retries,
                 model=model,
                 invocation_context=ctx_label,
-                thinking_level="low",  # Clue extraction is mechanical, not reasoning-heavy
+                thinking_level="low",
             )
 
-    chunk_tasks = [extract_chunk(idx, chunk) for idx, chunk in enumerate(chunks)]
-    raw_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
-
-    # Filter out failed chunks — log them but don't crash the entire episode
-    chunk_results = []
-    failed_chunks = 0
-    for idx, result in enumerate(raw_results):
-        if isinstance(result, BaseException):
-            failed_chunks += 1
-            logger.error(
-                "Chunk extraction failed, skipping chunk",
-                chunk=idx + 1,
-                total_chunks=len(chunks),
-                error_type=type(result).__name__,
-                error=str(result)[:300],
-            )
-            continue
-        chunk_data, _, _ = result
-        logger.info(
-            "Chunk extraction succeeded",
-            chunk=idx + 1,
-            clues_extracted=len(chunk_data.clues),
+    # ── Stage 2b: Concurrent Round Extraction ───────────────────────
+    # Extract J! and DJ! in parallel — same total latency as single call
+    if dj_text:
+        j_task = _extract_round("J!", j_text, meta_data.jeopardy_categories, j_schema, j_manifest)
+        dj_task = _extract_round("Double J!", dj_text, meta_data.double_jep_categories, dj_schema, dj_manifest)
+        (j_result, dj_result) = await asyncio.gather(j_task, dj_task)
+    else:
+        # Fallback: no DJ! boundary found — extract everything in one call
+        logger.warning("No DJ! boundary found, falling back to full-transcript extraction")
+        all_schema = create_dynamic_clue_schema(
+            meta_data.jeopardy_categories + meta_data.double_jep_categories, contestant_names
         )
-        chunk_results.append((result, idx))
-
-    # ── Auto-retry under-extracted chunks ──────────────────────────
-    # Dynamic threshold: expect ~1 clue per 8-10 transcript lines.
-    # A 480-line transcript should yield ~50-60 clues; the old static
-    # threshold of 15 missed S42E04 which produced 45 clues (> 15)
-    # but was still catastrophically under-extracted (15/30 J! clues).
-    MIN_CHUNK_LINES_FOR_RETRY = 50
-    retried_chunks = 0
-
-    final_chunk_results = []
-    for result_tuple, original_idx in chunk_results:
-        chunk_data, chunk_usage, chunk_att = result_tuple
-        chunk_text = chunks[original_idx]
-        chunk_lines_list = chunk_text.split("\n")
-        chunk_line_count = len(chunk_lines_list)
-
-        # Dynamic threshold: scale with chunk size, minimum 15
-        expected_clues = max(15, chunk_line_count // 10)
-
-        if len(chunk_data.clues) < expected_clues and chunk_line_count > MIN_CHUNK_LINES_FOR_RETRY:
-            retried_chunks += 1
-
-            # ── Round-aware retry targeting ──────────────────────
-            # Determine which round is under-extracted. J! clues
-            # live in the first half, DJ! in the second half. If J!
-            # is severely under-represented, retrying the tail is
-            # useless — we need to re-extract the first half.
-            j_count = sum(1 for c in chunk_data.clues if c.round == "J!")
-            dj_count = sum(1 for c in chunk_data.clues if c.round == "Double J!")
-            j_deficit = max(0, 25 - j_count)
-            dj_deficit = max(0, 25 - dj_count)
-
-            if j_deficit > dj_deficit and j_deficit >= 10:
-                # J! round is the bottleneck — retry the FIRST half
-                retry_region = "first_half"
-                retry_text = "\n".join(chunk_lines_list[: chunk_line_count // 2])
-            elif dj_deficit > j_deficit and dj_deficit >= 10:
-                # DJ! round is the bottleneck — retry the SECOND half
-                retry_region = "second_half"
-                retry_text = "\n".join(chunk_lines_list[chunk_line_count // 2 :])
-            else:
-                # Balanced deficit — use the old heuristic (retry from
-                # the last extracted line or the second half)
-                retry_region = "tail"
-                last_extracted_line_id = None
-                if chunk_data.clues:
-                    try:
-                        sorted_clues = sorted(
-                            chunk_data.clues,
-                            key=lambda c: int(
-                                c.host_read_start_line_id.replace("L", "").replace("[", "").replace("]", "").strip()
-                            ),
-                        )
-                        last_extracted_line_id = sorted_clues[-1].host_read_end_line_id
-                    except ValueError:
-                        pass
-
-                if not last_extracted_line_id:
-                    retry_text = "\n".join(chunk_lines_list[chunk_line_count // 2 :])
-                else:
-                    split_idx = chunk_line_count // 2
-                    for i, line in enumerate(chunk_lines_list):
-                        if line.startswith(last_extracted_line_id):
-                            split_idx = min(i + 1, chunk_line_count - 1)
-                            break
-                    retry_text = "\n".join(chunk_lines_list[split_idx:])
-
-            logger.warning(
-                "Chunk under-extracted, triggering round-aware retry",
-                chunk=original_idx + 1,
-                clues_found=len(chunk_data.clues),
-                j_clues=j_count,
-                dj_clues=dj_count,
-                retry_region=retry_region,
-                chunk_lines=chunk_line_count,
-            )
-
-            try:
-                retry_result = await extract_chunk(original_idx, retry_text, is_retry=True)
-                retry_data, retry_usage, retry_att = retry_result
-                logger.info(
-                    "Chunk retry result",
-                    chunk=original_idx + 1,
-                    original_clues=len(chunk_data.clues),
-                    additional_clues=len(retry_data.clues),
-                )
-                # Combine both results
-                chunk_data.clues.extend(retry_data.clues)
-                final_chunk_results.append((chunk_data, chunk_usage, max(chunk_att, retry_att)))
-            except Exception as retry_err:
-                logger.warning(
-                    "Chunk retry failed, keeping original",
-                    chunk=original_idx + 1,
-                    error=str(retry_err)[:200],
-                )
-                final_chunk_results.append(result_tuple)
-        else:
-            final_chunk_results.append(result_tuple)
-
-    if retried_chunks > 0:
-        logger.info(
-            "Under-extraction retry pass complete",
-            retried_chunks=retried_chunks,
-            total_chunks=len(chunks),
+        j_result = await _extract_round(
+            "J! + Double J!",
+            j_text,
+            meta_data.jeopardy_categories + meta_data.double_jep_categories,
+            all_schema,
+            j_manifest,
         )
+        dj_result = None
+
+    j_data, j_usage, j_att = j_result
+    _accumulate_usage(j_usage)
+    max_attempt_reached = max(max_attempt_reached, j_att)
+
+    if dj_result:
+        dj_data, dj_usage, dj_att = dj_result
+        _accumulate_usage(dj_usage)
+        max_attempt_reached = max(max_attempt_reached, dj_att)
+        extracted_clues = list(j_data.clues) + list(dj_data.clues)
+    else:
+        extracted_clues = list(j_data.clues)
 
     logger.info(
-        "All chunk extractions complete",
-        succeeded=len(final_chunk_results),
-        failed=failed_chunks,
-        total=len(chunks),
+        "Round extraction complete",
+        j_clues=len(j_data.clues),
+        dj_clues=len(dj_result[0].clues) if dj_result else 0,
+        total=len(extracted_clues),
+    )
+
+    # ── Stage 3: Category Gap Detection & Targeted Fill ─────────────
+    def _detect_gaps(
+        clues: list[Any],
+        manifest: "RoundManifest",
+    ) -> dict[str, list[int]]:
+        """Identify categories with missing clues.
+
+        Returns a dict of category → list of missing row numbers.
+        E.g., {"Songwriters": [1, 2]} means rows 1 and 2 are missing.
+        """
+        category_rows: dict[str, set[int]] = {}
+        for clue in clues:
+            if clue.round == manifest.round_name:
+                cat_key = clue.category.lower().strip()
+                category_rows.setdefault(cat_key, set()).add(clue.board_row)
+
+        gaps: dict[str, list[int]] = {}
+        for cat in manifest.categories:
+            cat_key = cat.lower().strip()
+            found_rows = category_rows.get(cat_key, set())
+            expected_rows = set(range(1, manifest.clues_per_category + 1))
+            missing = sorted(expected_rows - found_rows)
+            if missing:
+                gaps[cat] = missing
+
+        return gaps
+
+    j_gaps = _detect_gaps(extracted_clues, j_manifest)
+    dj_gaps = _detect_gaps(extracted_clues, dj_manifest)
+
+    total_gaps = sum(len(v) for v in j_gaps.values()) + sum(len(v) for v in dj_gaps.values())
+    if total_gaps > 0:
+        logger.warning(
+            "Category gaps detected — triggering targeted re-extraction",
+            j_gaps={k: v for k, v in j_gaps.items()},
+            dj_gaps={k: v for k, v in dj_gaps.items()},
+            total_missing_clues=total_gaps,
+        )
+
+        gap_fill_tasks = []
+
+        for cat, missing_rows in j_gaps.items():
+            gap_context = (
+                f"Category '{cat}' in {j_manifest.round_name} round should have "
+                f"{j_manifest.clues_per_category} clues. "
+                f"Missing clues at rows: {missing_rows}. "
+                f"Find ONLY these {len(missing_rows)} missing clue(s)."
+            )
+            gap_fill_tasks.append(
+                _extract_round("J!", j_text, [cat], j_schema, j_manifest, is_gap_fill=True, gap_context=gap_context)
+            )
+
+        for cat, missing_rows in dj_gaps.items():
+            gap_context = (
+                f"Category '{cat}' in {dj_manifest.round_name} round should have "
+                f"{dj_manifest.clues_per_category} clues. "
+                f"Missing clues at rows: {missing_rows}. "
+                f"Find ONLY these {len(missing_rows)} missing clue(s)."
+            )
+            gap_fill_tasks.append(
+                _extract_round(
+                    "Double J!",
+                    dj_text if dj_text else j_text,
+                    [cat],
+                    dj_schema,
+                    dj_manifest,
+                    is_gap_fill=True,
+                    gap_context=gap_context,
+                )
+            )
+
+        if gap_fill_tasks:
+            gap_results = await asyncio.gather(*gap_fill_tasks, return_exceptions=True)
+            gap_filled = 0
+            for result in gap_results:
+                if isinstance(result, BaseException):
+                    logger.warning("Gap-fill call failed", error=str(result)[:200])
+                    continue
+                gap_data, gap_usage, gap_att = result
+                _accumulate_usage(gap_usage)
+                max_attempt_reached = max(max_attempt_reached, gap_att)
+                extracted_clues.extend(list(gap_data.clues))
+                gap_filled += len(gap_data.clues)
+
+            logger.info(
+                "Gap-fill extraction complete",
+                gap_fill_calls=len(gap_fill_tasks),
+                new_clues_found=gap_filled,
+                total_clues=len(extracted_clues),
+            )
+    else:
+        logger.info(
+            "No category gaps detected — all categories fully extracted",
+            j_categories=len(j_manifest.categories),
+            dj_categories=len(dj_manifest.categories),
+        )
+
+    # Package results for Stage 4 (reconstruction)
+    class _SyntheticChunkData:
+        def __init__(self, clues: list[Any]) -> None:
+            self.clues = clues
+
+    final_chunk_results = [(_SyntheticChunkData(extracted_clues), total_usage, max_attempt_reached)]
+
+    logger.info(
+        "Manifest-Verify-Fill extraction complete",
+        total_clues=len(extracted_clues),
+        gap_fills_triggered=total_gaps,
     )
 
     # ── Stage 4: Reconstruct & Deduplicate ──────────────────────────
@@ -558,17 +613,34 @@ async def execute_pass_2_data_extraction(
 
             syllable_estimate = _count_syllables(clue_text)
 
-            # Clamp hallucinated board positions to valid J! grid ranges.
-            # The LLM can't see the physical board — these fields are always
-            # inferred from category order, so out-of-range values are common.
-            clamped_row = max(1, min(ext_clue.board_row, 5))
+            # ── Board row inference from dollar value ──────────────
+            # Instead of trusting the LLM's guess (it can't see the board),
+            # parse the dollar value from the selection text in the transcript
+            # and deterministically map it to a row using the known value grid.
+            from trebek.llm.board import infer_board_row, _parse_dollar_value
+
+            # Look for dollar value in nearby transcript context
+            # (the segment before the clue start often contains the selection)
+            selection_context = ""
+            if s_idx > 0:
+                # Check the 3 lines before the clue for the value selection
+                for ctx_idx in range(max(0, s_idx - 3), s_idx + 1):
+                    if ctx_idx < len(segments):
+                        selection_context += " " + segments[ctx_idx].get("text", "")
+
+            parsed_value = _parse_dollar_value(selection_context)
+            if parsed_value is not None:
+                inferred_row = infer_board_row(parsed_value, ext_clue.round, board_format)
+            else:
+                # Fallback: use LLM's guess, clamped to valid range
+                inferred_row = max(1, min(ext_clue.board_row, 5))
             clamped_col = max(1, min(ext_clue.board_col, 6))
 
             all_clues.append(
                 Clue(
                     round=ext_clue.round,
                     category=ext_clue.category,
-                    board_row=clamped_row,
+                    board_row=inferred_row,
                     board_col=clamped_col,
                     selection_order=0,  # Computed later via chronological sort
                     is_daily_double=ext_clue.is_daily_double,
@@ -659,9 +731,8 @@ async def execute_pass_2_data_extraction(
         )
 
     logger.info(
-        "Map-Reduce extraction complete",
+        "Manifest-Verify-Fill pipeline complete",
         total_clues_extracted=len(sorted_clues),
-        chunks_processed=len(chunks),
         max_retries_used=max_attempt_reached,
         model=model,
     )
