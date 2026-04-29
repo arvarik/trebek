@@ -70,6 +70,11 @@ class FinalJepWager(BaseModel):
 class FinalJep(BaseModel):
     category: str
     clue_text: str
+    correct_response: str = Field(
+        default="",
+        description="The correct response in J! question form (e.g., 'What is Ulysses?'). "
+        "Extracted from the host's on-air reveal after contestants' responses are shown.",
+    )
     wagers_and_responses: List[FinalJepWager]
 
 

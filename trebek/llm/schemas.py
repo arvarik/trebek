@@ -41,12 +41,19 @@ class ClueExtraction(BaseModel):
     wagerer_name: Optional[str] = Field(
         default=None, description="Name of the contestant who found the Daily Double, or null if not a Daily Double."
     )
+    clue_text: str = Field(
+        description=(
+            "The EXACT text of the clue as read by the host, verbatim from the transcript. "
+            "Do NOT include the category selection announcement (e.g., 'Songwriters for 800'). "
+            "Start from where the host begins reading the actual clue content."
+        )
+    )
     correct_response: str = Field(
         description=(
             "The correct response in J! question format. MUST start with 'What is', 'Who is', 'What are', "
             "'Who are', 'Where is', etc. For example: 'What is Paris?' not just 'Paris'. "
             "If the contestant gave the correct response, use their exact phrasing. "
-            "If no one answered correctly, construct the proper question form."
+            "If no one answered correctly, extract the answer the host reveals after time expires."
         )
     )
     attempts: list[BuzzAttemptExtraction] = Field(

@@ -55,9 +55,22 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                     # Re-validate before commit. Episodes with too many
                     # integrity failures are rejected to prevent
                     # corrupted data from polluting the analytical tables.
+                    #
+                    # Severity weighting: board_row duplicates are cosmetic
+                    # (LLM can't see the board) and weighted at 0.5.
+                    # All other warnings (FK violations, missing data,
+                    # structural issues) are weighted at 1.0.
                     integrity_warnings = _validate_extraction_integrity(episode_data)
                     clue_count = len(episode_data.clues)
-                    is_fail = len(integrity_warnings) > 3 or clue_count < 45
+
+                    # Classify warnings by severity
+                    weighted_score = 0.0
+                    for w in integrity_warnings:
+                        if "duplicate board_row" in w:
+                            weighted_score += 0.5  # Cosmetic — LLM can't see board
+                        else:
+                            weighted_score += 1.0  # Structural / data integrity
+                    is_fail = weighted_score > 3.0 or clue_count < 45
 
                     if is_fail:
                         for w in integrity_warnings:

@@ -28,7 +28,7 @@ from trebek.llm.speaker_normalization import (
     _reconcile_speaker_mapping,
     _resolve_host_from_pass1,
 )
-from trebek.config import MODEL_PRO, KNOWN_HOSTS
+from trebek.config import MODEL_PRO, MODEL_FLASH, KNOWN_HOSTS
 
 logger = structlog.get_logger()
 GEMINI_CONCURRENCY = 3
@@ -50,6 +50,68 @@ def _count_syllables(text: str) -> int:
             syllables -= 1
         total += max(1, syllables)
     return max(1, total)
+
+
+# ── Regex for stripping selection preamble from assembled clue text ──
+# Matches patterns like:
+#   "Numeric words and phrases for 600. On CB radio..."
+#   "I can adapt for $200. This semi-aquatic..."
+#   "Tree Pre for 800. Ars El-Rab..."
+#   "Let's stick with trees for 600. Andrew Jackson's..."
+#   "I can adapt, 600. I can adapt, sort of..."
+# Group 1 captures everything up to and including the preamble separator.
+_PREAMBLE_PATTERN = re.compile(
+    r"^(?:"
+    # Pattern A: "Category for [$]value[.]" (with optional period)
+    r"(?:.*?)\bfor\s+\$?[\d,]+\.?\s+"
+    r"|"
+    # Pattern B: "Let's stick with CATEGORY for [$]value[.]"
+    r"(?:Let'?s\s+(?:stick\s+with|go\s+(?:with|to|back\s+to)|try|do)\s+.*?)\bfor\s+\$?[\d,]+\.?\s+"
+    r"|"
+    # Pattern C: "One more time, we have CATEGORY[.]" (verbose announcements)
+    r"(?:One\s+more\s+time,?\s+we\s+have\s+.*?\.)\s+"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _strip_selection_preamble(clue_text: str, category: str) -> str:
+    """Strip category+value selection preamble from the start of clue text.
+
+    When the LLM's host_read_start_line_id points to the segment where
+    the host announces the category selection (e.g., "I can adapt for 400.
+    It's armored up..."), the assembled clue_text starts with this preamble.
+
+    This function detects and removes it, returning only the actual clue content.
+    Returns the original text if no preamble is detected.
+    """
+    if not clue_text:
+        return clue_text
+
+    # Quick check: does the clue start with the category name (case-insensitive)?
+    # If not, there's likely no preamble to strip.
+    cat_lower = category.lower().strip()
+    clue_lower = clue_text.lower().strip()
+
+    # Check for category-name-prefixed text or "Let's" preambles
+    has_preamble = (
+        clue_lower.startswith(cat_lower[:10])
+        or clue_lower.startswith("let's ")
+        or clue_lower.startswith("let's ")
+        or clue_lower.startswith("one more time")
+    )
+    if not has_preamble:
+        return clue_text
+
+    match = _PREAMBLE_PATTERN.match(clue_text)
+    if match:
+        stripped = clue_text[match.end() :]
+        # Safety: don't strip if the result is too short (< 10 chars)
+        # — that means the "preamble" was actually the entire clue
+        if len(stripped.strip()) >= 10:
+            return stripped.strip()
+
+    return clue_text
 
 
 async def execute_pass_2_data_extraction(
@@ -254,7 +316,6 @@ async def execute_pass_2_data_extraction(
     # extraction found fewer (often because the category intro was cut
     # off by a news broadcast or commercial), we use a cheap Flash call
     # to rediscover missing categories from the gameplay in the transcript.
-    from trebek.config import MODEL_FLASH
 
     EXPECTED_CATEGORIES = 6  # Standard J! board
 
@@ -575,6 +636,33 @@ async def execute_pass_2_data_extraction(
         gap_fills_triggered=total_gaps,
     )
 
+    # ── Stage 3.5: Verify & Correct (Flash) ─────────────────────────
+    # Cross-validate extracted clue_text and correct_response against
+    # the surrounding transcript context using cheap Flash calls.
+    # This catches ASR artifacts, selection preamble bleed, and
+    # unverified correct_responses for triple stumpers.
+    from trebek.llm.verify import verify_and_correct_clues, verify_final_jeopardy
+
+    verify_corrections, verify_usage = await verify_and_correct_clues(
+        extracted_clues,
+        segments,
+        contestant_names,
+        model=MODEL_FLASH,
+    )
+    _accumulate_usage(verify_usage)
+
+    # Verify Final Jeopardy correct_response
+    fj_verified_response, fj_verify_usage = await verify_final_jeopardy(
+        meta_data.final_jep,
+        segments,
+        contestant_names,
+        model=MODEL_FLASH,
+    )
+    _accumulate_usage(fj_verify_usage)
+
+    if fj_verified_response:
+        meta_data.final_jep.correct_response = fj_verified_response
+
     # ── Stage 4: Reconstruct & Deduplicate ──────────────────────────
     all_clues: list[Clue] = []
     dropped_clue_count = 0
@@ -636,7 +724,22 @@ async def execute_pass_2_data_extraction(
             if e_idx < s_idx:
                 e_idx = s_idx
 
-            clue_text = " ".join([seg.get("text", "").strip() for seg in segments[s_idx : e_idx + 1]])
+            # ASR reconstruction from WhisperX segments (used for timestamps
+            # and as fallback if LLM-extracted clue_text is missing)
+            asr_clue_text = " ".join([seg.get("text", "").strip() for seg in segments[s_idx : e_idx + 1]])
+
+            # ── Dual-source clue_text resolution ──────────────────
+            # Primary: LLM-extracted text (verified by Stage 3.5).
+            # The LLM understands semantic boundaries (where the
+            # selection announcement ends and the actual clue begins)
+            # far better than segment splicing.
+            # Fallback: ASR-reconstructed text from segment Line IDs.
+            llm_clue_text = getattr(ext_clue, "clue_text", "").strip()
+            if llm_clue_text and len(llm_clue_text) >= 10:
+                clue_text = llm_clue_text
+            else:
+                # LLM text missing or too short — fall back to ASR
+                clue_text = _strip_selection_preamble(asr_clue_text, ext_clue.category)
 
             # Explicit None-check on segment timestamps — silent 0.0 default
             # would create phantom clues at t=0
@@ -724,21 +827,28 @@ async def execute_pass_2_data_extraction(
             # and deterministically map it to a row using the known value grid.
             from trebek.llm.board import infer_board_row, _parse_dollar_value
 
-            # Look for dollar value in nearby transcript context
-            # (the segment before the clue start often contains the selection)
+            # Look for dollar value in the 2 segments before the clue start.
+            # The contestant's category+value selection is typically in the
+            # 1-2 lines immediately preceding the host's clue read.
+            # A wider window (3+) catches contestant scores and wagers.
+            llm_row_guess = max(1, min(ext_clue.board_row, 5))
             selection_context = ""
             if s_idx > 0:
-                # Check the 3 lines before the clue for the value selection
-                for ctx_idx in range(max(0, s_idx - 3), s_idx + 1):
+                for ctx_idx in range(max(0, s_idx - 2), s_idx + 1):
                     if ctx_idx < len(segments):
                         selection_context += " " + segments[ctx_idx].get("text", "")
 
             parsed_value = _parse_dollar_value(selection_context)
             if parsed_value is not None:
-                inferred_row = infer_board_row(parsed_value, ext_clue.round, board_format)
+                inferred_row = infer_board_row(
+                    parsed_value,
+                    ext_clue.round,
+                    board_format,
+                    llm_fallback_row=llm_row_guess,
+                )
             else:
-                # Fallback: use LLM's guess, clamped to valid range
-                inferred_row = max(1, min(ext_clue.board_row, 5))
+                # No valid clue value found — use LLM's guess, clamped
+                inferred_row = llm_row_guess
             clamped_col = max(1, min(ext_clue.board_col, 6))
 
             all_clues.append(
@@ -848,7 +958,11 @@ async def execute_pass_2_data_extraction(
     )
 
     # ── Episode Quality Score ────────────────────────────────────────
-    quality_score = "PASS" if not integrity_warnings else ("DEGRADED" if len(integrity_warnings) <= 3 else "FAIL")
+    # Severity-weighted: board_row duplicates (cosmetic, 0.5 weight)
+    # vs structural issues (1.0 weight). Consistent with the quality
+    # gate in the state machine worker.
+    weighted_score = sum(0.5 if "duplicate board_row" in w else 1.0 for w in integrity_warnings)
+    quality_score = "PASS" if not integrity_warnings else ("DEGRADED" if weighted_score <= 3.0 else "FAIL")
 
     # Hard fail: severe under-extraction (standard episode = 60 clues)
     if len(sorted_clues) < 45:

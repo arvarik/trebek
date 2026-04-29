@@ -170,10 +170,10 @@ async def commit_episode_to_relational_tables(
     payload.append(
         (
             "INSERT OR REPLACE INTO clues "
-            "(clue_id, episode_id, round, category, selection_order, clue_text, "
+            "(clue_id, episode_id, round, category, selection_order, clue_text, correct_response, "
             "is_daily_double, is_triple_stumper, requires_visual_context, "
             "host_start_timestamp_ms, host_finish_timestamp_ms, clue_syllable_count) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 fj_clue_id,
                 episode_id,
@@ -181,6 +181,7 @@ async def commit_episode_to_relational_tables(
                 fj.category,
                 61,
                 fj.clue_text,
+                fj.correct_response or None,
                 False,
                 is_fj_triple_stumper,
                 False,

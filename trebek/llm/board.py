@@ -92,35 +92,83 @@ def detect_board_format(
 
 # ── Value-to-Row Parsing ────────────────────────────────────────────
 
-# Regex: captures "$800" from "Let's try Songwriters for $800"
-# REQUIRES the $ sign to avoid matching bare numbers (Line IDs, years, etc.)
-# Also handles "$1,200" and "$1200"
-_VALUE_PATTERN = re.compile(r"\$([\d,]+)")
+# All possible clue values across every known board format.
+# Used to reject parsed dollar amounts that don't belong on any board
+# (e.g., contestant scores like $4000, wagers like $13201, years).
+_ALL_VALID_CLUE_VALUES: frozenset[int] = frozenset(
+    STANDARD_BOARD.j_values
+    + STANDARD_BOARD.dj_values
+    + CELEBRITY_BOARD.j_values
+    + CELEBRITY_BOARD.dj_values
+    + CELEBRITY_BOARD.tj_values
+    + CLASSIC_BOARD.j_values
+    + CLASSIC_BOARD.dj_values
+)
 
-# Secondary pattern for spoken values: "for 800", "the 1200 clue"
-# Only matches 3-4 digit numbers that look like J! values
+# Primary pattern: selection context like "for $800", "for $1,200"
+# Anchored to the word "for" to avoid matching scores/wagers
+_SELECTION_VALUE_PATTERN = re.compile(r"\bfor\s+\$([\d,]+)", re.IGNORECASE)
+
+# Secondary: standalone "$800" but NOT preceded by score/wager context
+_STANDALONE_VALUE_PATTERN = re.compile(r"\$([\d,]+)")
+
+# Tertiary: spoken values without $ sign: "for 800"
 _SPOKEN_VALUE_PATTERN = re.compile(r"\bfor\s+(\d{3,4})\b")
+
+# Patterns that indicate the dollar amount is a score/wager, not a selection
+_SCORE_WAGER_CONTEXT = re.compile(
+    r"(?:wager|wagered|wagers|score|scores|now\s+has|has\s+\$|leads?\s+with|total|behind|ahead|trailing|worth|if\s+you(?:'re|\s+are)\s+(?:right|correct))",
+    re.IGNORECASE,
+)
 
 
 def _parse_dollar_value(text: str) -> Optional[int]:
-    """Extract a clue dollar value from transcript text.
+    """Extract a clue selection dollar value from transcript text.
 
-    Prioritizes explicit '$800' format. Falls back to spoken "for 800"
-    pattern only if no $ sign is found.
+    Uses a tiered strategy to avoid false positives from contestant
+    scores, wagers, and non-game dollar amounts:
+      1. "for $800" selection pattern (highest confidence)
+      2. Standalone "$800" with score/wager context filtering
+      3. Spoken "for 800" fallback
+
+    Returns None if no valid clue value is found, which lets the caller
+    fall back to the LLM's board_row guess.
     """
-    # First: look for explicit $ values
-    match = _VALUE_PATTERN.search(text)
+
+    def _is_valid_board_value(val: int) -> bool:
+        return val in _ALL_VALID_CLUE_VALUES
+
+    def _has_score_wager_context(full_text: str) -> bool:
+        return bool(_SCORE_WAGER_CONTEXT.search(full_text))
+
+    # Tier 1: "for $800" — highest confidence, always accept if valid
+    match = _SELECTION_VALUE_PATTERN.search(text)
     if match:
         try:
-            return int(match.group(1).replace(",", ""))
+            val = int(match.group(1).replace(",", ""))
+            if _is_valid_board_value(val):
+                return val
         except ValueError:
             pass
 
-    # Fallback: spoken value "for 800"
+    # Tier 2: standalone "$800" — reject if score/wager context is present
+    if not _has_score_wager_context(text):
+        match = _STANDALONE_VALUE_PATTERN.search(text)
+        if match:
+            try:
+                val = int(match.group(1).replace(",", ""))
+                if _is_valid_board_value(val):
+                    return val
+            except ValueError:
+                pass
+
+    # Tier 3: spoken "for 800" — only accept if on the board grid
     match = _SPOKEN_VALUE_PATTERN.search(text)
     if match:
         try:
-            return int(match.group(1))
+            val = int(match.group(1))
+            if _is_valid_board_value(val):
+                return val
         except ValueError:
             pass
 
@@ -131,21 +179,28 @@ def infer_board_row(
     clue_value: Optional[int],
     round_name: str,
     board_format: BoardFormat = STANDARD_BOARD,
+    llm_fallback_row: int = 3,
 ) -> int:
     """Map a clue's dollar value to its board row (1-5).
 
-    Returns the row index (1-indexed) or falls back to a middle row (3)
-    if the value doesn't match any known grid position.
+    Returns the row index (1-indexed). Falls back to the LLM's guessed
+    row (clamped to 1-5) if the value doesn't match any known grid position,
+    avoiding the previous pathology of always defaulting to row 3.
     """
+    # FJ / Tiebreaker: always row 1, regardless of parsed value
+    if round_name not in ("J!", "Double J!"):
+        return 1
+
     if clue_value is None:
-        return 3  # Fallback: middle row
+        return max(1, min(llm_fallback_row, 5))  # Use LLM guess, clamped
 
     if round_name == "J!":
         values = board_format.j_values
     elif round_name == "Double J!":
         values = board_format.dj_values
     else:
-        return 1  # FJ / Tiebreaker: row 1
+        # Should never reach here due to early return above, but be safe
+        values = board_format.j_values
 
     if clue_value in values:
         return values.index(clue_value) + 1
@@ -161,14 +216,18 @@ def infer_board_row(
         )
         return closest_idx + 1
 
+    # Value is on the board grid (validated by _parse_dollar_value) but
+    # doesn't match this round's specific values. This shouldn't happen
+    # after the parser hardening, but use LLM fallback if it does.
     logger.warning(
-        "Clue value doesn't match any board row",
+        "Clue value doesn't match this round's board rows — using LLM fallback",
         value=clue_value,
         round=round_name,
         format=board_format.name,
         expected=values,
+        llm_fallback_row=llm_fallback_row,
     )
-    return 3  # Fallback: middle row
+    return max(1, min(llm_fallback_row, 5))
 
 
 def infer_board_row_from_selection_text(
