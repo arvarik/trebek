@@ -8,8 +8,6 @@
 
 **The definitive multimodal AI pipeline for extracting structured game data from J! episodes.**
 
-*From casual trivia lovers to ML engineers — one dataset to rule them all.*
-
 <a href="https://github.com/arvarik/trebek/actions/workflows/ci.yml">
   <img alt="CI" src="https://github.com/arvarik/trebek/actions/workflows/ci.yml/badge.svg" />
 </a>
@@ -210,9 +208,3 @@ trebek/
 ## 📄 License
 
 [AGPL-3.0](LICENSE)
-
----
-
-<div align="center">
-  <sub>Built for anyone who believes the best datasets are the ones you extract yourself.</sub>
-</div>
