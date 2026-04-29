@@ -50,7 +50,7 @@ async def test_state_machine_worker_exception_recovery(memory_db_path: str) -> N
         writer.fail_episode_with_retry.assert_called_once()
         args, _ = writer.fail_episode_with_retry.call_args
         assert args[0] == "ep_zombie"
-        assert args[1] == "MULTIMODAL_DONE"
+        assert args[1] == "TRANSCRIPT_READY"
         assert "Episode data file not found" in args[2]  # Exception message
 
         assert orchestrator.stats["failed"] == 1

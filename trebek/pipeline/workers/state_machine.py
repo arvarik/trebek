@@ -62,6 +62,12 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                     if is_fail:
                         for w in integrity_warnings:
                             logger.warning("Quality gate integrity issue", issue=w)
+                        # Delete the cached episode JSON so the retry triggers
+                        # a fresh LLM extraction instead of replaying the same data.
+                        try:
+                            os.remove(episode_data_path)
+                        except OSError:
+                            pass
                         raise ValueError(
                             f"Quality gate FAIL: {len(integrity_warnings)} integrity warnings, "
                             f"{clue_count} clues (minimum 45). Episode will not be committed."
@@ -94,8 +100,10 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
 
                 except Exception as e:
                     logger.error("State Machine Verification failed", error=str(e))
+                    # Reset to TRANSCRIPT_READY so the retry triggers full
+                    # LLM re-extraction, not just a replay of the state machine.
                     permanently_failed = await orchestrator.db_writer.fail_episode_with_retry(
-                        episode_id, PipelineStatus.MULTIMODAL_DONE, str(e)
+                        episode_id, PipelineStatus.TRANSCRIPT_READY, str(e)
                     )
                     current_episode_id = None
                     if permanently_failed:

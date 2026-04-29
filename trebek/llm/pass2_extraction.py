@@ -132,6 +132,8 @@ async def execute_pass_2_data_extraction(
         f"Transcript Data:\n{full_transcript}\n\n"
         "Output strict JSON matching the requested schema. "
         "EXTRACT ONLY: episode_date, host_name, is_tournament, contestants, jeopardy_categories, double_jep_categories, final_jep, and score_adjustments. "
+        "CRITICAL: For each contestant, extract their FULL NAME (first AND last name) as introduced by the host during the interview segment. "
+        "Do NOT use first names only. "
         "DO NOT extract individual clues."
     )
     meta_data, meta_usage, meta_att = await _extract_part(
@@ -153,6 +155,14 @@ async def execute_pass_2_data_extraction(
         score_adjustments=len(meta_data.score_adjustments),
         meta_retries=meta_att,
     )
+
+    # Warn on single-word contestant names (likely missing last names)
+    for c in meta_data.contestants:
+        if len(c.name.split()) < 2:
+            logger.warning(
+                "Contestant has single-word name (possible missing last name)",
+                contestant=c.name,
+            )
 
     # ── Stage 1b: Host Validation ───────────────────────────────────
     # The LLM sometimes misidentifies a contestant as the host (e.g.,
@@ -188,10 +198,21 @@ async def execute_pass_2_data_extraction(
             reconciled=reconciled_mapping,
         )
 
-    # Rebuild compressed mapping with reconciled names for clue extraction
+    # Rebuild compressed mapping with reconciled names for clue extraction.
+    # Filter out speakers that are not contestants, not the host, and not
+    # resolvable — these are typically commercial/news voices (e.g.,
+    # "Lindsay Davis", "Aaron Katersky") that waste prompt tokens.
+    valid_speakers = {meta_data.host_name.lower()} | {c.name.lower() for c in meta_data.contestants}
     compressed_mapping = {}
     for speaker_id, name in reconciled_mapping.items():
-        compressed_mapping[_abbreviate_speaker(speaker_id)] = name
+        if name.lower() in valid_speakers:
+            compressed_mapping[_abbreviate_speaker(speaker_id)] = name
+        else:
+            logger.info(
+                "Filtering unresolvable speaker from clue extraction prompt",
+                speaker_id=speaker_id,
+                name=name,
+            )
     base_system = (
         "You are Trebek, an expert data extraction pipeline for J! game transcripts. "
         "Extract game events into the provided JSON schema with surgical precision. "
@@ -302,39 +323,61 @@ async def execute_pass_2_data_extraction(
 
         if len(chunk_data.clues) < expected_clues and chunk_line_count > MIN_CHUNK_LINES_FOR_RETRY:
             retried_chunks += 1
-            logger.warning(
-                "Chunk under-extracted, triggering sliding window retry",
-                chunk=original_idx + 1,
-                clues_found=len(chunk_data.clues),
-                chunk_lines=chunk_line_count,
-            )
 
-            # Find where the LLM stopped extracting
-            last_extracted_line_id = None
-            if chunk_data.clues:
-                # Sort clues by start line ID to find the last one
-                try:
-                    sorted_clues = sorted(
-                        chunk_data.clues,
-                        key=lambda c: int(
-                            c.host_read_start_line_id.replace("L", "").replace("[", "").replace("]", "").strip()
-                        ),
-                    )
-                    last_extracted_line_id = sorted_clues[-1].host_read_end_line_id
-                except ValueError:
-                    pass
+            # ── Round-aware retry targeting ──────────────────────
+            # Determine which round is under-extracted. J! clues
+            # live in the first half, DJ! in the second half. If J!
+            # is severely under-represented, retrying the tail is
+            # useless — we need to re-extract the first half.
+            j_count = sum(1 for c in chunk_data.clues if c.round == "J!")
+            dj_count = sum(1 for c in chunk_data.clues if c.round == "Double J!")
+            j_deficit = max(0, 25 - j_count)
+            dj_deficit = max(0, 25 - dj_count)
 
-            # If we couldn't parse line IDs, just split the chunk in half
-            if not last_extracted_line_id:
+            if j_deficit > dj_deficit and j_deficit >= 10:
+                # J! round is the bottleneck — retry the FIRST half
+                retry_region = "first_half"
+                retry_text = "\n".join(chunk_lines_list[: chunk_line_count // 2])
+            elif dj_deficit > j_deficit and dj_deficit >= 10:
+                # DJ! round is the bottleneck — retry the SECOND half
+                retry_region = "second_half"
                 retry_text = "\n".join(chunk_lines_list[chunk_line_count // 2 :])
             else:
-                # Find the index of the last extracted line
-                split_idx = chunk_line_count // 2
-                for i, line in enumerate(chunk_lines_list):
-                    if line.startswith(last_extracted_line_id):
-                        split_idx = min(i + 1, chunk_line_count - 1)
-                        break
-                retry_text = "\n".join(chunk_lines_list[split_idx:])
+                # Balanced deficit — use the old heuristic (retry from
+                # the last extracted line or the second half)
+                retry_region = "tail"
+                last_extracted_line_id = None
+                if chunk_data.clues:
+                    try:
+                        sorted_clues = sorted(
+                            chunk_data.clues,
+                            key=lambda c: int(
+                                c.host_read_start_line_id.replace("L", "").replace("[", "").replace("]", "").strip()
+                            ),
+                        )
+                        last_extracted_line_id = sorted_clues[-1].host_read_end_line_id
+                    except ValueError:
+                        pass
+
+                if not last_extracted_line_id:
+                    retry_text = "\n".join(chunk_lines_list[chunk_line_count // 2 :])
+                else:
+                    split_idx = chunk_line_count // 2
+                    for i, line in enumerate(chunk_lines_list):
+                        if line.startswith(last_extracted_line_id):
+                            split_idx = min(i + 1, chunk_line_count - 1)
+                            break
+                    retry_text = "\n".join(chunk_lines_list[split_idx:])
+
+            logger.warning(
+                "Chunk under-extracted, triggering round-aware retry",
+                chunk=original_idx + 1,
+                clues_found=len(chunk_data.clues),
+                j_clues=j_count,
+                dj_clues=dj_count,
+                retry_region=retry_region,
+                chunk_lines=chunk_line_count,
+            )
 
             try:
                 retry_result = await extract_chunk(original_idx, retry_text, is_retry=True)
