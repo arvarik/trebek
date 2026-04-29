@@ -13,4 +13,4 @@ Architecture:
     - ``analysis/``   — Post-extraction analytics (buzzer physics, embeddings)
 """
 
-__version__ = "1.1.6"
+__version__ = "1.1.7"
