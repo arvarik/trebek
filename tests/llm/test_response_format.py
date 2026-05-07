@@ -70,6 +70,7 @@ class TestNormalizeResponseFormat:
         clues = [_make_clue("Charles Dickens")]
         fixed = normalize_response_format(clues)
         assert fixed == 1
+        # Dickens ends in 's' but is a single person
         assert clues[0].correct_response == "Who is Charles Dickens?"
 
     def test_who_is_for_single_name_with_indicator(self) -> None:
@@ -78,12 +79,12 @@ class TestNormalizeResponseFormat:
         assert fixed == 1
         assert "Who" in clues[0].correct_response
 
-    def test_plural_not_guessed(self) -> None:
-        """We don't guess plural — too many false positives (Paris, Jaws, Mars)."""
+    def test_plural_is_now_guessed(self) -> None:
+        """We now guess plural for words ending in 's'."""
         clues = [_make_clue("electrons")]
         fixed = normalize_response_format(clues)
         assert fixed == 1
-        assert clues[0].correct_response == "What is electrons?"
+        assert clues[0].correct_response == "What are electrons?"
 
     def test_who_are_prefix_preserved(self) -> None:
         clues = [_make_clue("Who are the Beatles?")]
@@ -124,6 +125,29 @@ class TestNormalizeResponseFormat:
         clues = [_make_clue("grass")]
         normalize_response_format(clues)
         assert clues[0].correct_response == "What is grass?"
+
+    def test_plural_entities_get_are(self) -> None:
+        """Plural-sounding entities should use 'are'."""
+        clues = [_make_clue("the Beatles")]
+        normalize_response_format(clues)
+        assert clues[0].correct_response == "Who are the Beatles?"
+
+        clues = [_make_clue("electrons")]
+        normalize_response_format(clues)
+        assert clues[0].correct_response == "What are electrons?"
+
+    def test_existing_question_mark_not_doubled(self) -> None:
+        """If the response already ends in '?', don't add another."""
+        clues = [_make_clue("Paris?")]
+        normalize_response_format(clues)
+        assert clues[0].correct_response == "What is Paris?"
+
+    def test_singular_exceptions_preserved(self) -> None:
+        """Paris, Mars, and Jaws should use 'is'."""
+        for name in ["Paris", "Mars", "Jaws"]:
+            clues = [_make_clue(name)]
+            normalize_response_format(clues)
+            assert clues[0].correct_response == f"What is {name}?"
 
     def test_contraction_whats_preserved(self) -> None:
         """'What's a sink?' is already a valid question form — don't double-prefix."""

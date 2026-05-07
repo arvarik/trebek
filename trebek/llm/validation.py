@@ -390,6 +390,7 @@ _PERSON_INDICATORS = {
     "sir",
     "lord",
     "lady",
+    "beatles",
 }
 
 
@@ -404,6 +405,35 @@ def _is_likely_person(answer: str) -> bool:
     if 2 <= len(words) <= 4 and all(w[0].isupper() for w in words if w):
         return True
     return False
+
+
+def _is_likely_plural(answer: str) -> bool:
+    """Heuristic: does this answer refer to a plural entity?"""
+    # Strip trailing punctuation and whitespace
+    cleaned = answer.strip().rstrip("?").strip()
+    if not cleaned:
+        return False
+
+    lower = cleaned.lower()
+
+    # Common singular words ending in 'ss' (grass, glass, class)
+    if lower.endswith("ss"):
+        return False
+
+    # Known singular exceptions (cities, planets, etc.)
+    if lower in {"paris", "mars", "jaws", "athens", "brussels", "naples", "algiers", "texas", "arkansas", "kansas"}:
+        return False
+
+    # Heuristic for people: many names end in 's' but are singular.
+    # e.g., "Charles Dickens", "Brahms", "Columbus", "Jesus".
+    if _is_likely_person(cleaned):
+        # Full names ending in 's' (Dickens) are singular.
+        # Groups/Families (the Beatles, the Smiths) usually have 'the' and are plural.
+        if lower.startswith("the "):
+            return True
+        return False
+
+    return lower.endswith("s")
 
 
 def normalize_response_format(clues: list[Clue]) -> int:
@@ -427,17 +457,18 @@ def normalize_response_format(clues: list[Clue]) -> int:
             continue
 
         # Not in question format — fix it
-        if _is_likely_person(resp):
-            prefix = "Who is"
+        is_person = _is_likely_person(resp)
+        is_plural = _is_likely_plural(resp)
+
+        if is_person:
+            prefix = "Who are" if is_plural else "Who is"
         else:
-            prefix = "What is"
+            prefix = "What are" if is_plural else "What is"
 
-        # Default to singular "is" — the LLM prompt instructs proper
-        # question format, so plural responses should already arrive as
-        # "What are...". We avoid guessing plural here because too many
-        # singular words end in 's' (Paris, Mars, Jaws).
+        # Append question mark if missing
+        suffix = "" if resp.endswith("?") else "?"
 
-        new_response = f"{prefix} {resp}?"
+        new_response = f"{prefix} {resp}{suffix}"
         logger.debug(
             "Response format normalized",
             original=clue.correct_response,
