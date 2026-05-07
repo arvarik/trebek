@@ -48,13 +48,13 @@ def generate_stats_layout(db_path: str) -> Any:
     return Group(top_grid, timing_panel, recent_panel)
 
 
-def render_stats_dashboard(db_path: str) -> None:
+async def render_stats_dashboard(db_path: str) -> None:
     """
     Renders a live-updating analytics dashboard showing pipeline health,
     telemetry, and recent episode history.
     """
     from rich.live import Live
-    import time
+    import asyncio
 
     console.print()
     render_startup_banner(mode="stats")
@@ -71,7 +71,7 @@ def render_stats_dashboard(db_path: str) -> None:
     try:
         with Live(layout, console=console, refresh_per_second=1) as live:
             while True:
-                time.sleep(2)
+                await asyncio.sleep(2)
                 live.update(generate_stats_layout(db_path))
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         console.print("\n[dim]Exiting dashboard...[/dim]\n")

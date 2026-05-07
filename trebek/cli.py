@@ -192,7 +192,9 @@ def main() -> None:
 
     # ── trebek stats ─────────────────────────────────────────────────
     if command == "stats":
-        render_stats_dashboard(settings.db_path)
+        import asyncio
+
+        asyncio.run(render_stats_dashboard(settings.db_path))
         return
 
     # ── trebek retry ───────────────────────────────────────────────────────
