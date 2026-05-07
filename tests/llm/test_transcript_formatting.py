@@ -47,6 +47,12 @@ class TestBuildSpeakerAbbreviationMap:
         # "UNKNOWN" is not SPEAKER_ prefixed, so empty map
         assert result == {}
 
+    def test_none_speaker_value(self) -> None:
+        """Segments with speaker=None should be treated as UNKNOWN."""
+        segments = [{"speaker": None, "text": "test"}]
+        result = _build_speaker_abbreviation_map(segments)
+        assert result == {}
+
 
 class TestFormatTranscriptCompressed:
     def test_basic_formatting(self) -> None:
@@ -75,6 +81,12 @@ class TestFormatTranscriptCompressed:
     def test_missing_speaker_key(self) -> None:
         """Segments with missing 'speaker' should use UNKNOWN."""
         segments = [{"text": "some text"}]
+        result = _format_transcript_compressed(segments)
+        assert result == "L0 UNKNOWN: some text"
+
+    def test_none_speaker_value(self) -> None:
+        """Segments with speaker=None should use UNKNOWN."""
+        segments = [{"speaker": None, "text": "some text"}]
         result = _format_transcript_compressed(segments)
         assert result == "L0 UNKNOWN: some text"
 
