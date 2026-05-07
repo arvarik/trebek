@@ -22,7 +22,9 @@ def _build_speaker_abbreviation_map(segments: list[Dict[str, Any]]) -> Dict[str,
     """Build a lookup from abbreviated speaker IDs back to original SPEAKER_XX IDs."""
     abbrev_map: Dict[str, str] = {}
     for seg in segments:
-        speaker = seg.get("speaker", "UNKNOWN")
+        speaker = seg.get("speaker")
+        if not isinstance(speaker, str):
+            speaker = "UNKNOWN"
         abbrev = _abbreviate_speaker(speaker)
         if abbrev != speaker:
             abbrev_map[abbrev] = speaker
@@ -42,7 +44,10 @@ def _format_transcript_compressed(segments: list[Dict[str, Any]]) -> str:
     formatted_lines = []
     for i, seg in enumerate(segments):
         text = seg.get("text", "").strip()
-        speaker = _abbreviate_speaker(seg.get("speaker", "UNKNOWN"))
+        speaker_val = seg.get("speaker")
+        if not isinstance(speaker_val, str):
+            speaker_val = "UNKNOWN"
+        speaker = _abbreviate_speaker(speaker_val)
         formatted_lines.append(f"L{i} {speaker}: {text}")
 
     return "\n".join(formatted_lines)
