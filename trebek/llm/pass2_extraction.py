@@ -33,6 +33,9 @@ from trebek.config import MODEL_PRO, MODEL_FLASH, KNOWN_HOSTS
 logger = structlog.get_logger()
 GEMINI_CONCURRENCY = 3
 
+# Pre-compile regex for syllable counting to improve performance in loops
+_SYLLABLE_PATTERN = re.compile(r"[aeiouy]+")
+
 
 def _count_syllables(text: str) -> int:
     """
@@ -44,9 +47,9 @@ def _count_syllables(text: str) -> int:
     words = text.lower().split()
     total = 0
     for word in words:
-        syllables = len(re.findall(r"[aeiouy]+", word))
-        # Silent-e heuristic: trailing 'e' with >1 syllable
-        if word.endswith("e") and syllables > 1:
+        syllables = len(_SYLLABLE_PATTERN.findall(word))
+        # Silent-e heuristic: trailing 'e' with >1 syllable, excluding 'le'
+        if syllables > 1 and word.endswith("e") and not word.endswith("le"):
             syllables -= 1
         total += max(1, syllables)
     return max(1, total)
