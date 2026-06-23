@@ -1,6 +1,7 @@
 import os
 import time
 import asyncio
+import contextlib
 import structlog
 from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
@@ -77,10 +78,8 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                             logger.warning("Quality gate integrity issue", issue=w)
                         # Delete the cached episode JSON so the retry triggers
                         # a fresh LLM extraction instead of replaying the same data.
-                        try:
+                        with contextlib.suppress(OSError):
                             os.remove(episode_data_path)
-                        except OSError:
-                            pass
                         raise ValueError(
                             f"Quality gate FAIL: {len(integrity_warnings)} integrity warnings, "
                             f"{clue_count} clues (minimum 45). Episode will not be committed."
@@ -132,14 +131,12 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                 if orchestrator.mode == "daemon":
                     await orchestrator.state_machine_work_ready.wait()
                 else:
-                    try:
+                    with contextlib.suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(orchestrator.state_machine_work_ready.wait(), timeout=1.0)
-                    except asyncio.TimeoutError:
-                        pass
     except asyncio.CancelledError:
         if current_episode_id:
             logger.warning("State machine worker cancelled, resetting episode", episode_id=current_episode_id)
-            try:
+            with contextlib.suppress(Exception):
                 await orchestrator.db_writer.execute(
                     "UPDATE pipeline_state SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
                     (
@@ -147,5 +144,3 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                         current_episode_id,
                     ),
                 )
-            except Exception:
-                pass

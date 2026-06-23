@@ -1,6 +1,7 @@
 import os
 import time
 import asyncio
+import contextlib
 import structlog
 from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
@@ -91,14 +92,12 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                 if orchestrator.mode == "daemon":
                     await orchestrator.gpu_work_ready.wait()
                 else:
-                    try:
+                    with contextlib.suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(orchestrator.gpu_work_ready.wait(), timeout=1.0)
-                    except asyncio.TimeoutError:
-                        pass
     except asyncio.CancelledError:
         if current_episode_id:
             logger.warning("GPU worker cancelled, resetting episode", episode_id=current_episode_id)
-            try:
+            with contextlib.suppress(Exception):
                 await orchestrator.db_writer.execute(
                     "UPDATE pipeline_state SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
                     (
@@ -106,5 +105,3 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                         current_episode_id,
                     ),
                 )
-            except Exception:
-                pass
