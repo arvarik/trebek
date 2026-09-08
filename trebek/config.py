@@ -7,7 +7,7 @@ pricing data, and supported video format definitions.
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
-from typing import Tuple
+from typing import Any, Tuple
 
 
 # All container formats natively supported by FFmpeg's libavformat
@@ -116,8 +116,9 @@ class Settings(BaseSettings):
     @field_validator("whisper_compute_type")
     @classmethod
     def validate_whisper_compute_type(cls, v: str) -> str:
-        if v not in ("float16", "float32"):
-            raise ValueError("whisper_compute_type must be 'float16' or 'float32'")
+        valid_types = {"float16", "float32", "int8", "int8_float16"}
+        if v not in valid_types:
+            raise ValueError(f"whisper_compute_type must be one of {sorted(valid_types)}")
         return v
 
     @field_validator("whisper_batch_size")
@@ -136,6 +137,17 @@ class Settings(BaseSettings):
         if v < 1 or v > 8:
             raise ValueError("llm_concurrency must be between 1 and 8")
         return v
+
+    # Preflight & Hardware options
+    hf_token: str = Field(default="", description="Hugging Face access token for pyannote speaker diarization")
+    device: str = Field(default="auto", description="Device for WhisperX transcription ('auto', 'cuda', 'cpu')")
+    allow_cpu: bool = Field(default=False, description="Allow running WhisperX on CPU if CUDA is unavailable")
+
+    def model_post_init(self, __context: Any) -> None:
+        import os
+
+        if self.hf_token and "HF_TOKEN" not in os.environ:
+            os.environ["HF_TOKEN"] = self.hf_token
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

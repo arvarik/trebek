@@ -146,20 +146,50 @@ class PipelineQueryMixin:
             )
             return False
 
+    async def reset_episode(
+        self,
+        episode_id: Optional[str] = None,
+        force: bool = False,
+        reset_to: str = PipelineStatus.PENDING,
+    ) -> int:
+        """
+        Resets an episode or all failed episodes back to a specified status (default PENDING).
+        If episode_id is provided, only that episode is reset.
+        If force is True, the episode is reset even if it's not currently FAILED.
+        Returns the number of rows reset.
+        """
+        if episode_id:
+            if force:
+                query = (
+                    "UPDATE pipeline_state SET status = ?, retry_count = 0, last_error = NULL, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE episode_id = ? RETURNING episode_id"
+                )
+                params: tuple[Any, ...] = (reset_to, episode_id)
+            else:
+                query = (
+                    "UPDATE pipeline_state SET status = ?, retry_count = 0, last_error = NULL, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE episode_id = ? AND status = ? RETURNING episode_id"
+                )
+                params = (reset_to, episode_id, PipelineStatus.FAILED)
+        else:
+            query = (
+                "UPDATE pipeline_state SET status = ?, retry_count = 0, last_error = NULL, "
+                "updated_at = CURRENT_TIMESTAMP WHERE status = ? RETURNING episode_id"
+            )
+            params = (reset_to, PipelineStatus.FAILED)
+
+        result = await self.execute(query, params)  # type: ignore[attr-defined]
+        count = len(result) if isinstance(result, list) else 0
+        if count > 0:
+            logger.info("Reset episode(s) for retry", count=count, episode_id=episode_id, force=force)
+        return count
+
     async def reset_failed_episodes(self) -> int:
         """
         Resets all FAILED episodes back to PENDING for re-processing.
         Returns the count of episodes reset.
         """
-        result = await self.execute(  # type: ignore[attr-defined]
-            "UPDATE pipeline_state SET status = ?, retry_count = 0, last_error = NULL, "
-            "updated_at = CURRENT_TIMESTAMP WHERE status = ? RETURNING episode_id",
-            (PipelineStatus.PENDING, PipelineStatus.FAILED),
-        )
-        count = len(result) if isinstance(result, list) else 0
-        if count > 0:
-            logger.info("Reset failed episodes for retry", count=count)
-        return count
+        return await self.reset_episode()
 
     async def insert_job_telemetry(self, telemetry: Any) -> None:
         """

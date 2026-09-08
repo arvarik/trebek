@@ -105,6 +105,26 @@ def render_system_diagnostics(settings: Any) -> bool:
     else:
         add_check("WhisperX", False, "not found — GPU transcription will fail", warn=True)
 
+    # ── Hardware / Acceleration ──
+    from trebek.gpu.hardware import detect_hardware
+
+    hw = detect_hardware()
+    if hw.is_cuda:
+        vram_str = f" ({hw.vram_gb:.1f} GB VRAM)" if hw.vram_gb else ""
+        add_check("Hardware", True, f"{hw.device_name}{vram_str}")
+    elif hw.is_mps:
+        add_check("Hardware", False, f"{hw.device_name} (CTranslate2 requires CPU)", warn=True)
+    else:
+        add_check("Hardware", False, "CPU only (CUDA recommended for transcription)", warn=True)
+
+    # ── Hugging Face Token ──
+    hf_token = os.environ.get("HF_TOKEN", "") or getattr(settings, "hf_token", "")
+    if hf_token:
+        masked_hf = hf_token[:4] + "•" * 8 + hf_token[-4:] if len(hf_token) > 8 else "•" * len(hf_token)
+        add_check("HF Token", True, f"{masked_hf} (diarization enabled)")
+    else:
+        add_check("HF Token", False, "not set — diarization disabled, accuracy drops ~50%", warn=True)
+
     # ── Gemini API Key ──
     api_key = os.environ.get("GEMINI_API_KEY", settings.gemini_api_key)
     if api_key:
@@ -134,7 +154,10 @@ def render_system_diagnostics(settings: Any) -> bool:
     config_table.add_row("Database", f"[cyan]{settings.db_path}[/cyan]")
     config_table.add_row("Input Dir", f"[blue]{settings.input_dir}[/blue]")
     config_table.add_row("Output Dir", f"[blue]{settings.output_dir}[/blue]")
-    config_table.add_row("GPU VRAM", f"[magenta]{settings.gpu_vram_target_gb} GB[/magenta]")
+    if hw.is_cuda:
+        config_table.add_row("GPU VRAM", f"[magenta]{settings.gpu_vram_target_gb} GB target[/magenta]")
+    else:
+        config_table.add_row("Device", "[yellow]CPU (non-CUDA)[/yellow]")
     config_table.add_row("Batch Size", f"[magenta]{settings.whisper_batch_size}[/magenta]")
     config_table.add_row("Compute", f"[magenta]{settings.whisper_compute_type}[/magenta]")
 

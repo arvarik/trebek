@@ -1,11 +1,33 @@
 import structlog
 import asyncio
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from pydantic import BaseModel
 
 logger = structlog.get_logger()
 
 _client: Optional["GeminiClient"] = None
+_usage_callbacks: list[Callable[[dict[str, Any]], None]] = []
+
+
+def register_gemini_usage_callback(cb: Callable[[dict[str, Any]], None]) -> None:
+    """Register a callback invoked immediately whenever Gemini API returns usage."""
+    if cb not in _usage_callbacks:
+        _usage_callbacks.append(cb)
+
+
+def unregister_gemini_usage_callback(cb: Callable[[dict[str, Any]], None]) -> None:
+    """Unregister a previously registered Gemini usage callback."""
+    if cb in _usage_callbacks:
+        _usage_callbacks.remove(cb)
+
+
+def _notify_gemini_usage(usage: dict[str, Any]) -> None:
+    """Invokes all registered usage callbacks with the usage dictionary."""
+    for cb in list(_usage_callbacks):
+        try:
+            cb(usage)
+        except Exception:
+            pass
 
 
 def _get_client() -> "GeminiClient":
@@ -207,6 +229,8 @@ class GeminiClient:
                     billable_output = usage["output_tokens"] + usage["thinking_tokens"]
                     cost = (usage["input_tokens"] * pricing["input"] + billable_output * pricing["output"]) / 1_000_000
                 usage["cost_usd"] = cost
+
+                _notify_gemini_usage(usage)
 
                 # Detect output truncation before returning
                 finish_reason = None

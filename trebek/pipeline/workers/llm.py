@@ -21,6 +21,7 @@ async def llm_worker(
     progress: Any,
     task_id: Any,
     worker_id: int = 1,
+    coordinator: Any = None,
 ) -> None:
     """Polls for TRANSCRIPT_READY, extracts data via LLM, and saves structured output."""
     current_episode_id: str | None = None
@@ -31,6 +32,8 @@ async def llm_worker(
             )
             current_episode_id = episode_id
             if episode_id:
+                if coordinator:
+                    coordinator.update_llm(worker_id, episode_id, "pass 1 anchoring")
                 logger.info(
                     "LLM Worker: Processing episode",
                     worker_id=worker_id,
@@ -104,6 +107,8 @@ async def llm_worker(
                         )
 
                         pass2_start = time.perf_counter()
+                        if coordinator:
+                            coordinator.update_llm(worker_id, episode_id, "pass 2 extraction")
                         data, usage2, retries, quality = await execute_pass_2_data_extraction(
                             segments,
                             speaker_mapping,
@@ -162,7 +167,12 @@ async def llm_worker(
                         else:
                             # Extract is the last active stage — advance progress
                             orchestrator.stats["completed"] += 1
-                            progress.advance(task_id)
+                            if coordinator:
+                                coordinator.advance_verified()
+                            else:
+                                progress.advance(task_id)
+                        if coordinator:
+                            coordinator.update_llm(worker_id, None)
                         logger.info("LLM extraction complete", worker_id=worker_id, episode_id=episode_id)
                     else:
                         raise ValueError("Transcript path not found in database")
@@ -181,11 +191,19 @@ async def llm_worker(
                     current_episode_id = None
                     if permanently_failed:
                         orchestrator.stats["failed"] += 1
-                        progress.advance(task_id)
+                    if coordinator:
+                        coordinator.update_llm(worker_id, None)
+                        if permanently_failed:
+                            coordinator.advance_verified()
                     else:
+                        if permanently_failed:
+                            progress.advance(task_id)
+                    if not permanently_failed:
                         orchestrator.llm_work_ready.set()
             else:
                 current_episode_id = None
+                if coordinator:
+                    coordinator.update_llm(worker_id, None)
                 if orchestrator.mode == "once" and await orchestrator._no_work_remaining(
                     PipelineStatus.TRANSCRIPT_READY
                 ):
@@ -197,6 +215,8 @@ async def llm_worker(
                     with contextlib.suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(orchestrator.llm_work_ready.wait(), timeout=1.0)
     except asyncio.CancelledError:
+        if coordinator:
+            coordinator.update_llm(worker_id, None)
         if current_episode_id:
             logger.warning(
                 "LLM worker cancelled, resetting episode", worker_id=worker_id, episode_id=current_episode_id

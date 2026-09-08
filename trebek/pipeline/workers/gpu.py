@@ -13,7 +13,12 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, task_id: Any) -> None:
+async def extractor_worker(
+    orchestrator: "TrebekPipelineOrchestrator",
+    progress: Any,
+    task_id: Any,
+    coordinator: Any = None,
+) -> None:
     """Polls for PENDING episodes and sends to GPU for transcription."""
     current_episode_id: str | None = None
     try:
@@ -21,6 +26,8 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
             episode_id = await orchestrator.db_writer.poll_for_work(PipelineStatus.PENDING, PipelineStatus.TRANSCRIBING)
             current_episode_id = episode_id
             if episode_id:
+                if coordinator:
+                    coordinator.update_gpu(episode_id)
                 logger.info(
                     "Extractor: Processing episode",
                     episode_id=episode_id,
@@ -43,10 +50,18 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                     )
                     if permanently_failed:
                         orchestrator.stats["failed"] += 1
-                    progress.advance(task_id)
+                    if coordinator:
+                        coordinator.update_gpu(None)
+                        if permanently_failed:
+                            coordinator.advance_verified()
+                    else:
+                        if permanently_failed:
+                            progress.advance(task_id)
                     continue
 
                 try:
+                    if orchestrator.gpu_orchestrator is None:
+                        raise RuntimeError("GPU Orchestrator is not initialized")
                     start_t = time.perf_counter()
                     (
                         transcript_path,
@@ -73,7 +88,12 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                     else:
                         # Transcribe is the last active stage — advance progress
                         orchestrator.stats["completed"] += 1
-                        progress.advance(task_id)
+                        if coordinator:
+                            coordinator.advance_verified()
+                        else:
+                            progress.advance(task_id)
+                    if coordinator:
+                        coordinator.update_gpu(None)
                     logger.info("Transcription complete", episode_id=episode_id)
                 except Exception as e:
                     logger.error("GPU Orchestrator failed", error=str(e))
@@ -83,11 +103,19 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                     current_episode_id = None
                     if permanently_failed:
                         orchestrator.stats["failed"] += 1
-                        progress.advance(task_id)
+                    if coordinator:
+                        coordinator.update_gpu(None)
+                        if permanently_failed:
+                            coordinator.advance_verified()
                     else:
+                        if permanently_failed:
+                            progress.advance(task_id)
+                    if not permanently_failed:
                         orchestrator.gpu_work_ready.set()
             else:
                 current_episode_id = None
+                if coordinator:
+                    coordinator.update_gpu(None)
                 if orchestrator.mode == "once" and await orchestrator._no_work_remaining(PipelineStatus.PENDING):
                     break
                 orchestrator.gpu_work_ready.clear()
@@ -97,6 +125,8 @@ async def extractor_worker(orchestrator: "TrebekPipelineOrchestrator", progress:
                     with contextlib.suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(orchestrator.gpu_work_ready.wait(), timeout=1.0)
     except asyncio.CancelledError:
+        if coordinator:
+            coordinator.update_gpu(None)
         if current_episode_id:
             logger.warning("GPU worker cancelled, resetting episode", episode_id=current_episode_id)
             with contextlib.suppress(Exception):
