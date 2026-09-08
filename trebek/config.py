@@ -39,22 +39,67 @@ IGNORED_EXTENSIONS: Tuple[str, ...] = (
 
 
 # ── Model Constants ──────────────────────────────────────────────
-MODEL_FLASH = "gemini-3.1-flash-lite-preview"
+MODEL_FLASH = "gemini-3.8-flash"
+MODEL_FLASH38 = "gemini-3.8-flash"
+MODEL_FLASH_LITE = "gemini-3.1-flash-lite-preview"
 MODEL_FLASH3 = "gemini-3-flash-preview"
 MODEL_PRO = "gemini-3.1-pro-preview"
 MODEL_EMBEDDING = "gemini-embedding-001"
 
-# CLI alias → canonical model name
+# CLI alias / provider string → canonical model name
 MODEL_ALIASES: dict[str, str] = {
     "flash": MODEL_FLASH,
+    "gemini-flash": MODEL_FLASH,
+    "flash38": MODEL_FLASH38,
+    "gemini-3.8-flash": MODEL_FLASH38,
+    "flash-lite": MODEL_FLASH_LITE,
+    "gemini-flash-lite": MODEL_FLASH_LITE,
     "flash3": MODEL_FLASH3,
+    "gemini-flash-3": MODEL_FLASH3,
     "pro": MODEL_PRO,
+    "gemini-pro": MODEL_PRO,
+    "gemini-3.1-pro": MODEL_PRO,
 }
+
+
+def resolve_model_name(name: str | None) -> str:
+    """Resolves a user-provided model alias, provider-prefixed string,
+    or explicit model ID to its canonical Gemini model identifier.
+
+    Examples:
+        - "gemini-flash", "flash" -> "gemini-3.8-flash"
+        - "gemini-pro", "pro" -> "gemini-3.1-pro-preview"
+        - "flash-lite", "gemini-flash-lite" -> "gemini-3.1-flash-lite-preview"
+        - "gemini-3.8-flash" -> "gemini-3.8-flash"
+        - "models/gemini-3.8-flash" -> "gemini-3.8-flash"
+        - "gemini/gemini-flash" -> "gemini-3.8-flash"
+        - "google/gemini-flash" -> "gemini-3.8-flash"
+    """
+    cleaned = (name or "").strip()
+    if not cleaned:
+        return MODEL_PRO
+    # Strip leading 'models/' or provider prefixes like 'gemini/' or 'google/'
+    if cleaned.startswith("models/"):
+        cleaned = cleaned[len("models/") :]
+    if cleaned.startswith("gemini/"):
+        cleaned = cleaned[len("gemini/") :]
+    elif cleaned.startswith("google/"):
+        cleaned = cleaned[len("google/") :]
+
+    key = cleaned.lower().replace("_", "-")
+
+    if key in MODEL_ALIASES:
+        return MODEL_ALIASES[key]
+
+    return cleaned
+
 
 # Per-million-token pricing (USD) — Standard tier, prompts ≤200k tokens
 # Source: https://ai.google.dev/gemini-api/docs/pricing#standard (2026-04-26)
 MODEL_PRICING: dict[str, dict[str, float]] = {
-    MODEL_FLASH: {"input": 0.25, "output": 1.50},
+    MODEL_FLASH: {"input": 0.50, "output": 3.00},
+    MODEL_FLASH38: {"input": 0.50, "output": 3.00},
+    MODEL_FLASH_LITE: {"input": 0.25, "output": 1.50},
     MODEL_FLASH3: {"input": 0.50, "output": 3.00},
     MODEL_PRO: {"input": 2.00, "output": 12.00},
 }

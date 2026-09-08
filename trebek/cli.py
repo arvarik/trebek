@@ -15,7 +15,7 @@ import os
 import sys
 from typing import Any
 
-from trebek.config import settings, MODEL_ALIASES, MODEL_PRO
+from trebek.config import settings, resolve_model_name
 from trebek.pipeline.stages import VALID_STAGES
 from trebek.pipeline.discovery import discover_video_files
 from trebek.cli_docker import handle_docker
@@ -110,9 +110,8 @@ def build_parser() -> TrebekArgumentParser:
     run_parser.add_argument(
         "--model",
         type=str,
-        choices=list(MODEL_ALIASES.keys()),
         default="pro",
-        help="LLM model for Pass 2 extraction: 'pro' (default), 'flash' (cheapest), or 'flash3' (balanced)",
+        help="LLM model for Pass 2 extraction: 'pro' (default), 'flash' / 'gemini-flash' (gemini-3.8-flash), or any canonical Gemini model ID",
     )
     run_parser.add_argument(
         "--input-dir",
@@ -561,7 +560,7 @@ def main() -> None:
     from trebek.pipeline import run_pipeline
 
     mode = "once" if getattr(args, "once", False) else "daemon"
-    llm_model = MODEL_ALIASES.get(getattr(args, "model", "pro"), MODEL_PRO)
+    llm_model = resolve_model_name(getattr(args, "model", "pro"))
     max_retries = getattr(args, "max_retries", 3)
     llm_concurrency = getattr(args, "llm_concurrency", None)
     mock_llm = getattr(args, "mock_llm", False) or getattr(settings, "mock_llm", False)

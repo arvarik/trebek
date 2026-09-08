@@ -155,11 +155,15 @@ trebek scan --stage transcribe           # Files needing GPU work
 
 ### Model Selection
 
-| Alias | Model | Cost (per M tokens) |
-|-------|-------|---------------------|
-| `pro` | gemini-3.1-pro-preview | $2.00 in / $12.00 out |
-| `flash3` | gemini-3-flash-preview | $0.50 in / $3.00 out |
-| `flash` | gemini-3.1-flash-lite-preview | $0.25 in / $1.50 out |
+You can pass standard aliases or provider strings (e.g. `--model gemini-flash`), as well as any explicit Gemini model ID:
+
+| Alias / Input | Resolved Model ID | Cost (per M tokens) | Notes |
+|---------------|-------------------|---------------------|-------|
+| `pro` / `gemini-pro` | `gemini-3.1-pro-preview` | $2.00 in / $12.00 out | Default high-reasoning model |
+| `flash` / `gemini-flash` | `gemini-3.8-flash` | $0.50 in / $3.00 out | Fast, modern thinking model |
+| `flash-lite` | `gemini-3.1-flash-lite-preview` | $0.25 in / $1.50 out | Ultra-low cost |
+| `flash3` | `gemini-3-flash-preview` | $0.50 in / $3.00 out | Preview flash model |
+| `<custom>` | Passed through directly | Inferred | Any `gemini-*` model ID |
 
 ### Supported Video Formats
 
