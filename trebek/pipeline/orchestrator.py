@@ -49,6 +49,7 @@ class TrebekPipelineOrchestrator:
         stage: str = "all",
         llm_model: str = MODEL_PRO,
         max_retries: int = 3,
+        llm_concurrency: Optional[int] = None,
     ) -> None:
         self.db_path = db_path
         self.output_dir = output_dir
@@ -56,6 +57,9 @@ class TrebekPipelineOrchestrator:
         self.stage = stage
         self.llm_model = llm_model
         self.max_retries = max_retries
+        self.llm_concurrency = (
+            llm_concurrency if llm_concurrency is not None else getattr(settings, "llm_concurrency", 2)
+        )
         self.db_writer = DatabaseWriter(db_path)
         self.gpu_orchestrator = GPUOrchestrator(
             output_dir,
@@ -104,11 +108,21 @@ class TrebekPipelineOrchestrator:
 
         # Cleanup intermediate files
         try:
-            rows = await self.db_writer.execute(
-                "SELECT episode_id FROM pipeline_state WHERE status != ?",
-                (PipelineStatus.COMPLETED,),
+            # Only purge intermediate JSONs for initial/pre-extraction or failed statuses.
+            # Never delete JSONs for episodes that reached SAVING, MULTIMODAL_*, or VECTORIZING.
+            purge_statuses = (
+                PipelineStatus.PENDING,
+                PipelineStatus.TRANSCRIBING,
+                PipelineStatus.TRANSCRIPT_READY,
+                PipelineStatus.CLEANED,
+                PipelineStatus.FAILED,
             )
-            incomplete_episodes = {row[0] for row in rows} if rows else set()
+            placeholders = ",".join(["?"] * len(purge_statuses))
+            rows = await self.db_writer.execute(
+                f"SELECT episode_id FROM pipeline_state WHERE status IN ({placeholders})",
+                purge_statuses,
+            )
+            episodes_to_purge = {row[0] for row in rows} if rows else set()
 
             for filename in os.listdir(self.output_dir):
                 filepath = os.path.join(self.output_dir, filename)
@@ -122,10 +136,10 @@ class TrebekPipelineOrchestrator:
                         pass
                     continue
 
-                # Intermediate JSONs for incomplete episodes
+                # Intermediate JSONs only for episodes that haven't reached saving/multimodal/vectorizing
                 if filename.startswith("episode_") and filename.endswith(".json"):
                     ep_id = filename[len("episode_") : -len(".json")]
-                    if ep_id in incomplete_episodes:
+                    if ep_id in episodes_to_purge:
                         try:
                             os.remove(filepath)
                             logger.info("Cleaned up intermediate JSON file", file=filename)
@@ -169,8 +183,31 @@ class TrebekPipelineOrchestrator:
         logger.info("Pipeline Orchestrator shut down cleanly.")
 
     async def _get_total_episodes(self) -> int:
-        """Returns the total number of episodes in the pipeline."""
-        result = await self.db_writer.execute("SELECT COUNT(*) FROM pipeline_state")
+        """Returns the number of active episodes requiring work for the current stage configuration."""
+        if self.stage == "all":
+            result = await self.db_writer.execute(
+                "SELECT COUNT(*) FROM pipeline_state WHERE status != ?",
+                (PipelineStatus.COMPLETED,),
+            )
+        else:
+            stage_status_map = {
+                "transcribe": [PipelineStatus.PENDING, PipelineStatus.TRANSCRIBING],
+                "extract": [PipelineStatus.TRANSCRIPT_READY, PipelineStatus.CLEANED],
+                "augment": [PipelineStatus.SAVING, PipelineStatus.MULTIMODAL_PROCESSING],
+                "verify": [PipelineStatus.MULTIMODAL_DONE, PipelineStatus.VECTORIZING],
+            }
+            statuses = stage_status_map.get(self.stage, [])
+            if not statuses:
+                result = await self.db_writer.execute(
+                    "SELECT COUNT(*) FROM pipeline_state WHERE status != ?",
+                    (PipelineStatus.COMPLETED,),
+                )
+            else:
+                placeholders = ",".join(["?"] * len(statuses))
+                result = await self.db_writer.execute(
+                    f"SELECT COUNT(*) FROM pipeline_state WHERE status IN ({placeholders})",
+                    tuple(statuses),
+                )
         return result[0][0] if result else 0
 
     async def _no_work_remaining(self, target_status: str) -> bool:
@@ -241,7 +278,13 @@ class TrebekPipelineOrchestrator:
             if not self.is_stage_active("transcribe"):
                 total = await self._get_total_episodes()
                 progress.update(task_id, total=total)
-            self.tasks.append(asyncio.create_task(llm_worker(self, progress, task_id)))
+            for i in range(self.llm_concurrency):
+                self.tasks.append(
+                    asyncio.create_task(
+                        llm_worker(self, progress, task_id, worker_id=i + 1),
+                        name=f"llm_worker_{i + 1}",
+                    )
+                )
             active_stages.append("extract")
 
         # ── Multimodal augmentation stage ────────────────────────────
@@ -280,6 +323,7 @@ async def run_pipeline(
     stage: str = "all",
     llm_model: str = MODEL_PRO,
     max_retries: int = 3,
+    llm_concurrency: Optional[int] = None,
 ) -> None:
     """Main pipeline entry point, called by cli.py."""
     from trebek.ui import render_startup_banner, render_system_diagnostics
@@ -301,39 +345,64 @@ async def run_pipeline(
         stage=stage,
         llm_model=llm_model,
         max_retries=max_retries,
+        llm_concurrency=llm_concurrency,
     )
 
     await orchestrator.initialize(input_dir)
 
     progress = create_pipeline_progress()
+    loop = asyncio.get_running_loop()
+    installed_signals: list[signal.Signals] = []
 
-    with progress:
-        task_id = progress.add_task("Processing episodes", total=None)
+    try:
+        with progress:
+            task_id = progress.add_task("Processing episodes", total=None)
 
-        await orchestrator.start_workers(input_dir, progress, task_id)
+            await orchestrator.start_workers(input_dir, progress, task_id)
 
-        if mode == "daemon":
-            # Daemon mode — wait for signal
-            loop = asyncio.get_running_loop()
-            stop_event = asyncio.Event()
+            if mode == "daemon":
+                # Daemon mode — wait for signal
+                stop_event = asyncio.Event()
 
-            def signal_handler() -> None:
-                logger.info("Received shutdown signal.")
-                stop_event.set()
+                def daemon_signal_handler() -> None:
+                    logger.info("Received shutdown signal.")
+                    stop_event.set()
 
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.add_signal_handler(sig, signal_handler)
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    try:
+                        loop.add_signal_handler(sig, daemon_signal_handler)
+                        installed_signals.append(sig)
+                    except (NotImplementedError, ValueError):
+                        pass
 
-            console.rule("[dim]Watching for new episodes • Press Ctrl+C to stop[/dim]", style="dim cyan")
-            console.print()
-            await stop_event.wait()
-        else:
-            # Once mode — wait for all workers to finish naturally
-            console.rule("[dim]Processing queued episodes[/dim]", style="dim cyan")
-            console.print()
-            await asyncio.gather(*orchestrator.tasks, return_exceptions=True)
+                console.rule("[dim]Watching for new episodes • Press Ctrl+C to stop[/dim]", style="dim cyan")
+                console.print()
+                await stop_event.wait()
+            else:
+                # Once mode — handle signals to cancel workers and clean up
+                def once_signal_handler() -> None:
+                    logger.info("Received shutdown signal in once mode.")
+                    orchestrator.running = False
+                    for task in orchestrator.tasks:
+                        task.cancel()
 
-    await orchestrator.shutdown()
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    try:
+                        loop.add_signal_handler(sig, once_signal_handler)
+                        installed_signals.append(sig)
+                    except (NotImplementedError, ValueError):
+                        pass
+
+                console.rule("[dim]Processing queued episodes[/dim]", style="dim cyan")
+                console.print()
+                await asyncio.gather(*orchestrator.tasks, return_exceptions=True)
+    finally:
+        for sig in installed_signals:
+            try:
+                loop.remove_signal_handler(sig)
+            except (NotImplementedError, ValueError):
+                pass
+        await orchestrator.shutdown()
 
 
 # Backward compatibility — allow `python src/main.py` to still work

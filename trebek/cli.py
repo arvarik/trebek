@@ -124,6 +124,12 @@ def build_parser() -> TrebekArgumentParser:
         default=3,
         help="Maximum retry attempts for failed episodes (default: 3)",
     )
+    run_parser.add_argument(
+        "--llm-concurrency",
+        type=int,
+        default=None,
+        help="Number of concurrent episodes processed in LLM extraction (default: from .env or 2)",
+    )
 
     # ── trebek scan ──────────────────────────────────────────────────
     scan_parser = subparsers.add_parser(
@@ -234,6 +240,7 @@ def main() -> None:
     stage = getattr(args, "stage", "all")
     llm_model = MODEL_ALIASES.get(getattr(args, "model", "pro"), MODEL_PRO)
     max_retries = getattr(args, "max_retries", 3)
+    llm_concurrency = getattr(args, "llm_concurrency", None)
 
     asyncio.run(
         run_pipeline(
@@ -242,6 +249,7 @@ def main() -> None:
             stage=stage,
             llm_model=llm_model,
             max_retries=max_retries,
+            llm_concurrency=llm_concurrency,
         )
     )
 
