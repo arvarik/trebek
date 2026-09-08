@@ -268,6 +268,38 @@ def build_parser() -> TrebekArgumentParser:
         help="Output file path (prints to stdout if omitted)",
     )
 
+    # ── trebek search ────────────────────────────────────────────────
+    search_parser = subparsers.add_parser(
+        "search",
+        help="Full-text search across all extracted clues and responses using FTS5",
+        help_command="search",
+    )
+    search_parser.add_argument(
+        "query",
+        type=str,
+        help="Search query term or phrase (e.g. 'Shakespeare' or 'Mount Everest')",
+    )
+    search_parser.add_argument(
+        "--round",
+        "-r",
+        type=str,
+        choices=["J!", "Double J!", "Final J!", "Tiebreaker"],
+        default=None,
+        help="Filter results by game round",
+    )
+    search_parser.add_argument(
+        "--limit",
+        "-l",
+        type=int,
+        default=25,
+        help="Maximum results to return (default: 25)",
+    )
+    search_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output search results as raw JSON",
+    )
+
     # ── trebek version ───────────────────────────────────────────────
     subparsers.add_parser(
         "version",
@@ -394,6 +426,63 @@ def main() -> None:
         except Exception as e:
             console.print(f"\n  [bold red]Export error:[/bold red] {e}\n")
             sys.exit(1)
+        return
+
+    # ── trebek search ────────────────────────────────────────────────
+    if command == "search":
+        import asyncio
+        from trebek.database import DatabaseWriter
+
+        async def _search() -> None:
+            writer = DatabaseWriter(settings.db_path)
+            await writer.start()
+            try:
+                query = args.query
+                round_filter = getattr(args, "round", None)
+                limit = getattr(args, "limit", 25)
+                as_json = getattr(args, "json", False)
+
+                results = await writer.search_clues(query, limit=limit, round_filter=round_filter)
+
+                if as_json:
+                    import json
+
+                    print(json.dumps(results, indent=2))
+                    return
+
+                if not results:
+                    console.print(f"\n  [yellow]No clues found matching:[/yellow] [bold]{query}[/bold]\n")
+                    return
+
+                from rich.table import Table
+
+                table = Table(
+                    title=f'Search Results for "{query}" ({len(results)} match{"es" if len(results) != 1 else ""})',
+                    border_style="cyan",
+                    header_style="bold cyan",
+                )
+                table.add_column("Episode", style="dim", width=18)
+                table.add_column("Round", width=12)
+                table.add_column("Category", style="bold yellow", width=22)
+                table.add_column("Clue Text", width=40)
+                table.add_column("Correct Response", style="bold green", width=22)
+
+                for r in results:
+                    table.add_row(
+                        str(r.get("episode_id", "")),
+                        str(r.get("round", "")),
+                        str(r.get("category", "")),
+                        str(r.get("clue_text", "")),
+                        str(r.get("correct_response", "")),
+                    )
+
+                console.print()
+                console.print(table)
+                console.print()
+            finally:
+                await writer.stop()
+
+        asyncio.run(_search())
         return
 
     # ── trebek run ───────────────────────────────────────────────────

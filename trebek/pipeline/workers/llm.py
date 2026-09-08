@@ -95,7 +95,13 @@ async def llm_worker(
                                 raise RuntimeError("ffmpeg audio extraction failed")
 
                         start_llm_t = time.perf_counter()
-                        speaker_mapping, usage1 = await execute_pass_1_speaker_anchoring(audio_slice_path)
+                        try:
+                            speaker_mapping, usage1 = await execute_pass_1_speaker_anchoring(audio_slice_path)
+                        finally:
+                            if os.path.exists(audio_slice_path):
+                                with contextlib.suppress(OSError):
+                                    os.remove(audio_slice_path)
+
                         pass1_ms = (time.perf_counter() - start_llm_t) * 1000
                         logger.info(
                             "Pass 1 complete",
@@ -151,8 +157,10 @@ async def llm_worker(
                         )
 
                         episode_data_path = os.path.join(orchestrator.output_dir, f"episode_{episode_id}.json")
-                        with open(episode_data_path, "w", encoding="utf-8") as f:
-                            f.write(data.model_dump_json())
+                        from pathlib import Path
+
+                        json_payload = data.model_dump_json()
+                        await asyncio.to_thread(Path(episode_data_path).write_text, json_payload, encoding="utf-8")
 
                         await orchestrator.db_writer.execute(
                             "UPDATE pipeline_state SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",

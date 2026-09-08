@@ -58,12 +58,13 @@ async def multimodal_worker(
                         video_filepath,
                         orchestrator.output_dir,
                         model=orchestrator.llm_model,
+                        episode_id=episode_id,
                     )
                     stage_multimodal_ms = (time.perf_counter() - start_multi_t) * 1000
 
                     # Re-save episode data with augmented multimodal info
-                    with open(episode_data_path, "w", encoding="utf-8") as f:
-                        f.write(episode_data.model_dump_json())
+                    augmented_json = episode_data.model_dump_json()
+                    await asyncio.to_thread(Path(episode_data_path).write_text, augmented_json, encoding="utf-8")
 
                     # Use pre-computed cost from client.py (includes thinking tokens at output rate)
                     cost_3 = multi_usage.get("cost_usd", 0.0)

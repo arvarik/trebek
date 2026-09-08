@@ -85,6 +85,7 @@ def render_main_help() -> None:
     cmd.add_row("retry", "Reset failed or specific episode(s) back to PENDING")
     cmd.add_row("clean", "Safely purge orphaned audio, tmp files, and obsolete transcripts")
     cmd.add_row("export", "Export an episode to Markdown, JSON, or CSV")
+    cmd.add_row("search", "Full-text search across clues and responses with BM25 ranking")
     cmd.add_row("version", "Print version string and exit")
 
     console.print(
@@ -604,6 +605,38 @@ def render_export_help() -> None:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  SEARCH HELP — `trebek search --help`
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def render_search_help() -> None:
+    """Renders `trebek search --help`."""
+    _subcommand_header("trebek search", "Full-text search across extracted clues, categories, and answers")
+    console.print(
+        f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek search[/{_C}] [{_V}]<query>[/{_V}] [{_D}][options][/{_D}]\n"
+    )
+
+    opts = Table(box=None, show_header=False, padding=(0, 2))
+    opts.add_column("Argument / Option", style=_F, width=22, no_wrap=True)
+    opts.add_column("Description", style="white")
+    opts.add_row("query", "Search term or phrase (e.g. 'Shakespeare', 'Moon', 'Presidents')")
+    opts.add_row("--round, -r", "Filter by game round: 'J!', 'Double J!', 'Final J!', 'Tiebreaker'")
+    opts.add_row("--limit, -l", "Maximum number of results to return (default: 25)")
+    opts.add_row("--json", "Output results as structured JSON")
+
+    console.print(
+        Panel(opts, title="[bold]Arguments & Options[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1))
+    )
+
+    console.print(f"  [{_A}]Examples:[/{_A}]")
+    console.print(f"    [{_C}]trebek search \"Mount Everest\"[/{_C}]")
+    console.print(f"    [{_C}]trebek search Shakespeare --round \"Double J!\"[/{_C}]")
+    console.print(f"    [{_C}]trebek search \"civil war\" --limit 10 --json[/{_C}]")
+    console.print()
+    _footer()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  Dispatcher
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -617,6 +650,7 @@ _HELP_RENDERERS: dict[str, Callable[[], None]] = {
     "retry": render_retry_help,
     "clean": render_clean_help,
     "export": render_export_help,
+    "search": render_search_help,
 }
 
 
@@ -624,3 +658,4 @@ def render_help(command: str = "main") -> None:
     """Dispatch to the appropriate help renderer."""
     renderer = _HELP_RENDERERS.get(command, render_main_help)
     renderer()
+

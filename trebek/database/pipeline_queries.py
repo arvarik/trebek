@@ -226,3 +226,118 @@ class PipelineQueryMixin:
             telemetry.pydantic_retry_count,
         )
         await self.execute(query, params)  # type: ignore[attr-defined]
+
+    async def search_clues(
+        self,
+        query: str,
+        limit: int = 50,
+        round_filter: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Full-text search on clues using SQLite FTS5 with BM25 ranking.
+        Searches across category, clue_text, and correct_response.
+        Falls back to LIKE query if FTS5 syntax fails or table is unavailable.
+        """
+        cleaned_query = query.strip()
+        if not cleaned_query:
+            return []
+
+        # If user did not specify exact quotes or operators, tokenize with prefix matching
+        words = cleaned_query.split()
+        safe_fts_query = " ".join(f'"{w.replace(chr(34), "")}"*' for w in words if w)
+
+        # Check if episodes table exists to join air_date
+        has_episodes_res = await self.execute(  # type: ignore[attr-defined]
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='episodes'"
+        )
+        has_episodes = bool(has_episodes_res and isinstance(has_episodes_res, list) and len(has_episodes_res) > 0)
+
+        ep_join = "LEFT JOIN episodes e ON e.episode_id = c.episode_id" if has_episodes else ""
+        air_date_col = "e.air_date" if has_episodes else "NULL AS air_date"
+
+        sql = f"""
+        SELECT
+            c.clue_id,
+            c.episode_id,
+            c.round,
+            c.category,
+            c.board_row,
+            c.board_col,
+            c.selection_order,
+            c.clue_text,
+            c.correct_response,
+            c.is_daily_double,
+            c.is_triple_stumper,
+            c.is_verified,
+            {air_date_col},
+            fts.rank
+        FROM clues_fts fts
+        JOIN clues c ON c.clue_id = fts.clue_id
+        {ep_join}
+        WHERE clues_fts MATCH ?
+        """
+        params: list[Any] = [safe_fts_query]
+        if round_filter:
+            sql += " AND c.round = ?"
+            params.append(round_filter)
+
+        sql += " ORDER BY fts.rank ASC LIMIT ?"
+        params.append(limit)
+
+        rows = None
+        try:
+            rows = await self.execute(sql, tuple(params))  # type: ignore[attr-defined]
+        except Exception as e:
+            logger.warning("FTS5 match failed, falling back to LIKE search", query=query, error=str(e))
+            like_sql = f"""
+            SELECT
+                c.clue_id,
+                c.episode_id,
+                c.round,
+                c.category,
+                c.board_row,
+                c.board_col,
+                c.selection_order,
+                c.clue_text,
+                c.correct_response,
+                c.is_daily_double,
+                c.is_triple_stumper,
+                c.is_verified,
+                {air_date_col},
+                0.0 AS rank
+            FROM clues c
+            {ep_join}
+            WHERE (c.clue_text LIKE ? OR c.category LIKE ? OR c.correct_response LIKE ?)
+            """
+            like_pat = f"%{cleaned_query}%"
+            like_params: list[Any] = [like_pat, like_pat, like_pat]
+            if round_filter:
+                like_sql += " AND c.round = ?"
+                like_params.append(round_filter)
+            like_sql += " ORDER BY c.episode_id DESC, c.selection_order ASC LIMIT ?"
+            like_params.append(limit)
+            rows = await self.execute(like_sql, tuple(like_params))  # type: ignore[attr-defined]
+
+        results: list[dict[str, Any]] = []
+        if rows and isinstance(rows, list):
+            for r in rows:
+                results.append(
+                    {
+                        "clue_id": r[0],
+                        "episode_id": r[1],
+                        "round": r[2],
+                        "category": r[3],
+                        "board_row": r[4],
+                        "board_col": r[5],
+                        "selection_order": r[6],
+                        "clue_text": r[7],
+                        "correct_response": r[8],
+                        "is_daily_double": bool(r[9]),
+                        "is_triple_stumper": bool(r[10]),
+                        "is_verified": bool(r[11]),
+                        "air_date": r[12],
+                        "rank": float(r[13]) if r[13] is not None else 0.0,
+                    }
+                )
+        return results
+

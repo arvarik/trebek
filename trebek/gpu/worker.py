@@ -12,6 +12,17 @@ logger = structlog.get_logger()
 _whisperx_model: Any = None
 _whisperx_align_model: Any = None
 _whisperx_align_metadata: Any = None
+_whisperx_diarize_model: Any = None
+
+
+def reset_gpu_models() -> None:
+    """Reset cached GPU models (used on OOM recovery and in test suites)."""
+    global _whisperx_model, _whisperx_align_model, _whisperx_align_metadata, _whisperx_diarize_model
+    _whisperx_model = None
+    _whisperx_align_model = None
+    _whisperx_align_metadata = None
+    _whisperx_diarize_model = None
+
 
 
 def gpu_worker_task(
@@ -104,7 +115,7 @@ def gpu_worker_task(
         raise RuntimeError(f"ffmpeg failed for {video_filepath}: {detail}")
 
     # 2. WhisperX Transcription — Warm Worker
-    global _whisperx_model, _whisperx_align_model, _whisperx_align_metadata
+    global _whisperx_model, _whisperx_align_model, _whisperx_align_metadata, _whisperx_diarize_model
     if _whisperx_model is None:
         logger.info("Loading WhisperX model (Cold Start)...", device=device)
         _whisperx_model = whisperx.load_model("large-v3", device=device, compute_type=compute_type, language="en")
@@ -164,12 +175,17 @@ def gpu_worker_task(
             try:
                 from whisperx.diarize import DiarizationPipeline
 
-                diarize_model = DiarizationPipeline(
-                    model_name="pyannote/speaker-diarization-3.1",
-                    token=hf_token,
-                    device=device,
-                )
-                diarize_segments = diarize_model(
+                if _whisperx_diarize_model is None:
+                    logger.info("Loading WhisperX diarization model (pyannote)...", device=device)
+                    _whisperx_diarize_model = DiarizationPipeline(
+                        model_name="pyannote/speaker-diarization-3.1",
+                        token=hf_token,
+                        device=device,
+                    )
+                else:
+                    logger.info("Using cached WhisperX diarization model (Warm Start)...", device=device)
+
+                diarize_segments = _whisperx_diarize_model(
                     audio_path,
                     min_speakers=3,  # At least host + 2 contestants
                 )
@@ -180,7 +196,6 @@ def gpu_worker_task(
                     speakers_found=len(speaker_set),
                     speaker_ids=sorted(speaker_set),
                 )
-                del diarize_model
             except Exception as diarize_err:
                 logger.warning(
                     "WhisperX diarization failed, segments will lack speaker labels",
@@ -213,6 +228,7 @@ def gpu_worker_task(
     except Exception as e:
         # Check for OOM specifically
         if "OutOfMemoryError" in str(type(e).__name__) or "CUDA out of memory" in str(e):
+            reset_gpu_models()
             raise MemoryError("CUDA OOM") from e
         raise RuntimeError(f"whisperx failed: {str(e)}")
     finally:

@@ -7,5 +7,6 @@ tasks to eliminate cold-start latency.
 """
 
 from .orchestrator import GPUOrchestrator
+from .worker import reset_gpu_models
 
-__all__ = ["GPUOrchestrator"]
+__all__ = ["GPUOrchestrator", "reset_gpu_models"]

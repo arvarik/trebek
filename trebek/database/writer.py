@@ -39,8 +39,59 @@ class DatabaseWriter(PipelineQueryMixin):
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA busy_timeout=5000;")
         self.conn.execute("PRAGMA auto_vacuum=INCREMENTAL;")
+        self._ensure_fts_schema()
         self.task = asyncio.create_task(self._process_queue())
         self.vacuum_task = asyncio.create_task(self._background_incremental_vacuum())
+
+    def _ensure_fts_schema(self) -> None:
+        """Ensures the FTS5 virtual table and synchronization triggers exist and backfills if necessary."""
+        if self.conn is None:
+            return
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='clues'")
+        if not cursor.fetchone():
+            # clues table does not exist yet; schema.sql will create it and FTS together
+            return
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='clues_fts'")
+        if not cursor.fetchone():
+            self.conn.executescript(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS clues_fts USING fts5(
+                    clue_id UNINDEXED,
+                    episode_id UNINDEXED,
+                    category,
+                    clue_text,
+                    correct_response,
+                    round,
+                    tokenize = 'porter unicode61'
+                );
+
+                CREATE TRIGGER IF NOT EXISTS clues_ai AFTER INSERT ON clues BEGIN
+                    DELETE FROM clues_fts WHERE clue_id = new.clue_id;
+                    INSERT INTO clues_fts(clue_id, episode_id, category, clue_text, correct_response, round)
+                    VALUES (new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS clues_ad AFTER DELETE ON clues BEGIN
+                    DELETE FROM clues_fts WHERE clue_id = old.clue_id;
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS clues_au AFTER UPDATE ON clues BEGIN
+                    DELETE FROM clues_fts WHERE clue_id = old.clue_id;
+                    INSERT INTO clues_fts(clue_id, episode_id, category, clue_text, correct_response, round)
+                    VALUES (new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
+                END;
+                """
+            )
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO clues_fts(clue_id, episode_id, category, clue_text, correct_response, round)
+                SELECT clue_id, episode_id, category, clue_text, correct_response, round FROM clues
+                """
+            )
+            self.conn.commit()
+
 
     async def stop(self) -> None:
         if self.vacuum_task:
@@ -98,7 +149,7 @@ class DatabaseWriter(PipelineQueryMixin):
                     self.queue.task_done()
 
         except asyncio.CancelledError:
-            logger.info("DatabaseWriter actor shutting down via cancellation.")
+            logger.debug("DatabaseWriter actor shutting down via cancellation.")
         except Exception as critical_err:
             logger.critical("DatabaseWriter fatal crash", error=str(critical_err))
         finally:
@@ -169,7 +220,7 @@ class DatabaseWriter(PipelineQueryMixin):
                 await self.execute("PRAGMA incremental_vacuum;", (), timeout=30.0)
                 await self.execute("PRAGMA wal_checkpoint(PASSIVE);", (), timeout=30.0)
             except asyncio.CancelledError:
-                logger.info("Vacuum background task cancelled.")
+                logger.debug("Vacuum background task cancelled.")
                 break
             except Exception as e:
                 logger.error("Incremental vacuum background task failed", error=str(e))
