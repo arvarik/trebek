@@ -41,6 +41,12 @@ class TestBuildParser:
         args = parser.parse_args(["run", "--model", "flash"])
         assert args.model == "flash"
 
+        args_gf = parser.parse_args(["run", "--model", "gemini-flash"])
+        assert args_gf.model == "gemini-flash"
+
+        args_custom = parser.parse_args(["run", "--model", "gemini-3.8-flash"])
+        assert args_custom.model == "gemini-3.8-flash"
+
     def test_run_with_input_dir(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["run", "--input-dir", "/my/videos"])

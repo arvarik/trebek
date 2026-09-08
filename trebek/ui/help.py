@@ -290,12 +290,13 @@ def render_run_help() -> None:
     stg.add_row("verify", "State Machine", "Deterministic game-theory validation + DB commit")
 
     mdl = Table(box=None, show_header=True, header_style="bold white", padding=(0, 2))
-    mdl.add_column("Alias", style=_C, width=8, no_wrap=True)
+    mdl.add_column("Alias", style=_C, width=14, no_wrap=True)
     mdl.add_column("Model ID", style=_D, width=30, no_wrap=True)
     mdl.add_column("Pricing (per M tokens)", style="white")
     mdl.add_row("pro", "gemini-3.1-pro-preview", f"[{_G}]$2.00[/{_G}] in  [{_G}]$12.00[/{_G}] out")
+    mdl.add_row("flash", "gemini-3.8-flash", f"[{_G}]$0.50[/{_G}] in  [{_G}]$3.00[/{_G}] out")
+    mdl.add_row("flash-lite", "gemini-3.1-flash-lite-preview", f"[{_G}]$0.25[/{_G}] in  [{_G}]$1.50[/{_G}] out")
     mdl.add_row("flash3", "gemini-3-flash-preview", f"[{_G}]$0.50[/{_G}] in  [{_G}]$3.00[/{_G}] out")
-    mdl.add_row("flash", "gemini-3.1-flash-lite-preview", f"[{_G}]$0.25[/{_G}] in  [{_G}]$1.50[/{_G}] out")
 
     console.print(
         Columns(

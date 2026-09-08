@@ -5,7 +5,7 @@ GEMINI_API_KEY runtime validation, and Settings behavior.
 
 import pytest
 
-from trebek.config import Settings
+from trebek.config import Settings, resolve_model_name, MODEL_FLASH, MODEL_PRO
 
 
 class TestLogLevelValidation:
@@ -126,3 +126,40 @@ class TestLlmConcurrencyValidation:
     def test_concurrency_above_maximum_raises(self) -> None:
         with pytest.raises(Exception, match="llm_concurrency must be between 1 and 8"):
             Settings(llm_concurrency=9, gemini_api_key="test-key")
+
+
+class TestModelResolution:
+    """Tests for model alias resolution and canonical Gemini model identification."""
+
+    def test_resolve_flash_aliases_to_gemini_38(self) -> None:
+        assert resolve_model_name("flash") == MODEL_FLASH
+        assert resolve_model_name("gemini-flash") == MODEL_FLASH
+        assert resolve_model_name("gemini_flash") == MODEL_FLASH
+        assert resolve_model_name("GEMINI-FLASH") == MODEL_FLASH
+        assert resolve_model_name("flash38") == "gemini-3.8-flash"
+        assert resolve_model_name("gemini-3.8-flash") == "gemini-3.8-flash"
+
+    def test_resolve_provider_prefixed_strings(self) -> None:
+        assert resolve_model_name("models/gemini-flash") == "gemini-3.8-flash"
+        assert resolve_model_name("models/gemini-3.8-flash") == "gemini-3.8-flash"
+        assert resolve_model_name("gemini/gemini-flash") == "gemini-3.8-flash"
+        assert resolve_model_name("google/gemini-flash") == "gemini-3.8-flash"
+
+    def test_resolve_pro_aliases(self) -> None:
+        assert resolve_model_name("pro") == "gemini-3.1-pro-preview"
+        assert resolve_model_name("gemini-pro") == "gemini-3.1-pro-preview"
+        assert resolve_model_name("gemini_pro") == "gemini-3.1-pro-preview"
+        assert resolve_model_name("gemini/pro") == "gemini-3.1-pro-preview"
+
+    def test_resolve_flash_lite(self) -> None:
+        assert resolve_model_name("flash-lite") == "gemini-3.1-flash-lite-preview"
+        assert resolve_model_name("gemini-flash-lite") == "gemini-3.1-flash-lite-preview"
+
+    def test_resolve_unknown_explicit_model_passes_through(self) -> None:
+        assert resolve_model_name("gemini-2.5-flash") == "gemini-2.5-flash"
+        assert resolve_model_name("gemini-future-super-model") == "gemini-future-super-model"
+
+    def test_resolve_empty_or_none_defaults_to_pro(self) -> None:
+        assert resolve_model_name(None) == MODEL_PRO
+        assert resolve_model_name("") == MODEL_PRO
+        assert resolve_model_name("   ") == MODEL_PRO

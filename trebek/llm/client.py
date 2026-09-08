@@ -322,6 +322,17 @@ class GeminiClient:
 
                 cost = 0.0
                 pricing = MODEL_PRICING.get(model)
+                if not pricing:
+                    from trebek.config import resolve_model_name
+
+                    pricing = MODEL_PRICING.get(resolve_model_name(model))
+                if not pricing:
+                    if "flash-lite" in model:
+                        pricing = {"input": 0.25, "output": 1.50}
+                    elif "flash" in model:
+                        pricing = {"input": 0.50, "output": 3.00}
+                    elif "pro" in model:
+                        pricing = {"input": 2.00, "output": 12.00}
                 if pricing:
                     # Thinking tokens are billed at the output token rate
                     billable_output = usage["output_tokens"] + usage["thinking_tokens"]
