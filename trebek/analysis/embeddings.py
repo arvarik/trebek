@@ -1,10 +1,7 @@
 import math
 import struct
 import structlog
-from typing import TYPE_CHECKING, Any, List, Optional
-
-if TYPE_CHECKING:
-    from trebek.schemas import Clue
+from typing import Any, List, Optional, Sequence
 
 logger = structlog.get_logger()
 
@@ -52,7 +49,7 @@ def process_semantic_lateral_distance(clue_embedding: List[float], response_embe
     return distance
 
 
-async def enrich_clues_with_embeddings(clues: List["Clue"], client: Any = None) -> None:
+async def enrich_clues_with_embeddings(clues: Sequence[Any], client: Any = None) -> None:
     """Generates vector embeddings for clues and responses, computing semantic lateral distance.
 
     Updates the Clue objects in-place with clue_embedding, response_embedding, and semantic_lateral_distance.
@@ -67,7 +64,7 @@ async def enrich_clues_with_embeddings(clues: List["Clue"], client: Any = None) 
     else:
         llm_client = client
 
-    clue_texts = [c.clue_text for c in clues]
+    clue_texts = [f"{c.category}. {c.clue_text}" if getattr(c, "category", None) else c.clue_text for c in clues]
     response_texts = [c.correct_response for c in clues]
 
     all_texts = clue_texts + response_texts

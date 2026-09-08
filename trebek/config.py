@@ -6,7 +6,7 @@ pricing data, and supported video format definitions.
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from typing import Any, Tuple
 
 
@@ -119,7 +119,11 @@ KNOWN_HOSTS: frozenset[str] = frozenset(
 
 
 class Settings(BaseSettings):
-    db_path: str = Field(default="trebek.db", description="Path to the SQLite database")
+    db_path: str = Field(
+        default="trebek.db",
+        validation_alias=AliasChoices("db_path", "database_path", "DB_PATH", "DATABASE_PATH"),
+        description="Path to the SQLite database",
+    )
     output_dir: str = Field(default="gpu_outputs", description="Directory to store intermediate pipeline outputs")
     input_dir: str = Field(default="input_videos", description="Directory to poll for new video files")
     gemini_api_key: str = Field(default="", description="GCP / Gemini API Key")
@@ -221,4 +225,17 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
-settings = Settings()
+try:
+    settings = Settings()
+except ValueError:
+    # Allow importing trebek.config even if the default db_path on disk is a directory,
+    # so diagnostic tools like `trebek doctor` can run and report the collision cleanly.
+    settings = Settings.model_construct(
+        db_path="trebek.db",
+        output_dir="gpu_outputs",
+        input_dir="input_videos",
+        gemini_api_key="",
+        log_level="INFO",
+        mock_llm=False,
+        enable_podium_sniping=False,
+    )

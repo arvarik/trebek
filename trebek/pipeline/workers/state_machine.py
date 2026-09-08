@@ -92,10 +92,13 @@ async def state_machine_worker(
                             f"{clue_count} clues (minimum 45). Episode will not be committed."
                         )
 
-                    # Generate embeddings and semantic lateral distance for all clues
+                    # Generate embeddings and semantic lateral distance for all clues (including Final J!)
                     from trebek.analysis.embeddings import enrich_clues_with_embeddings
 
-                    await enrich_clues_with_embeddings(episode_data.clues)
+                    clues_to_enrich: list[Any] = list(episode_data.clues)
+                    if getattr(episode_data, "final_jep", None):
+                        clues_to_enrich.append(episode_data.final_jep)
+                    await enrich_clues_with_embeddings(clues_to_enrich)
 
                     # Commit relational data to the analytical tables
                     await commit_episode_to_relational_tables(

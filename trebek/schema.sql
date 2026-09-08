@@ -1,6 +1,7 @@
 PRAGMA auto_vacuum = INCREMENTAL;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
+PRAGMA recursive_triggers = ON;
 
 CREATE TABLE IF NOT EXISTS pipeline_state (
     episode_id TEXT PRIMARY KEY,
@@ -170,20 +171,20 @@ CREATE VIRTUAL TABLE IF NOT EXISTS clues_fts USING fts5(
     tokenize = 'porter unicode61'
 );
 
--- Triggers to maintain FTS5 synchronization with clues table
+-- Triggers to maintain FTS5 synchronization with clues table via rowid (O(1) B-tree lookup)
 CREATE TRIGGER IF NOT EXISTS clues_ai AFTER INSERT ON clues BEGIN
-    DELETE FROM clues_fts WHERE clue_id = new.clue_id;
-    INSERT INTO clues_fts(clue_id, episode_id, category, clue_text, correct_response, round)
-    VALUES (new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
+    DELETE FROM clues_fts WHERE rowid = new.rowid;
+    INSERT INTO clues_fts(rowid, clue_id, episode_id, category, clue_text, correct_response, round)
+    VALUES (new.rowid, new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
 END;
 
 CREATE TRIGGER IF NOT EXISTS clues_ad AFTER DELETE ON clues BEGIN
-    DELETE FROM clues_fts WHERE clue_id = old.clue_id;
+    DELETE FROM clues_fts WHERE rowid = old.rowid;
 END;
 
 CREATE TRIGGER IF NOT EXISTS clues_au AFTER UPDATE ON clues BEGIN
-    DELETE FROM clues_fts WHERE clue_id = old.clue_id;
-    INSERT INTO clues_fts(clue_id, episode_id, category, clue_text, correct_response, round)
-    VALUES (new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
+    DELETE FROM clues_fts WHERE rowid = old.rowid;
+    INSERT INTO clues_fts(rowid, clue_id, episode_id, category, clue_text, correct_response, round)
+    VALUES (new.rowid, new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
 END;
 

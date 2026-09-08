@@ -98,6 +98,13 @@ class FinalJep(BaseModel):
         description="The correct response in J! question form (e.g., 'What is Ulysses?'). "
         "Extracted from the host's on-air reveal after contestants' responses are shown.",
     )
+    clue_embedding: Optional[List[float]] = Field(default=None, description="Vector embedding of the clue text.")
+    response_embedding: Optional[List[float]] = Field(
+        default=None, description="Vector embedding of the correct response."
+    )
+    semantic_lateral_distance: Optional[float] = Field(
+        default=None, description="Cosine distance between clue and response embeddings."
+    )
     wagers_and_responses: List[FinalJepWager]
 
 

@@ -187,13 +187,18 @@ async def commit_episode_to_relational_tables(
     fj_clue_id = f"{episode_id}_fj"
     is_fj_triple_stumper = len(fj.wagers_and_responses) == 0 or all(not w.is_correct for w in fj.wagers_and_responses)
 
+    fj_clue_emb_bytes = serialize_embedding(getattr(fj, "clue_embedding", None))
+    fj_resp_emb_bytes = serialize_embedding(getattr(fj, "response_embedding", None))
+    fj_semantic_distance = getattr(fj, "semantic_lateral_distance", None)
+
     payload.append(
         (
             "INSERT OR REPLACE INTO clues "
             "(clue_id, episode_id, round, category, selection_order, clue_text, correct_response, "
             "is_verified, original_response, is_daily_double, is_triple_stumper, requires_visual_context, "
-            "host_start_timestamp_ms, host_finish_timestamp_ms, clue_syllable_count) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "host_start_timestamp_ms, host_finish_timestamp_ms, clue_syllable_count, "
+            "clue_embedding, response_embedding, semantic_lateral_distance) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 fj_clue_id,
                 episode_id,
@@ -210,6 +215,9 @@ async def commit_episode_to_relational_tables(
                 0.0,
                 0.0,
                 0,
+                fj_clue_emb_bytes,
+                fj_resp_emb_bytes,
+                fj_semantic_distance,
             ),
         )
     )
