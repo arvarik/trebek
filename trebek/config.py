@@ -127,6 +127,16 @@ class Settings(BaseSettings):
             raise ValueError("whisper_batch_size must be > 0")
         return v
 
+    # Concurrency constraints
+    llm_concurrency: int = Field(default=2, description="Number of concurrent episodes processed in LLM extraction")
+
+    @field_validator("llm_concurrency")
+    @classmethod
+    def validate_llm_concurrency(cls, v: int) -> int:
+        if v < 1 or v > 8:
+            raise ValueError("llm_concurrency must be between 1 and 8")
+        return v
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

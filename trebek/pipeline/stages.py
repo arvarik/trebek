@@ -22,33 +22,32 @@ ACTIVE_STAGES: dict[str, Set[str]] = {
     "verify": {"verify"},
 }
 
+# All active in-flight statuses across the entire pipeline.
+ALL_IN_FLIGHT_STATUSES: list[str] = [
+    S.PENDING,
+    S.TRANSCRIBING,
+    S.TRANSCRIPT_READY,
+    S.CLEANED,
+    S.SAVING,
+    S.MULTIMODAL_PROCESSING,
+    S.MULTIMODAL_DONE,
+    S.VECTORIZING,
+]
+
 # Upstream status checking for --once mode termination.
 # "full" = wait for upstream stages before exiting (used when all stages run together).
+# When all stages run together, no worker exits while ANY episode in the entire pipeline
+# is still in-flight, preventing orphaned retries if downstream stages fail an episode.
 # "isolated" = only check own input/in-flight statuses (used for single-stage runs).
 UPSTREAM_MAP_FULL: dict[str, list[str]] = {
-    S.PENDING: [S.PENDING],
-    S.TRANSCRIPT_READY: [S.PENDING, S.TRANSCRIBING, S.TRANSCRIPT_READY, S.CLEANED],
-    S.SAVING: [
-        S.PENDING,
-        S.TRANSCRIBING,
-        S.TRANSCRIPT_READY,
-        S.CLEANED,
-        S.SAVING,
-    ],
-    S.MULTIMODAL_DONE: [
-        S.PENDING,
-        S.TRANSCRIBING,
-        S.TRANSCRIPT_READY,
-        S.CLEANED,
-        S.SAVING,
-        S.MULTIMODAL_PROCESSING,
-        S.MULTIMODAL_DONE,
-        S.VECTORIZING,
-    ],
+    S.PENDING: ALL_IN_FLIGHT_STATUSES,
+    S.TRANSCRIPT_READY: ALL_IN_FLIGHT_STATUSES,
+    S.SAVING: ALL_IN_FLIGHT_STATUSES,
+    S.MULTIMODAL_DONE: ALL_IN_FLIGHT_STATUSES,
 }
 
 UPSTREAM_MAP_ISOLATED: dict[str, list[str]] = {
-    S.PENDING: [S.PENDING],
+    S.PENDING: [S.PENDING, S.TRANSCRIBING],
     S.TRANSCRIPT_READY: [S.TRANSCRIPT_READY, S.CLEANED],
     S.SAVING: [S.SAVING, S.MULTIMODAL_PROCESSING],
     S.MULTIMODAL_DONE: [S.MULTIMODAL_DONE, S.VECTORIZING],

@@ -120,7 +120,9 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                     current_episode_id = None
                     if permanently_failed:
                         orchestrator.stats["failed"] += 1
-                    progress.advance(task_id)
+                        progress.advance(task_id)
+                    else:
+                        orchestrator.llm_work_ready.set()
             else:
                 current_episode_id = None
                 if orchestrator.mode == "once" and await orchestrator._no_work_remaining(

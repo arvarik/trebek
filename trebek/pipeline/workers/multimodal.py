@@ -100,7 +100,9 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                     current_episode_id = None
                     if permanently_failed:
                         orchestrator.stats["failed"] += 1
-                    progress.advance(task_id)
+                        progress.advance(task_id)
+                    else:
+                        orchestrator.multimodal_work_ready.set()
             else:
                 current_episode_id = None
                 if orchestrator.mode == "once" and await orchestrator._no_work_remaining(PipelineStatus.SAVING):

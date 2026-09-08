@@ -105,3 +105,24 @@ class TestSettingsDefaults:
     def test_default_input_dir(self) -> None:
         s = Settings(gemini_api_key="test-key")
         assert s.input_dir == "input_videos"
+
+    def test_default_llm_concurrency(self) -> None:
+        s = Settings(gemini_api_key="test-key")
+        assert s.llm_concurrency == 2
+
+
+class TestLlmConcurrencyValidation:
+    """LLM concurrency constraint tests."""
+
+    def test_valid_concurrency(self) -> None:
+        for c in (1, 2, 4, 8):
+            s = Settings(llm_concurrency=c, gemini_api_key="test-key")
+            assert s.llm_concurrency == c
+
+    def test_concurrency_below_minimum_raises(self) -> None:
+        with pytest.raises(Exception, match="llm_concurrency must be between 1 and 8"):
+            Settings(llm_concurrency=0, gemini_api_key="test-key")
+
+    def test_concurrency_above_maximum_raises(self) -> None:
+        with pytest.raises(Exception, match="llm_concurrency must be between 1 and 8"):
+            Settings(llm_concurrency=9, gemini_api_key="test-key")

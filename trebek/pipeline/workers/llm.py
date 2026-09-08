@@ -16,7 +16,12 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, task_id: Any) -> None:
+async def llm_worker(
+    orchestrator: "TrebekPipelineOrchestrator",
+    progress: Any,
+    task_id: Any,
+    worker_id: int = 1,
+) -> None:
     """Polls for TRANSCRIPT_READY, extracts data via LLM, and saves structured output."""
     current_episode_id: str | None = None
     try:
@@ -28,6 +33,7 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
             if episode_id:
                 logger.info(
                     "LLM Worker: Processing episode",
+                    worker_id=worker_id,
                     episode_id=episode_id,
                     stage=get_stage_display(PipelineStatus.CLEANED),
                 )
@@ -157,12 +163,13 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                             # Extract is the last active stage — advance progress
                             orchestrator.stats["completed"] += 1
                             progress.advance(task_id)
-                        logger.info("LLM extraction complete", episode_id=episode_id)
+                        logger.info("LLM extraction complete", worker_id=worker_id, episode_id=episode_id)
                     else:
                         raise ValueError("Transcript path not found in database")
                 except Exception as e:
                     logger.error(
                         "LLM Pipeline failed",
+                        worker_id=worker_id,
                         episode_id=episode_id,
                         error=str(e),
                         error_type=type(e).__name__,
@@ -174,7 +181,9 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                     current_episode_id = None
                     if permanently_failed:
                         orchestrator.stats["failed"] += 1
-                    progress.advance(task_id)
+                        progress.advance(task_id)
+                    else:
+                        orchestrator.llm_work_ready.set()
             else:
                 current_episode_id = None
                 if orchestrator.mode == "once" and await orchestrator._no_work_remaining(
@@ -189,7 +198,9 @@ async def llm_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, 
                         await asyncio.wait_for(orchestrator.llm_work_ready.wait(), timeout=1.0)
     except asyncio.CancelledError:
         if current_episode_id:
-            logger.warning("LLM worker cancelled, resetting episode", episode_id=current_episode_id)
+            logger.warning(
+                "LLM worker cancelled, resetting episode", worker_id=worker_id, episode_id=current_episode_id
+            )
             with contextlib.suppress(Exception):
                 await orchestrator.db_writer.execute(
                     "UPDATE pipeline_state SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE episode_id = ?",
