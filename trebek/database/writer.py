@@ -36,6 +36,7 @@ class DatabaseWriter(PipelineQueryMixin):
         self.conn = sqlite3.connect(self.db_path)
         # Apply strict pragma configurations at startup
         self.conn.execute("PRAGMA foreign_keys = ON;")
+        self.conn.execute("PRAGMA recursive_triggers = ON;")
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA busy_timeout=5000;")
         self.conn.execute("PRAGMA auto_vacuum=INCREMENTAL;")
@@ -69,32 +70,45 @@ class DatabaseWriter(PipelineQueryMixin):
                 );
                 """
             )
-            cursor.execute(
-                """
-                INSERT OR IGNORE INTO clues_fts(rowid, clue_id, episode_id, category, clue_text, correct_response, round)
-                SELECT rowid, clue_id, episode_id, category, clue_text, correct_response, round FROM clues
-                """
-            )
-            self.conn.commit()
 
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name='clues_ai'")
-        if not cursor.fetchone():
+        # Check if backfill is needed (e.g. clues has rows but clues_fts is empty)
+        cursor.execute("SELECT COUNT(1) FROM clues_fts")
+        fts_count = cursor.fetchone()[0]
+        if fts_count == 0:
+            cursor.execute("SELECT COUNT(1) FROM clues")
+            clues_count = cursor.fetchone()[0]
+            if clues_count > 0:
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO clues_fts(rowid, clue_id, episode_id, category, clue_text, correct_response, round)
+                    SELECT rowid, clue_id, episode_id, category, clue_text, correct_response, round FROM clues
+                    """
+                )
+                self.conn.commit()
+
+        cursor.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='clues_ai'")
+        row = cursor.fetchone()
+        if not row or "rowid" not in row[0]:
             self.conn.executescript(
                 """
+                DROP TRIGGER IF EXISTS clues_ai;
+                DROP TRIGGER IF EXISTS clues_ad;
+                DROP TRIGGER IF EXISTS clues_au;
+
                 CREATE TRIGGER IF NOT EXISTS clues_ai AFTER INSERT ON clues BEGIN
-                    DELETE FROM clues_fts WHERE clue_id = new.clue_id;
-                    INSERT INTO clues_fts(clue_id, episode_id, category, clue_text, correct_response, round)
-                    VALUES (new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
+                    DELETE FROM clues_fts WHERE rowid = new.rowid;
+                    INSERT INTO clues_fts(rowid, clue_id, episode_id, category, clue_text, correct_response, round)
+                    VALUES (new.rowid, new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
                 END;
 
                 CREATE TRIGGER IF NOT EXISTS clues_ad AFTER DELETE ON clues BEGIN
-                    DELETE FROM clues_fts WHERE clue_id = old.clue_id;
+                    DELETE FROM clues_fts WHERE rowid = old.rowid;
                 END;
 
                 CREATE TRIGGER IF NOT EXISTS clues_au AFTER UPDATE ON clues BEGIN
-                    DELETE FROM clues_fts WHERE clue_id = old.clue_id;
-                    INSERT INTO clues_fts(clue_id, episode_id, category, clue_text, correct_response, round)
-                    VALUES (new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
+                    DELETE FROM clues_fts WHERE rowid = old.rowid;
+                    INSERT INTO clues_fts(rowid, clue_id, episode_id, category, clue_text, correct_response, round)
+                    VALUES (new.rowid, new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
                 END;
                 """
             )

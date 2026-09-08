@@ -23,6 +23,7 @@ async def _extract_video_clip(
     clue_order: int,
 ) -> bool:
     """Invokes ffmpeg to snip a short clip from video_filepath."""
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg",
@@ -51,14 +52,22 @@ async def _extract_video_clip(
             )
             return False
         return True
-    except Exception as e:
-        logger.warning(
-            "Pass 3: ffmpeg subprocess error",
-            episode_id=ep_id,
-            clue_order=clue_order,
-            error=str(e)[:200],
-        )
-        return False
+    except BaseException as e:
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+        if isinstance(e, Exception):
+            logger.warning(
+                "Pass 3: ffmpeg subprocess error",
+                episode_id=ep_id,
+                clue_order=clue_order,
+                error=str(e)[:200],
+            )
+            return False
+        raise
 
 
 async def _wait_for_file_active(client: object, uploaded_file: object) -> bool:
@@ -73,7 +82,7 @@ async def _wait_for_file_active(client: object, uploaded_file: object) -> bool:
         if state_name == "FAILED":
             return False
         await asyncio.sleep(1)
-    return True
+    return False
 
 
 async def extract_visual_clue_context(
@@ -156,7 +165,7 @@ async def extract_visual_clue_context(
                 return {}
             finally:
                 if uploaded_file is not None:
-                    with contextlib.suppress(BaseException):
+                    with contextlib.suppress(Exception):
                         await asyncio.shield(getattr(client, "delete_file")(uploaded_file.name))
         finally:
             if os.path.exists(clip_path):
@@ -238,7 +247,7 @@ async def extract_podium_lockout_sniping(
                 return {}
             finally:
                 if uploaded_file is not None:
-                    with contextlib.suppress(BaseException):
+                    with contextlib.suppress(Exception):
                         await asyncio.shield(getattr(client, "delete_file")(uploaded_file.name))
         finally:
             if os.path.exists(clip_path):
@@ -283,7 +292,7 @@ async def execute_pass_3_multimodal_augmentation(
                 clue.visual_context_description = (
                     f"Synthetic visual context description for clue {clue.selection_order}."
                 )
-            if clue.attempts and clue.host_finish_timestamp_ms > 0:
+            if clue.attempts and clue.host_finish_timestamp_ms and clue.host_finish_timestamp_ms > 0:
                 if not clue.attempts[0].podium_light_timestamp_ms:
                     podium_ms = clue.host_finish_timestamp_ms + 150.0
                     clue.attempts[0].podium_light_timestamp_ms = podium_ms

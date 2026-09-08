@@ -32,7 +32,11 @@ def _notify_gemini_usage(usage: dict[str, Any]) -> None:
 
 def _get_client() -> "GeminiClient":
     global _client
+    from trebek.config import settings
+
     if _client is None:
+        _client = GeminiClient()
+    elif getattr(settings, "mock_llm", False) and _client.client is not None:
         _client = GeminiClient()
     return _client
 
@@ -57,7 +61,9 @@ class GeminiClient:
             self.client = genai.Client(api_key=api_key)
 
     async def upload_file(self, file_path: str) -> Any:
-        if self.client is None:
+        from trebek.config import settings
+
+        if getattr(settings, "mock_llm", False) or self.client is None:
             from types import SimpleNamespace
             import os
 
@@ -65,14 +71,18 @@ class GeminiClient:
         return await asyncio.to_thread(self.client.files.upload, file=file_path)
 
     async def get_file(self, file_name: str) -> Any:
-        if self.client is None:
+        from trebek.config import settings
+
+        if getattr(settings, "mock_llm", False) or self.client is None:
             from types import SimpleNamespace
 
             return SimpleNamespace(state=SimpleNamespace(name="ACTIVE"))
         return await asyncio.to_thread(self.client.files.get, name=file_name)
 
     async def delete_file(self, file_name: str) -> None:
-        if self.client is None:
+        from trebek.config import settings
+
+        if getattr(settings, "mock_llm", False) or self.client is None:
             return
         await asyncio.to_thread(self.client.files.delete, name=file_name)
 
@@ -144,7 +154,9 @@ class GeminiClient:
 
         TTL defaults to 30 minutes — long enough for a full episode extraction.
         """
-        if self.client is None:
+        from trebek.config import settings
+
+        if getattr(settings, "mock_llm", False) or self.client is None:
             return None
         from google.genai import types
 
@@ -192,7 +204,9 @@ class GeminiClient:
 
     async def delete_cache(self, cache_name: str) -> None:
         """Deletes a previously created cached content object. Logs but does not raise on failure."""
-        if self.client is None:
+        from trebek.config import settings
+
+        if getattr(settings, "mock_llm", False) or self.client is None:
             return
         try:
             await asyncio.to_thread(self.client.caches.delete, name=cache_name)

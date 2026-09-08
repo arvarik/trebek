@@ -16,18 +16,20 @@ _whisperx_align_metadata: Any = None
 _whisperx_diarize_model: Any = None
 _cached_device: Any = None
 _cached_compute_type: Any = None
+_cached_hf_token: Any = None
 
 
 def reset_gpu_models() -> None:
     """Reset cached GPU models (used on OOM recovery and in test suites)."""
     global _whisperx_model, _whisperx_align_model, _whisperx_align_metadata, _whisperx_diarize_model
-    global _cached_device, _cached_compute_type
+    global _cached_device, _cached_compute_type, _cached_hf_token
     _whisperx_model = None
     _whisperx_align_model = None
     _whisperx_align_metadata = None
     _whisperx_diarize_model = None
     _cached_device = None
     _cached_compute_type = None
+    _cached_hf_token = None
 
     import gc
 
@@ -37,8 +39,13 @@ def reset_gpu_models() -> None:
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
     except Exception:
         pass
+
+
+reset_warm_models = reset_gpu_models
 
 
 def gpu_worker_task(
@@ -140,7 +147,7 @@ def gpu_worker_task(
 
     # 2. WhisperX Transcription — Warm Worker
     global _whisperx_model, _whisperx_align_model, _whisperx_align_metadata, _whisperx_diarize_model
-    global _cached_device, _cached_compute_type
+    global _cached_device, _cached_compute_type, _cached_hf_token
     if _cached_device != device or _cached_compute_type != compute_type:
         reset_gpu_models()
         _cached_device = device
@@ -205,13 +212,14 @@ def gpu_worker_task(
             try:
                 from whisperx.diarize import DiarizationPipeline
 
-                if _whisperx_diarize_model is None:
+                if _whisperx_diarize_model is None or _cached_hf_token != hf_token or _cached_device != device:
                     logger.info("Loading WhisperX diarization model (pyannote)...", device=device)
                     _whisperx_diarize_model = DiarizationPipeline(
                         model_name="pyannote/speaker-diarization-3.1",
                         token=hf_token,
                         device=device,
                     )
+                    _cached_hf_token = hf_token
                 else:
                     logger.info("Using cached WhisperX diarization model (Warm Start)...", device=device)
 
@@ -245,6 +253,8 @@ def gpu_worker_task(
         gc.collect()
         if device.startswith("cuda") and torch.cuda.is_available():
             torch.cuda.empty_cache()
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
 
         processed_result = {
             "status": "success",

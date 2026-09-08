@@ -44,6 +44,12 @@ def handle_docker(args: argparse.Namespace, input_dir: str) -> None:
         cmd.extend(["-e", f"GEMINI_API_KEY={os.environ['GEMINI_API_KEY']}"])
     if "HF_TOKEN" in os.environ:
         cmd.extend(["-e", f"HF_TOKEN={os.environ['HF_TOKEN']}"])
+    if "DB_PATH" in os.environ:
+        cmd.extend(["-e", f"DB_PATH={os.environ['DB_PATH']}"])
+    elif "DATABASE_PATH" in os.environ:
+        cmd.extend(["-e", f"DB_PATH={os.environ['DATABASE_PATH']}"])
+    elif os.path.exists(os.path.join(cwd_abs, "data")):
+        cmd.extend(["-e", "DB_PATH=/app/data/trebek.db"])
     if getattr(args, "mock_llm", False):
         cmd.extend(["-e", "TREBEK_MOCK_LLM=1"])
 

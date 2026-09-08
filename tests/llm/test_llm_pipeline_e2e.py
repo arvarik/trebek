@@ -422,7 +422,7 @@ async def run_live_pipeline(
 
     print("\n── Pass 2: Structured Extraction ─────────────────────")
     start_t = time.perf_counter()
-    episode, usage2, retries = await execute_pass_2_data_extraction(
+    episode, usage2, retries, quality = await execute_pass_2_data_extraction(
         segments,
         speaker_mapping,
         max_retries=3,

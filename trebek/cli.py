@@ -321,6 +321,11 @@ def build_parser() -> TrebekArgumentParser:
         action="store_true",
         help="Output diagnostic results as structured JSON",
     )
+    doctor_parser.add_argument(
+        "--mock-llm",
+        action="store_true",
+        help="Evaluate diagnostics assuming mock LLM mode",
+    )
 
     # ── trebek version ───────────────────────────────────────────────
     subparsers.add_parser(
@@ -353,6 +358,10 @@ def main() -> None:
     # ── trebek doctor ────────────────────────────────────────────────
     if command in ("doctor", "doc"):
         from trebek.ui.doctor import run_diagnostics, render_doctor_results
+
+        if getattr(args, "mock_llm", False):
+            settings.mock_llm = True
+            os.environ["TREBEK_MOCK_LLM"] = "1"
 
         report = run_diagnostics(settings, check_api=getattr(args, "check_api", False))
         exit_code = render_doctor_results(report, as_json=getattr(args, "json", False))
@@ -535,6 +544,15 @@ def main() -> None:
     if getattr(args, "docker", False):
         handle_docker(args, input_dir)
         return
+
+    # Check if database path is a directory (e.g. host directory mount collision)
+    if os.path.isdir(settings.db_path):
+        console.print(
+            f"\n  [bold red]Error: Database path '{settings.db_path}' is a directory, not a file.[/bold red]\n"
+            "  If running with Docker, ensure a file path is specified "
+            "(e.g. ./data:/app/data with DB_PATH=/app/data/trebek.db).\n"
+        )
+        sys.exit(1)
 
     stage = getattr(args, "stage", "all")
     allow_cpu = getattr(args, "allow_cpu", False) or settings.allow_cpu
