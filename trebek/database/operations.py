@@ -10,6 +10,8 @@ single atomic transaction.
 import structlog
 from typing import TYPE_CHECKING, Any, Tuple
 
+from trebek.analysis.buzzer import calculate_true_buzzer_latency
+from trebek.analysis.embeddings import serialize_embedding
 from trebek.database.writer import DatabaseWriter
 
 if TYPE_CHECKING:
@@ -70,14 +72,20 @@ async def commit_episode_to_relational_tables(
 
         dd_wager_str = str(clue.daily_double_wager) if clue.daily_double_wager is not None else None
 
+        clue_emb_bytes = serialize_embedding(getattr(clue, "clue_embedding", None))
+        resp_emb_bytes = serialize_embedding(getattr(clue, "response_embedding", None))
+        semantic_distance = getattr(clue, "semantic_lateral_distance", None)
+        visual_desc = getattr(clue, "visual_context_description", None)
+
         payload.append(
             (
                 "INSERT OR REPLACE INTO clues "
                 "(clue_id, episode_id, round, category, board_row, board_col, selection_order, "
                 "clue_text, correct_response, is_verified, original_response, is_daily_double, is_triple_stumper, "
-                "daily_double_wager, wagerer_name, requires_visual_context, "
-                "host_start_timestamp_ms, host_finish_timestamp_ms, clue_syllable_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "daily_double_wager, wagerer_name, requires_visual_context, visual_context_description, "
+                "host_start_timestamp_ms, host_finish_timestamp_ms, clue_syllable_count, "
+                "clue_embedding, response_embedding, semantic_lateral_distance) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     clue_id,
                     episode_id,
@@ -95,9 +103,13 @@ async def commit_episode_to_relational_tables(
                     dd_wager_str,
                     clue.wagerer_name,
                     clue.requires_visual_context,
+                    visual_desc,
                     clue.host_start_timestamp_ms,
                     clue.host_finish_timestamp_ms,
                     clue.clue_syllable_count,
+                    clue_emb_bytes,
+                    resp_emb_bytes,
+                    semantic_distance,
                 ),
             )
         )
@@ -119,25 +131,31 @@ async def commit_episode_to_relational_tables(
             attempt_id = f"{clue_id}_a{attempt.attempt_order}"
             contestant_id = f"{episode_id}_{attempt.speaker.replace(' ', '_').lower()}"
 
-            true_buzzer_latency_ms = attempt.buzz_timestamp_ms - clue.host_finish_timestamp_ms
+            podium_ms = getattr(attempt, "podium_light_timestamp_ms", None)
+            if podium_ms is not None and podium_ms > 0:
+                true_buzzer_latency_ms = calculate_true_buzzer_latency(attempt.buzz_timestamp_ms, podium_ms)
+            else:
+                true_buzzer_latency_ms = round(attempt.buzz_timestamp_ms - clue.host_finish_timestamp_ms, 3)
 
             payload.append(
                 (
                     "INSERT OR REPLACE INTO buzz_attempts "
                     "(attempt_id, clue_id, contestant_id, attempt_order, buzz_timestamp_ms, "
-                    "response_given, is_correct, response_start_timestamp_ms, is_lockout_inferred, true_buzzer_latency_ms) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "podium_light_timestamp_ms, true_buzzer_latency_ms, is_lockout_inferred, "
+                    "response_given, is_correct, response_start_timestamp_ms) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         attempt_id,
                         clue_id,
                         contestant_id,
                         attempt.attempt_order,
                         attempt.buzz_timestamp_ms,
+                        podium_ms,
+                        true_buzzer_latency_ms,
+                        attempt.is_lockout_inferred,
                         attempt.response_given,
                         attempt.is_correct,
                         attempt.response_start_timestamp_ms,
-                        attempt.is_lockout_inferred,
-                        true_buzzer_latency_ms,
                     ),
                 )
             )
@@ -212,18 +230,20 @@ async def commit_episode_to_relational_tables(
             (
                 "INSERT OR REPLACE INTO buzz_attempts "
                 "(attempt_id, clue_id, contestant_id, attempt_order, buzz_timestamp_ms, "
-                "response_given, is_correct, response_start_timestamp_ms, is_lockout_inferred, true_buzzer_latency_ms) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "podium_light_timestamp_ms, true_buzzer_latency_ms, is_lockout_inferred, "
+                "response_given, is_correct, response_start_timestamp_ms) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     attempt_id,
                     fj_clue_id,
                     contestant_id,
                     1,
                     0.0,
-                    w.response,
-                    w.is_correct,
+                    None,
                     0.0,
                     False,
+                    w.response,
+                    w.is_correct,
                     0.0,
                 ),
             )

@@ -1,16 +1,27 @@
-"""
-Vector embedding distance calculations for semantic analysis.
-
-Provides cosine distance and lateral semantic distance metrics
-used to measure the relationship between J! clue texts
-and their correct responses (e.g., wordplay vs. direct recall).
-"""
-
 import math
+import struct
 import structlog
-from typing import List
+from typing import TYPE_CHECKING, Any, List, Optional
+
+if TYPE_CHECKING:
+    from trebek.schemas import Clue
 
 logger = structlog.get_logger()
+
+
+def serialize_embedding(vec: Optional[List[float]]) -> Optional[bytes]:
+    """Packs a float vector into a binary blob for SQLite BLOB storage."""
+    if not vec:
+        return None
+    return struct.pack(f"{len(vec)}f", *vec)
+
+
+def deserialize_embedding(blob: Optional[bytes]) -> Optional[List[float]]:
+    """Unpacks a binary blob from SQLite back into a float list."""
+    if not blob or len(blob) % 4 != 0:
+        return None
+    dim = len(blob) // 4
+    return list(struct.unpack(f"{dim}f", blob))
 
 
 def cosine_distance(vec_a: List[float], vec_b: List[float]) -> float:
@@ -39,3 +50,46 @@ def process_semantic_lateral_distance(clue_embedding: List[float], response_embe
     distance = cosine_distance(clue_embedding, response_embedding)
     logger.info("Calculated Semantic Lateral Distance", distance=round(distance, 4))
     return distance
+
+
+async def enrich_clues_with_embeddings(clues: List["Clue"], client: Any = None) -> None:
+    """Generates vector embeddings for clues and responses, computing semantic lateral distance.
+
+    Updates the Clue objects in-place with clue_embedding, response_embedding, and semantic_lateral_distance.
+    """
+    if not clues:
+        return
+
+    if client is None:
+        from trebek.llm.client import _get_client
+
+        llm_client: Any = _get_client()
+    else:
+        llm_client = client
+
+    clue_texts = [c.clue_text for c in clues]
+    response_texts = [c.correct_response for c in clues]
+
+    all_texts = clue_texts + response_texts
+    try:
+        embeddings = await getattr(llm_client, "embed_content")(all_texts)
+        n = len(clues)
+        clue_embs = embeddings[:n]
+        resp_embs = embeddings[n:]
+
+        for i, clue in enumerate(clues):
+            c_emb = clue_embs[i]
+            r_emb = resp_embs[i]
+            clue.clue_embedding = c_emb
+            clue.response_embedding = r_emb
+            try:
+                clue.semantic_lateral_distance = process_semantic_lateral_distance(c_emb, r_emb)
+            except Exception as dist_err:
+                logger.debug(
+                    "Failed to calculate semantic lateral distance",
+                    clue=clue.clue_text[:30],
+                    error=str(dist_err),
+                )
+                clue.semantic_lateral_distance = None
+    except Exception as e:
+        logger.warning("Failed to generate embeddings for clues", count=len(clues), error=str(e)[:200])

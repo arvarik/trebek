@@ -121,6 +121,24 @@ class TrebekPipelineOrchestrator:
             with open(schema_path, "r", encoding="utf-8") as f:
                 conn.executescript(f.read())
 
+            # Forward migrations for existing databases
+            try:
+                cols = {c[1] for c in conn.execute("PRAGMA table_info(pipeline_state)").fetchall()}
+                if "fingerprint" not in cols:
+                    conn.execute("ALTER TABLE pipeline_state ADD COLUMN fingerprint TEXT")
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_pipeline_state_fingerprint ON pipeline_state(fingerprint)"
+                    )
+            except Exception:
+                pass
+
+            try:
+                cols = {c[1] for c in conn.execute("PRAGMA table_info(clues)").fetchall()}
+                if "visual_context_description" not in cols:
+                    conn.execute("ALTER TABLE clues ADD COLUMN visual_context_description TEXT")
+            except Exception:
+                pass
+
         await self.db_writer.start()
 
         # Populate registered episode IDs cache

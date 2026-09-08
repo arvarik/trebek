@@ -5,6 +5,7 @@ each entry with its current pipeline status from the database.
 Used by both ``trebek scan`` (preview mode) and ingestion workers.
 """
 
+import hashlib
 import os
 import re
 import time
@@ -17,6 +18,44 @@ from trebek.config import settings, SUPPORTED_VIDEO_EXTENSIONS, IGNORED_EXTENSIO
 from trebek.status import PipelineStatus as S
 
 logger = structlog.get_logger()
+
+
+def compute_file_fingerprint(filepath: str, sample_size: int = 65536) -> str:
+    """Computes a fast, deterministic SHA-256 fingerprint for a video file.
+
+    Hashes the file size (8 bytes big-endian) + the first sample_size bytes (container header)
+    + the last sample_size bytes (tail metadata like MP4 moov atoms). For files smaller than
+    or equal to 2 * sample_size (128 KB), hashes the entire file.
+
+    Runs in <1ms even for multi-gigabyte files.
+    """
+    hasher = hashlib.sha256()
+    try:
+        size = os.path.getsize(filepath)
+    except OSError:
+        return ""
+
+    hasher.update(size.to_bytes(8, byteorder="big"))
+
+    if size <= sample_size * 2:
+        try:
+            with open(filepath, "rb") as f:
+                hasher.update(f.read())
+        except OSError:
+            return ""
+        return hasher.hexdigest()
+
+    try:
+        with open(filepath, "rb") as f:
+            # First chunk (container header)
+            hasher.update(f.read(sample_size))
+            # Last chunk (tail metadata / trailing atoms)
+            f.seek(size - sample_size)
+            hasher.update(f.read(sample_size))
+    except OSError:
+        return ""
+
+    return hasher.hexdigest()
 
 
 def derive_episode_id(rel_path: str) -> str:
@@ -150,6 +189,8 @@ def scan_video_files(
 
             seen_ids[episode_id] = rel
 
+            fingerprint = compute_file_fingerprint(filepath)
+
             files.append(
                 {
                     "filename": rel,
@@ -158,6 +199,7 @@ def scan_video_files(
                     "size_bytes": size_bytes,
                     "episode_id": episode_id,
                     "mtime": mtime,
+                    "fingerprint": fingerprint,
                 }
             )
 
@@ -244,6 +286,7 @@ def discover_video_files(input_dir: str, stage_filter: str | None = None) -> lis
                 "retry_count": retry_count,
                 "last_error": last_error,
                 "episode_id": ep_id,
+                "fingerprint": f.get("fingerprint", ""),
             }
         )
 
