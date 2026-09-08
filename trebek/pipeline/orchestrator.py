@@ -74,6 +74,9 @@ class TrebekPipelineOrchestrator:
         # Stats for shutdown summary
         self.stats = {"total": 0, "completed": 0, "failed": 0}
 
+        # Cache of registered episode IDs to avoid redundant DB roundtrips during ingestion
+        self.registered_episode_ids: set[str] = set()
+
     def is_stage_active(self, stage_name: str) -> bool:
         """Check if a logical stage is active for the current --stage configuration."""
         return stage_name in ACTIVE_STAGES.get(self.stage, set())
@@ -91,6 +94,13 @@ class TrebekPipelineOrchestrator:
                 conn.executescript(f.read())
 
         await self.db_writer.start()
+
+        # Populate registered episode IDs cache
+        try:
+            all_episodes = await self.db_writer.execute("SELECT episode_id FROM pipeline_state")
+            self.registered_episode_ids = {r[0] for r in all_episodes} if all_episodes else set()
+        except Exception as e:
+            logger.warning("Failed to initialize registered episode IDs cache", error=str(e))
 
         # Cleanup intermediate files
         try:
