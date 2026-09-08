@@ -201,6 +201,14 @@ async def verify_and_correct_clues(
         "latency_ms": 0.0,
     }
 
+    from trebek.config import settings
+
+    if getattr(settings, "mock_llm", False):
+        logger.info("Stage 3.5: Mock LLM mode active, skipping verification pass")
+        for clue in extracted_clues:
+            clue.is_verified = True
+        return [], total_usage
+
     corrections: list[dict[str, Any]] = []
     semaphore = asyncio.Semaphore(VERIFY_CONCURRENCY)
 

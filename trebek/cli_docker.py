@@ -44,13 +44,17 @@ def handle_docker(args: argparse.Namespace, input_dir: str) -> None:
         cmd.extend(["-e", f"GEMINI_API_KEY={os.environ['GEMINI_API_KEY']}"])
     if "HF_TOKEN" in os.environ:
         cmd.extend(["-e", f"HF_TOKEN={os.environ['HF_TOKEN']}"])
+    if getattr(args, "mock_llm", False):
+        cmd.extend(["-e", "TREBEK_MOCK_LLM=1"])
 
     cmd.append("ghcr.io/arvarik/trebek:latest")
 
     # Forward subcommand and flags
     cmd.append("run")
-    if args.once:
+    if getattr(args, "once", False):
         cmd.append("--once")
+    if getattr(args, "mock_llm", False):
+        cmd.append("--mock-llm")
     if args.stage != "all":
         cmd.extend(["--stage", args.stage])
     if args.model != "pro":

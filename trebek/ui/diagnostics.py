@@ -130,6 +130,8 @@ def render_system_diagnostics(settings: Any) -> bool:
     if api_key:
         masked = api_key[:4] + "•" * 12 + api_key[-4:] if len(api_key) > 8 else "•" * len(api_key)
         add_check("Gemini API Key", True, masked)
+    elif getattr(settings, "mock_llm", False):
+        add_check("Gemini API Key", True, "mock mode active (--mock-llm)")
     else:
         add_check("Gemini API Key", False, "not set — LLM stages will fail", warn=True)
 

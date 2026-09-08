@@ -40,17 +40,40 @@ def _get_client() -> "GeminiClient":
 class GeminiClient:
     def __init__(self) -> None:
         import os
-        from google import genai
+        from trebek.config import settings
 
-        api_key = os.environ.get("GEMINI_API_KEY", "")
+        api_key = os.environ.get("GEMINI_API_KEY", "") or getattr(settings, "gemini_api_key", "")
         if not api_key:
-            raise RuntimeError("GEMINI_API_KEY environment variable is required")
-        self.client = genai.Client(api_key=api_key)
+            if getattr(settings, "mock_llm", False):
+                api_key = "mock-api-key"
+            else:
+                raise RuntimeError("GEMINI_API_KEY environment variable is required")
+
+        if getattr(settings, "mock_llm", False):
+            self.client = None
+        else:
+            from google import genai
+
+            self.client = genai.Client(api_key=api_key)
 
     async def upload_file(self, file_path: str) -> Any:
+        if self.client is None:
+            from types import SimpleNamespace
+            import os
+
+            return SimpleNamespace(name=f"mock-file-{os.path.basename(file_path)}")
         return await asyncio.to_thread(self.client.files.upload, file=file_path)
 
+    async def get_file(self, file_name: str) -> Any:
+        if self.client is None:
+            from types import SimpleNamespace
+
+            return SimpleNamespace(state=SimpleNamespace(name="ACTIVE"))
+        return await asyncio.to_thread(self.client.files.get, name=file_name)
+
     async def delete_file(self, file_name: str) -> None:
+        if self.client is None:
+            return
         await asyncio.to_thread(self.client.files.delete, name=file_name)
 
     # ── Context Caching Lifecycle ────────────────────────────────────
@@ -69,6 +92,8 @@ class GeminiClient:
 
         TTL defaults to 30 minutes — long enough for a full episode extraction.
         """
+        if self.client is None:
+            return None
         from google.genai import types
 
         try:
@@ -96,7 +121,12 @@ class GeminiClient:
             return str(cache.name)
         except Exception as e:
             err_str = str(e)
-            if "too few tokens" in err_str.lower() or "minimum" in err_str.lower():
+            if "RESOURCE_EXHAUSTED" in err_str:
+                logger.warning(
+                    "Gemini cache: quota/resource limit reached, falling back to non-cached mode",
+                    error=err_str[:200],
+                )
+            elif "too few tokens" in err_str.lower() or "minimum" in err_str.lower():
                 logger.info(
                     "Gemini cache: content below minimum token threshold, falling back to non-cached mode",
                     error=err_str[:200],
@@ -110,6 +140,8 @@ class GeminiClient:
 
     async def delete_cache(self, cache_name: str) -> None:
         """Deletes a previously created cached content object. Logs but does not raise on failure."""
+        if self.client is None:
+            return
         try:
             await asyncio.to_thread(self.client.caches.delete, name=cache_name)
             logger.info("Gemini cache: deleted", cache_name=cache_name)
@@ -136,6 +168,20 @@ class GeminiClient:
             invocation_context: A human-readable label for this call (e.g. "Pass 2 Meta",
                 "Pass 2 Chunk 3/5") used in structured logs for traceability.
         """
+        from trebek.config import settings
+
+        if getattr(settings, "mock_llm", False) or self.client is None:
+            from trebek.llm.mock import generate_mock_llm_response
+
+            mock_resp, mock_usage = generate_mock_llm_response(
+                model=model,
+                prompt=str(prompt),
+                response_schema=response_schema,
+                invocation_context=invocation_context,
+            )
+            _notify_gemini_usage(mock_usage)
+            return mock_resp, mock_usage
+
         import re
         import random
         import time

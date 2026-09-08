@@ -142,6 +142,11 @@ def build_parser() -> TrebekArgumentParser:
         action="store_true",
         help="Allow CPU fallback for WhisperX transcription if CUDA GPU is not detected",
     )
+    run_parser.add_argument(
+        "--mock-llm",
+        action="store_true",
+        help="Run in zero-cost offline mock mode using synthetic LLM fixtures",
+    )
 
     # ── trebek scan ──────────────────────────────────────────────────
     scan_parser = subparsers.add_parser(
@@ -300,6 +305,24 @@ def build_parser() -> TrebekArgumentParser:
         help="Output search results as raw JSON",
     )
 
+    # ── trebek doctor ────────────────────────────────────────────────
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        aliases=["doc"],
+        help="Pre-flight environment diagnostics and readiness verification",
+        help_command="doctor",
+    )
+    doctor_parser.add_argument(
+        "--check-api",
+        action="store_true",
+        help="Perform live Gemini API ping to verify key authenticity",
+    )
+    doctor_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output diagnostic results as structured JSON",
+    )
+
     # ── trebek version ───────────────────────────────────────────────
     subparsers.add_parser(
         "version",
@@ -323,6 +346,14 @@ def main() -> None:
 
         console.print(f"  [bold cyan]trebek[/bold cyan] [dim]v{__version__}[/dim]")
         return
+
+    # ── trebek doctor ────────────────────────────────────────────────
+    if command in ("doctor", "doc"):
+        from trebek.ui.doctor import run_diagnostics, render_doctor_results
+
+        report = run_diagnostics(settings, check_api=getattr(args, "check_api", False))
+        exit_code = render_doctor_results(report, as_json=getattr(args, "json", False))
+        sys.exit(exit_code)
 
     # ── trebek scan ──────────────────────────────────────────────────
     if command == "scan":
@@ -520,6 +551,10 @@ def main() -> None:
     llm_model = MODEL_ALIASES.get(getattr(args, "model", "pro"), MODEL_PRO)
     max_retries = getattr(args, "max_retries", 3)
     llm_concurrency = getattr(args, "llm_concurrency", None)
+    mock_llm = getattr(args, "mock_llm", False) or getattr(settings, "mock_llm", False)
+    if mock_llm:
+        settings.mock_llm = True
+        os.environ["TREBEK_MOCK_LLM"] = "1"
 
     asyncio.run(
         run_pipeline(
@@ -529,6 +564,7 @@ def main() -> None:
             llm_model=llm_model,
             max_retries=max_retries,
             llm_concurrency=llm_concurrency,
+            mock_llm=mock_llm,
         )
     )
 

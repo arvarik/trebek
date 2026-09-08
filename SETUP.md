@@ -28,9 +28,9 @@ curl -o .env https://raw.githubusercontent.com/arvarik/trebek/main/.env.example
 cp .env.example .env
 # Edit .env → set GEMINI_API_KEY and HF_TOKEN
 
-# 3. Add videos
-mkdir -p input_videos
-# Copy/symlink your J! episode files here (nested folders OK)
+# 3. Add videos & create data directory
+mkdir -p input_videos data
+# Copy/symlink your J! episode files into input_videos (nested folders OK)
 
 # 4. Launch (auto-pulls GHCR image)
 docker compose up -d
@@ -39,7 +39,7 @@ docker compose up -d
 docker compose logs -f
 ```
 
-> ⚠️ **SQLite WAL & Network Drives**: `trebek.db` **must** be on a local disk (ext4/NTFS/APFS). Network mounts (NFS/SMB) will corrupt the database.
+> ⚠️ **SQLite WAL & Network Drives**: `data/trebek.db` (or `trebek.db`) **must** be on a local disk (ext4/NTFS/APFS). Network mounts (NFS/SMB) will corrupt the database. All WAL files are saved atomically inside `./data`.
 
 ---
 

@@ -24,7 +24,8 @@ async def execute_pass_3_multimodal_augmentation(
     without diluting the context window with the full video.
     """
 
-    client = _get_client()
+    from trebek.config import settings
+
     ep_id = episode_id or getattr(episode, "episode_id", None) or os.path.splitext(os.path.basename(video_filepath))[0]
     total_usage: dict[str, float] = {
         "input_tokens": 0.0,
@@ -35,6 +36,12 @@ async def execute_pass_3_multimodal_augmentation(
         "cost_usd": 0.0,
         "latency_ms": 0.0,
     }
+
+    if getattr(settings, "mock_llm", False):
+        logger.info("Pass 3: Mock LLM mode active, skipping multimodal video extraction", episode_id=ep_id)
+        return episode, total_usage
+
+    client = _get_client()
 
     # Use a bounded semaphore to prevent ffmpeg/API floods
     semaphore = asyncio.Semaphore(GEMINI_CONCURRENCY)
@@ -92,6 +99,8 @@ async def execute_pass_3_multimodal_augmentation(
 
                     # Wait for file to become ACTIVE (video processing takes 1-5s)
                     for poll_i in range(15):
+                        if client.client is None:
+                            break
                         file_info = await asyncio.to_thread(client.client.files.get, name=uploaded_file.name)
                         state_name = file_info.state.name if file_info.state else "UNKNOWN"
                         if state_name == "ACTIVE":
