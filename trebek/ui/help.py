@@ -141,7 +141,7 @@ def render_main_help() -> None:
     # ── Quick Start + Examples side by side ──
     qs = Table(box=None, show_header=False, padding=(0, 1))
     qs.add_column("Cmd", style=_C, min_width=30)
-    qs.add_column("Desc", style=_D)
+    qs.add_row("trebek doctor", "Verify system environment & dependencies")
     qs.add_row("trebek scan", "Preview what files will be processed")
     qs.add_row("trebek run --once", "Process everything, then exit")
     qs.add_row("trebek run", "Daemon mode — continuous polling")
@@ -635,6 +635,34 @@ def render_search_help() -> None:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  DOCTOR HELP — `trebek doctor --help`
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def render_doctor_help() -> None:
+    """Renders `trebek doctor --help`."""
+    _subcommand_header("trebek doctor", "Pre-flight environment diagnostics and system readiness verification")
+    console.print(f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek doctor[/{_C}] [{_D}][options][/{_D}]\n")
+
+    opts = Table(box=None, show_header=False, padding=(0, 2))
+    opts.add_column("Argument / Option", style=_F, width=22, no_wrap=True)
+    opts.add_column("Description", style="white")
+    opts.add_row("--check-api", "Perform live Gemini API ping to verify key authenticity")
+    opts.add_row("--json", "Output diagnostic results as structured JSON")
+
+    console.print(
+        Panel(opts, title="[bold]Arguments & Options[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1))
+    )
+
+    console.print(f"  [{_A}]Examples:[/{_A}]")
+    console.print(f"    [{_C}]trebek doctor[/{_C}]")
+    console.print(f"    [{_C}]trebek doctor --check-api[/{_C}]")
+    console.print(f"    [{_C}]trebek doctor --json[/{_C}]")
+    console.print()
+    _footer()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  Dispatcher
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -649,6 +677,8 @@ _HELP_RENDERERS: dict[str, Callable[[], None]] = {
     "clean": render_clean_help,
     "export": render_export_help,
     "search": render_search_help,
+    "doctor": render_doctor_help,
+    "doc": render_doctor_help,
 }
 
 

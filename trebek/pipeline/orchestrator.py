@@ -375,9 +375,14 @@ async def run_pipeline(
     llm_model: str = MODEL_PRO,
     max_retries: int = 3,
     llm_concurrency: Optional[int] = None,
+    mock_llm: bool = False,
 ) -> None:
     """Main pipeline entry point, called by cli.py."""
     from trebek.ui import render_startup_banner, render_system_diagnostics
+
+    if mock_llm:
+        settings.mock_llm = True
+        os.environ["TREBEK_MOCK_LLM"] = "1"
 
     input_dir = input_dir_override or settings.input_dir
 

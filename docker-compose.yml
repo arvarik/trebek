@@ -16,7 +16,11 @@ services:
       # IMPORTANT: SQLite in WAL mode requires POSIX advisory locks.
       # This volume MUST be mapped to a local host filesystem (ext4, NTFS, APFS).
       # Network mounts (NFS, SMB, CIFS) will result in database corruption.
-      - ./trebek.db:/app/trebek.db
+      # Mount a dedicated data directory so SQLite WAL files (-wal, -shm) and
+      # the database are persisted together without host directory collision.
+      - ./data:/app/data
+    environment:
+      - DB_PATH=/app/data/trebek.db
     # Hardware passthrough for NVIDIA GPU
     deploy:
       resources:

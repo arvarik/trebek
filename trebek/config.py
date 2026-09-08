@@ -79,10 +79,14 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default="", description="GCP / Gemini API Key")
     log_level: str = Field(default="INFO", description="Logging level")
 
+    mock_llm: bool = Field(default=False, description="Enable zero-cost offline mock mode using synthetic LLM fixtures")
+
     def require_gemini_api_key(self) -> str:
         """Validates that GEMINI_API_KEY is set. Call this at pipeline startup,
         not at import time, so that CLI commands like scan/stats still work."""
         if not self.gemini_api_key:
+            if self.mock_llm:
+                return "mock-gemini-key"
             raise ValueError(
                 "GEMINI_API_KEY is required. Get a free key at https://aistudio.google.com/apikey "
                 "and set it in your .env file or environment."
@@ -148,6 +152,24 @@ class Settings(BaseSettings):
 
         if self.hf_token and "HF_TOKEN" not in os.environ:
             os.environ["HF_TOKEN"] = self.hf_token
+
+        mock_env = os.environ.get("TREBEK_MOCK_LLM", "").lower() or os.environ.get("MOCK_LLM", "").lower()
+        if mock_env in ("1", "true", "yes", "on"):
+            self.mock_llm = True
+
+        # Validate that db_path is not an existing directory
+        if os.path.isdir(self.db_path):
+            raise ValueError(
+                f"Database path '{self.db_path}' is a directory, not a file. "
+                "If running with Docker, ensure a file path is specified "
+                "(e.g. ./data:/app/data with DB_PATH=/app/data/trebek.db)."
+            )
+        db_dir = os.path.dirname(os.path.abspath(self.db_path))
+        if db_dir and not os.path.exists(db_dir):
+            try:
+                os.makedirs(db_dir, exist_ok=True)
+            except OSError:
+                pass
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
