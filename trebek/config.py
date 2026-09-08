@@ -42,6 +42,7 @@ IGNORED_EXTENSIONS: Tuple[str, ...] = (
 MODEL_FLASH = "gemini-3.1-flash-lite-preview"
 MODEL_FLASH3 = "gemini-3-flash-preview"
 MODEL_PRO = "gemini-3.1-pro-preview"
+MODEL_EMBEDDING = "gemini-embedding-001"
 
 # CLI alias → canonical model name
 MODEL_ALIASES: dict[str, str] = {

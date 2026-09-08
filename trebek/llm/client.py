@@ -79,7 +79,7 @@ class GeminiClient:
     async def embed_content(
         self,
         texts: list[str],
-        model: str = "text-embedding-004",
+        model: str = "gemini-embedding-001",
     ) -> list[list[float]]:
         """Generates vector embeddings for a list of texts using Gemini embedding model.
 
@@ -103,10 +103,10 @@ class GeminiClient:
             batch_success = False
             for attempt in range(3):
                 try:
-                    response = await self.client.aio.models.embed_content(
-                        model=model,
-                        contents=batch,
-                    )
+                    embed_kwargs: dict[str, Any] = {"model": model, "contents": batch}
+                    if "gemini-embedding" in model:
+                        embed_kwargs["config"] = {"output_dimensionality": 768}
+                    response = await self.client.aio.models.embed_content(**embed_kwargs)
                     if response and response.embeddings:
                         for emb in response.embeddings:
                             vals = getattr(emb, "values", None) or []
