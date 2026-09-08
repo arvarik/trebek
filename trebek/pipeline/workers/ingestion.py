@@ -47,11 +47,30 @@ async def run_ingestion_pass(orchestrator: "TrebekPipelineOrchestrator", input_d
     for f in new_candidates:
         ep_id = f["episode_id"]
         source_path = f["filepath"]
+        fingerprint = f.get("fingerprint") or ""
+
+        # Check if an identical video file has already been ingested or processed
+        if fingerprint:
+            existing_match = await orchestrator.db_writer.execute(
+                "SELECT episode_id, status FROM pipeline_state WHERE fingerprint = ? LIMIT 1",
+                (fingerprint,),
+            )
+            if existing_match and existing_match[0]:
+                existing_ep_id, existing_status = existing_match[0]
+                logger.warning(
+                    "Duplicate video file detected (fingerprint match); skipping ingestion",
+                    candidate_file=source_path,
+                    duplicate_of=existing_ep_id,
+                    existing_status=existing_status,
+                    fingerprint=fingerprint,
+                )
+                orchestrator.registered_episode_ids.add(ep_id)
+                continue
 
         result = await orchestrator.db_writer.execute(
-            "INSERT OR IGNORE INTO pipeline_state (episode_id, status, source_filename) "
-            "VALUES (?, ?, ?) RETURNING episode_id",
-            (ep_id, PipelineStatus.PENDING, source_path),
+            "INSERT OR IGNORE INTO pipeline_state (episode_id, status, source_filename, fingerprint) "
+            "VALUES (?, ?, ?, ?) RETURNING episode_id",
+            (ep_id, PipelineStatus.PENDING, source_path, fingerprint or None),
         )
 
         is_new = isinstance(result, list) and len(result) > 0

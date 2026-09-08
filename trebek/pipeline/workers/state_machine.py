@@ -92,6 +92,11 @@ async def state_machine_worker(
                             f"{clue_count} clues (minimum 45). Episode will not be committed."
                         )
 
+                    # Generate embeddings and semantic lateral distance for all clues
+                    from trebek.analysis.embeddings import enrich_clues_with_embeddings
+
+                    await enrich_clues_with_embeddings(episode_data.clues)
+
                     # Commit relational data to the analytical tables
                     await commit_episode_to_relational_tables(
                         orchestrator.db_writer, episode_id, episode_data, state_machine

@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
     status TEXT NOT NULL,
     source_filename TEXT,
     transcript_path TEXT,
+    fingerprint TEXT,
     retry_count INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -56,6 +57,7 @@ CREATE TABLE IF NOT EXISTS clues (
     wagerer_name TEXT,
 
     requires_visual_context BOOLEAN,
+    visual_context_description TEXT,
     host_start_timestamp_ms REAL,
     host_finish_timestamp_ms REAL,
     clue_syllable_count INTEGER,
@@ -139,6 +141,7 @@ CREATE TABLE IF NOT EXISTS job_telemetry (
 
 -- Performance indexes for pipeline polling and analytical queries
 CREATE INDEX IF NOT EXISTS idx_pipeline_state_status ON pipeline_state(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_pipeline_state_fingerprint ON pipeline_state(fingerprint);
 CREATE INDEX IF NOT EXISTS idx_clues_episode_id ON clues(episode_id);
 CREATE INDEX IF NOT EXISTS idx_buzz_attempts_clue_id ON buzz_attempts(clue_id);
 CREATE INDEX IF NOT EXISTS idx_buzz_attempts_contestant_id ON buzz_attempts(contestant_id);

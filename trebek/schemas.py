@@ -20,6 +20,13 @@ class BuzzAttempt(BaseModel):
     is_lockout_inferred: bool = Field(
         description="True if they appeared to jump the gun and suffered the 0.25s penalty."
     )
+    podium_light_timestamp_ms: Optional[float] = Field(
+        default=None, description="The exact timestamp when the contestant's podium indicator light illuminated."
+    )
+    true_buzzer_latency_ms: Optional[float] = Field(
+        default=None,
+        description="The true reaction time in milliseconds between the podium indicator light and the buzz.",
+    )
 
 
 class Clue(BaseModel):
@@ -31,6 +38,9 @@ class Clue(BaseModel):
     is_daily_double: bool
     requires_visual_context: bool = Field(
         description="True if the transcript implies contestants are looking at a picture/video clue. Triggers multimodal extraction."
+    )
+    visual_context_description: Optional[str] = Field(
+        default=None, description="Description of the visual clue graphic/video extracted during host reading."
     )
     host_start_timestamp_ms: float = Field(
         description="The exact WhisperX timestamp when the host starts reading the clue."
@@ -50,6 +60,13 @@ class Clue(BaseModel):
     )
     original_response: Optional[str] = Field(
         default=None, description="The original LLM extracted response before Stage 3.5 corrections."
+    )
+    clue_embedding: Optional[List[float]] = Field(default=None, description="Vector embedding of the clue text.")
+    response_embedding: Optional[List[float]] = Field(
+        default=None, description="Vector embedding of the correct response."
+    )
+    semantic_lateral_distance: Optional[float] = Field(
+        default=None, description="Cosine distance between clue and response embeddings."
     )
 
     attempts: List[BuzzAttempt] = Field(

@@ -243,3 +243,30 @@ def generate_mock_llm_response(
     }
 
     return MockResponse(text=json_str), usage
+
+
+def generate_mock_embedding(text: str, dim: int = 768) -> list[float]:
+    """Generates a deterministic, unit-normalized 768-dimensional float vector.
+
+    Derived from SHA-256 hash of the input text, providing reproducible
+    vectors with valid cosine similarity behavior for offline mock testing.
+    """
+    import hashlib
+    import math
+
+    if not text:
+        return [0.0] * dim
+
+    # Use text hash as seed material
+    h = hashlib.sha256(text.encode("utf-8")).digest()
+    seed_int = int.from_bytes(h[:8], "big")
+    raw_vals: list[float] = []
+    state = seed_int
+    for _ in range(dim):
+        state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
+        raw_vals.append((state / 0xFFFFFFFFFFFFFFFF) * 2.0 - 1.0)
+
+    norm = math.sqrt(sum(x * x for x in raw_vals))
+    if norm == 0.0:
+        return [0.0] * dim
+    return [round(x / norm, 6) for x in raw_vals]

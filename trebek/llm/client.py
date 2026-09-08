@@ -76,6 +76,50 @@ class GeminiClient:
             return
         await asyncio.to_thread(self.client.files.delete, name=file_name)
 
+    async def embed_content(
+        self,
+        texts: list[str],
+        model: str = "text-embedding-004",
+    ) -> list[list[float]]:
+        """Generates vector embeddings for a list of texts using Gemini embedding model.
+
+        When mock_llm is active or client is None, produces deterministic unit-normalized
+        768-dimensional mock embeddings without making network requests.
+        """
+        from trebek.config import settings
+
+        if getattr(settings, "mock_llm", False) or self.client is None:
+            from trebek.llm.mock import generate_mock_embedding
+
+            return [generate_mock_embedding(t) for t in texts]
+
+        if not texts:
+            return []
+
+        embeddings: list[list[float]] = []
+        batch_size = 100
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            try:
+                response = await self.client.aio.models.embed_content(
+                    model=model,
+                    contents=batch,
+                )
+                if response and response.embeddings:
+                    for emb in response.embeddings:
+                        vals = getattr(emb, "values", None) or []
+                        embeddings.append([float(v) for v in vals])
+            except Exception as e:
+                logger.warning(
+                    "Gemini embed_content failed, falling back to zero vectors",
+                    batch_len=len(batch),
+                    error=str(e)[:200],
+                )
+                for _ in batch:
+                    embeddings.append([0.0] * 768)
+
+        return embeddings
+
     # ── Context Caching Lifecycle ────────────────────────────────────
 
     async def create_cache(
