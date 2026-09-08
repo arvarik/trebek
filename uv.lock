@@ -1052,7 +1052,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.10.0" },
     { name = "rich", specifier = ">=13.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.0.280" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0,<0.16.0" },
     { name = "structlog", specifier = ">=23.1.0" },
 ]
 provides-extras = ["dev"]
