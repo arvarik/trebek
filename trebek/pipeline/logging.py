@@ -10,7 +10,7 @@ across all log messages within an episode's processing scope.
 """
 
 import sys
-from typing import Any
+from typing import Any, TextIO, cast
 
 import structlog
 
@@ -23,7 +23,7 @@ class _DynamicStderr:
         return sys.stderr.write(s)
 
     def flush(self) -> None:
-        return sys.stderr.flush()
+        sys.stderr.flush()
 
 
 _dynamic_stderr = _DynamicStderr()
@@ -50,7 +50,7 @@ def configure_logging() -> None:
     processors: list[Any] = [*shared_processors, renderer]
     structlog.configure(
         processors=processors,
-        logger_factory=structlog.PrintLoggerFactory(file=_dynamic_stderr),
+        logger_factory=structlog.PrintLoggerFactory(file=cast(TextIO, _dynamic_stderr)),
     )
 
 

@@ -81,8 +81,8 @@ async def enrich_clues_with_embeddings(clues: List["Clue"], client: Any = None) 
             c_emb = clue_embs[i] if i < len(clue_embs) else None
             r_emb = resp_embs[i] if i < len(resp_embs) else None
 
-            is_valid_c = bool(c_emb) and any(v != 0.0 for v in c_emb)
-            is_valid_r = bool(r_emb) and any(v != 0.0 for v in r_emb)
+            is_valid_c = c_emb is not None and any(v != 0.0 for v in c_emb)
+            is_valid_r = r_emb is not None and any(v != 0.0 for v in r_emb)
 
             if is_valid_c and is_valid_r and c_emb is not None and r_emb is not None:
                 clue.clue_embedding = c_emb
