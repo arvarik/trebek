@@ -63,13 +63,13 @@ class TestWhisperComputeTypeValidation:
     """Compute type constraint tests."""
 
     def test_valid_compute_types(self) -> None:
-        for ct in ("float16", "float32"):
+        for ct in ("float16", "float32", "int8", "int8_float16"):
             s = Settings(whisper_compute_type=ct, gemini_api_key="test-key")
             assert s.whisper_compute_type == ct
 
     def test_invalid_compute_type_raises(self) -> None:
         with pytest.raises(Exception, match="whisper_compute_type must be"):
-            Settings(whisper_compute_type="int8", gemini_api_key="test-key")
+            Settings(whisper_compute_type="invalid_type", gemini_api_key="test-key")
 
 
 class TestGeminiApiKeyValidation:

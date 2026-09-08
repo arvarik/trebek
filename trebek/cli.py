@@ -35,6 +35,13 @@ def handle_scan(input_dir: str, stage_filter: str | None = None) -> None:
     render_startup_banner(mode="scan")
     render_system_diagnostics(settings)
 
+    hf_token = os.environ.get("HF_TOKEN", "") or getattr(settings, "hf_token", "")
+    if not hf_token:
+        console.print(
+            "  [bold yellow]⚠️  HF_TOKEN is not configured:[/bold yellow] Speaker diarization will be skipped,\n"
+            "  reducing clue speaker attribution accuracy by ~50%. Set [bold]HF_TOKEN[/bold] in .env to enable.\n"
+        )
+
     console.print(f"\n  [dim]Scanning (recursive):[/dim] [bold]{os.path.abspath(input_dir)}[/bold]")
     exts = ", ".join(e.lstrip(".").upper() for e in SUPPORTED_VIDEO_EXTENSIONS[:6])
     console.print(f"  [dim]Formats:[/dim] [bold]{exts}[/bold] [dim]+ 6 more[/dim]")
@@ -130,6 +137,11 @@ def build_parser() -> TrebekArgumentParser:
         default=None,
         help="Number of concurrent episodes processed in LLM extraction (default: from .env or 2)",
     )
+    run_parser.add_argument(
+        "--allow-cpu",
+        action="store_true",
+        help="Allow CPU fallback for WhisperX transcription if CUDA GPU is not detected",
+    )
 
     # ── trebek scan ──────────────────────────────────────────────────
     scan_parser = subparsers.add_parser(
@@ -151,6 +163,46 @@ def build_parser() -> TrebekArgumentParser:
         help="Only show files that still need work at this stage",
     )
 
+    # ── trebek status ────────────────────────────────────────────────
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Show real-time queue health and in-flight workers",
+        help_command="status",
+    )
+    status_parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="Watch queue health in real time with continuous refresh",
+    )
+    status_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output machine-readable queue status summary as JSON",
+    )
+    status_parser.add_argument(
+        "--refresh-interval",
+        type=float,
+        default=2.0,
+        help="Seconds between refreshes in watch mode (default: 2.0)",
+    )
+
+    # ── trebek inspect ───────────────────────────────────────────────
+    inspect_parser = subparsers.add_parser(
+        "inspect",
+        help="Detailed inspection of a single episode",
+        help_command="inspect",
+    )
+    inspect_parser.add_argument(
+        "episode_id",
+        type=str,
+        help="Episode ID to inspect",
+    )
+    inspect_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Dump complete episode inspection record as raw JSON",
+    )
+
     # ── trebek stats ─────────────────────────────────────────────────
     subparsers.add_parser(
         "stats",
@@ -159,10 +211,61 @@ def build_parser() -> TrebekArgumentParser:
     )
 
     # ── trebek retry ─────────────────────────────────────────────────
-    subparsers.add_parser(
+    retry_parser = subparsers.add_parser(
         "retry",
-        help="Reset all FAILED episodes back to PENDING for re-processing",
+        help="Reset failed or specific episodes back to PENDING for re-processing",
         help_command="retry",
+    )
+    retry_parser.add_argument(
+        "episode_id",
+        type=str,
+        nargs="?",
+        default=None,
+        help="Optional specific episode ID to reset (default: all failed episodes)",
+    )
+    retry_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Reset the episode even if its status is not FAILED",
+    )
+
+    # ── trebek clean ─────────────────────────────────────────────────
+    clean_parser = subparsers.add_parser(
+        "clean",
+        help="Safely purge orphaned audio, tmp files, and obsolete transcripts",
+        help_command="clean",
+    )
+    clean_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually delete files (default: dry run)",
+    )
+
+    # ── trebek export ────────────────────────────────────────────────
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export an episode to Markdown, JSON, or CSV",
+        help_command="export",
+    )
+    export_parser.add_argument(
+        "episode_id",
+        type=str,
+        help="Episode ID to export",
+    )
+    export_parser.add_argument(
+        "--format",
+        "-f",
+        type=str,
+        choices=["md", "markdown", "json", "csv"],
+        default="md",
+        help="Export format: 'md' (default), 'json', or 'csv'",
+    )
+    export_parser.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        default=None,
+        help="Output file path (prints to stdout if omitted)",
     )
 
     # ── trebek version ───────────────────────────────────────────────
@@ -196,6 +299,33 @@ def main() -> None:
         handle_scan(input_dir, stage_filter=stage_filter)
         return
 
+    # ── trebek status ────────────────────────────────────────────────
+    if command == "status":
+        import asyncio
+        from trebek.ui.status import run_status_display
+
+        asyncio.run(
+            run_status_display(
+                settings.db_path,
+                watch=getattr(args, "watch", False),
+                as_json=getattr(args, "json", False),
+                refresh_interval=getattr(args, "refresh_interval", 2.0),
+            )
+        )
+        return
+
+    # ── trebek inspect ───────────────────────────────────────────────
+    if command == "inspect":
+        from trebek.ui.inspect import handle_inspect_command
+
+        handle_inspect_command(
+            settings.db_path,
+            args.episode_id,
+            output_dir=settings.output_dir,
+            as_json=getattr(args, "json", False),
+        )
+        return
+
     # ── trebek stats ─────────────────────────────────────────────────
     if command == "stats":
         import asyncio
@@ -212,16 +342,58 @@ def main() -> None:
             writer = DatabaseWriter(settings.db_path)
             await writer.start()
             try:
-                count = await writer.reset_failed_episodes()
+                ep_id = getattr(args, "episode_id", None)
+                force = getattr(args, "force", False)
+                count = await writer.reset_episode(ep_id, force=force)
                 if count > 0:
-                    console.print(f"  [green]✔[/green] Reset [bold]{count}[/bold] failed episode(s) back to PENDING")
+                    target = f"episode '{ep_id}'" if ep_id else f"{count} failed episode(s)"
+                    console.print(f"  [green]✔[/green] Reset [bold]{target}[/bold] back to PENDING")
                     console.print("  [dim]Run [bold]trebek run --once[/bold] to re-process them.[/dim]")
                 else:
-                    console.print("  [dim]No FAILED episodes found.[/dim]")
+                    if ep_id:
+                        console.print(
+                            f"  [dim]Episode '{ep_id}' not found in FAILED state (pass --force to override).[/dim]"
+                        )
+                    else:
+                        console.print("  [dim]No FAILED episodes found.[/dim]")
             finally:
                 await writer.stop()
 
         asyncio.run(_retry())
+        return
+
+    # ── trebek clean ─────────────────────────────────────────────────
+    if command == "clean":
+        from trebek.ui.cleanup import handle_clean_command
+
+        handle_clean_command(
+            output_dir=settings.output_dir,
+            db_path=settings.db_path,
+            apply=getattr(args, "apply", False),
+        )
+        return
+
+    # ── trebek export ────────────────────────────────────────────────
+    if command == "export":
+        from trebek.analysis.export import export_episode
+
+        try:
+            content = export_episode(
+                settings.db_path,
+                args.episode_id,
+                format=getattr(args, "format", "md"),
+                output_path=getattr(args, "output", None),
+                output_dir=settings.output_dir,
+            )
+            if getattr(args, "output", None):
+                console.print(
+                    f"  [green]✔[/green] Exported episode [bold]{args.episode_id}[/bold] to [cyan]{args.output}[/cyan]"
+                )
+            else:
+                print(content)
+        except Exception as e:
+            console.print(f"\n  [bold red]Export error:[/bold red] {e}\n")
+            sys.exit(1)
         return
 
     # ── trebek run ───────────────────────────────────────────────────
@@ -232,12 +404,30 @@ def main() -> None:
         handle_docker(args, input_dir)
         return
 
+    stage = getattr(args, "stage", "all")
+    allow_cpu = getattr(args, "allow_cpu", False) or settings.allow_cpu
+
+    # Hardware check for transcription stages
+    if stage in ("all", "transcribe") and not allow_cpu:
+        from trebek.gpu.hardware import detect_hardware
+
+        hw = detect_hardware()
+        if not hw.is_cuda:
+            console.print(
+                f"\n  [bold red]Error: CUDA GPU not detected ({hw.device_name}).[/bold red]\n"
+                "  WhisperX transcription requires an NVIDIA GPU for performant execution.\n\n"
+                "  [dim]Options to proceed:[/dim]\n"
+                "  • Pass [bold]--allow-cpu[/bold] to run transcription on CPU (slower fallback).\n"
+                "  • Run downstream stages only: [bold]trebek run --stage extract[/bold]\n"
+                "  • Run containerized with GPU pass-through: [bold]trebek run --docker[/bold]\n"
+            )
+            sys.exit(1)
+
     # Import here to avoid loading heavy modules for scan/stats
     import asyncio
     from trebek.pipeline import run_pipeline
 
     mode = "once" if getattr(args, "once", False) else "daemon"
-    stage = getattr(args, "stage", "all")
     llm_model = MODEL_ALIASES.get(getattr(args, "model", "pro"), MODEL_PRO)
     max_retries = getattr(args, "max_retries", 3)
     llm_concurrency = getattr(args, "llm_concurrency", None)

@@ -17,7 +17,12 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, task_id: Any) -> None:
+async def state_machine_worker(
+    orchestrator: "TrebekPipelineOrchestrator",
+    progress: Any,
+    task_id: Any,
+    coordinator: Any = None,
+) -> None:
     """Polls for MULTIMODAL_DONE, verifies game state, and commits relational data to DB."""
     current_episode_id: str | None = None
     try:
@@ -27,6 +32,8 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
             )
             current_episode_id = episode_id
             if episode_id:
+                if coordinator:
+                    coordinator.update_commit(episode_id)
                 logger.info(
                     "State Machine: Verifying game state",
                     episode_id=episode_id,
@@ -103,7 +110,11 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                     )
                     current_episode_id = None
                     orchestrator.stats["completed"] += 1
-                    progress.advance(task_id)
+                    if coordinator:
+                        coordinator.advance_verified()
+                        coordinator.update_commit(None)
+                    else:
+                        progress.advance(task_id)
                     logger.info(
                         "Episode completed successfully",
                         episode_id=episode_id,
@@ -120,11 +131,19 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                     current_episode_id = None
                     if permanently_failed:
                         orchestrator.stats["failed"] += 1
-                        progress.advance(task_id)
+                    if coordinator:
+                        coordinator.update_commit(None)
+                        if permanently_failed:
+                            coordinator.advance_verified()
                     else:
+                        if permanently_failed:
+                            progress.advance(task_id)
+                    if not permanently_failed:
                         orchestrator.llm_work_ready.set()
             else:
                 current_episode_id = None
+                if coordinator:
+                    coordinator.update_commit(None)
                 if orchestrator.mode == "once" and await orchestrator._no_work_remaining(
                     PipelineStatus.MULTIMODAL_DONE
                 ):
@@ -136,6 +155,8 @@ async def state_machine_worker(orchestrator: "TrebekPipelineOrchestrator", progr
                     with contextlib.suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(orchestrator.state_machine_work_ready.wait(), timeout=1.0)
     except asyncio.CancelledError:
+        if coordinator:
+            coordinator.update_commit(None)
         if current_episode_id:
             logger.warning("State machine worker cancelled, resetting episode", episode_id=current_episode_id)
             with contextlib.suppress(Exception):

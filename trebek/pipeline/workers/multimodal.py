@@ -15,7 +15,12 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress: Any, task_id: Any) -> None:
+async def multimodal_worker(
+    orchestrator: "TrebekPipelineOrchestrator",
+    progress: Any,
+    task_id: Any,
+    coordinator: Any = None,
+) -> None:
     """Polls for SAVING, executes temporal sniping (Pass 3), and sets to MULTIMODAL_DONE."""
     current_episode_id: str | None = None
     try:
@@ -25,6 +30,8 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
             )
             current_episode_id = episode_id
             if episode_id:
+                if coordinator:
+                    coordinator.update_augment(episode_id)
                 logger.info(
                     "Multimodal Worker: Processing episode",
                     episode_id=episode_id,
@@ -90,7 +97,12 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                     else:
                         # Augment is the last active stage — advance progress
                         orchestrator.stats["completed"] += 1
-                        progress.advance(task_id)
+                        if coordinator:
+                            coordinator.advance_verified()
+                        else:
+                            progress.advance(task_id)
+                    if coordinator:
+                        coordinator.update_augment(None)
                     logger.info("Multimodal extraction complete", episode_id=episode_id)
                 except Exception as e:
                     logger.error("Multimodal worker failed", error=str(e))
@@ -100,11 +112,19 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                     current_episode_id = None
                     if permanently_failed:
                         orchestrator.stats["failed"] += 1
-                        progress.advance(task_id)
+                    if coordinator:
+                        coordinator.update_augment(None)
+                        if permanently_failed:
+                            coordinator.advance_verified()
                     else:
+                        if permanently_failed:
+                            progress.advance(task_id)
+                    if not permanently_failed:
                         orchestrator.multimodal_work_ready.set()
             else:
                 current_episode_id = None
+                if coordinator:
+                    coordinator.update_augment(None)
                 if orchestrator.mode == "once" and await orchestrator._no_work_remaining(PipelineStatus.SAVING):
                     break
                 orchestrator.multimodal_work_ready.clear()
@@ -114,6 +134,8 @@ async def multimodal_worker(orchestrator: "TrebekPipelineOrchestrator", progress
                     with contextlib.suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(orchestrator.multimodal_work_ready.wait(), timeout=1.0)
     except asyncio.CancelledError:
+        if coordinator:
+            coordinator.update_augment(None)
         if current_episode_id:
             logger.warning("Multimodal worker cancelled, resetting episode", episode_id=current_episode_id)
             with contextlib.suppress(Exception):

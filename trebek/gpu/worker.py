@@ -15,7 +15,11 @@ _whisperx_align_metadata: Any = None
 
 
 def gpu_worker_task(
-    video_filepath: str, output_dir: str, batch_size: int = 8, compute_type: str = "float16"
+    video_filepath: str,
+    output_dir: str,
+    batch_size: int = 8,
+    compute_type: str = "float16",
+    device: str = "cuda",
 ) -> tuple[str, float, float]:
     """
     Executes the GPU processing task (Stage 3) and writes results to disk to avoid
@@ -44,6 +48,8 @@ def gpu_worker_task(
     metrics = {"peak_vram": 0.0, "util_sum": 0.0, "util_count": 0}
 
     def monitor_gpu() -> None:
+        if device != "cuda":
+            return
         try:
             import pynvml
 
@@ -100,10 +106,10 @@ def gpu_worker_task(
     # 2. WhisperX Transcription — Warm Worker
     global _whisperx_model, _whisperx_align_model, _whisperx_align_metadata
     if _whisperx_model is None:
-        logger.info("Loading WhisperX model into VRAM (Cold Start)...")
-        _whisperx_model = whisperx.load_model("large-v3", device="cuda", compute_type=compute_type, language="en")
+        logger.info("Loading WhisperX model (Cold Start)...", device=device)
+        _whisperx_model = whisperx.load_model("large-v3", device=device, compute_type=compute_type, language="en")
     else:
-        logger.info("Using cached WhisperX model (Warm Start)...")
+        logger.info("Using cached WhisperX model (Warm Start)...", device=device)
 
     try:
         audio = whisperx.load_audio(audio_path)
@@ -119,9 +125,9 @@ def gpu_worker_task(
         # Without this step, segments are ~25s paragraph chunks with zero
         # word-level tokens, making Line ID-based extraction nearly impossible.
         if _whisperx_align_model is None:
-            logger.info("Loading WhisperX alignment model (wav2vec2)...")
+            logger.info("Loading WhisperX alignment model (wav2vec2)...", device=device)
             _whisperx_align_model, _whisperx_align_metadata = whisperx.load_align_model(
-                language_code="en", device="cuda"
+                language_code="en", device=device
             )
 
         try:
@@ -130,7 +136,7 @@ def gpu_worker_task(
                 _whisperx_align_model,
                 _whisperx_align_metadata,
                 audio,
-                device="cuda",
+                device=device,
                 return_char_alignments=False,
             )
             aligned_segment_count = len(aligned_result.get("segments", []))
@@ -161,7 +167,7 @@ def gpu_worker_task(
                 diarize_model = DiarizationPipeline(
                     model_name="pyannote/speaker-diarization-3.1",
                     token=hf_token,
-                    device="cuda",
+                    device=device,
                 )
                 diarize_segments = diarize_model(
                     audio_path,
@@ -190,7 +196,8 @@ def gpu_worker_task(
         # Explicit Memory Management
         del audio
         gc.collect()
-        torch.cuda.empty_cache()
+        if device == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         processed_result = {
             "status": "success",

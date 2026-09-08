@@ -23,6 +23,8 @@ from trebek.ui import (
     console,
     create_pipeline_progress,
 )
+from trebek.ui.progress import SessionTelemetry, PipelineProgressCoordinator
+from trebek.llm.client import register_gemini_usage_callback, unregister_gemini_usage_callback
 from trebek.pipeline.logging import configure_logging
 from trebek.pipeline.stages import (
     ACTIVE_STAGES,
@@ -41,6 +43,11 @@ logger = structlog.get_logger()
 
 
 class TrebekPipelineOrchestrator:
+    """
+    Coordinates asynchronous workers across the ingestion, GPU transcription,
+    and LLM processing stages.
+    """
+
     def __init__(
         self,
         db_path: str,
@@ -61,11 +68,28 @@ class TrebekPipelineOrchestrator:
             llm_concurrency if llm_concurrency is not None else getattr(settings, "llm_concurrency", 2)
         )
         self.db_writer = DatabaseWriter(db_path)
-        self.gpu_orchestrator = GPUOrchestrator(
-            output_dir,
-            batch_size=settings.whisper_batch_size,
-            compute_type=settings.whisper_compute_type,
-        )
+
+        # Resolve device and compute type
+        resolved_device = settings.device
+        compute_type = settings.whisper_compute_type
+        if resolved_device == "auto":
+            from trebek.gpu.hardware import detect_hardware
+
+            hw = detect_hardware()
+            resolved_device = hw.whisper_device
+            if hw.whisper_device == "cpu" and compute_type == "float16":
+                compute_type = hw.recommended_compute
+        elif resolved_device == "cpu" and compute_type == "float16":
+            compute_type = "int8"
+
+        self.gpu_orchestrator: Optional[GPUOrchestrator] = None
+        if self.is_stage_active("transcribe"):
+            self.gpu_orchestrator = GPUOrchestrator(
+                output_dir,
+                batch_size=settings.whisper_batch_size,
+                compute_type=compute_type,
+                device=resolved_device,
+            )
         self.running = False
         self.tasks: List[asyncio.Task[Any]] = []
 
@@ -155,7 +179,8 @@ class TrebekPipelineOrchestrator:
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
-        self.gpu_orchestrator.shutdown()
+        if self.gpu_orchestrator is not None:
+            self.gpu_orchestrator.shutdown()
 
         telemetry_stats = {}
         try:
@@ -228,7 +253,13 @@ class TrebekPipelineOrchestrator:
         result = await self.db_writer.execute(query, tuple(statuses_to_check))
         return result[0][0] == 0 if result else True
 
-    async def start_workers(self, input_dir: str, progress: Any, task_id: Any) -> None:
+    async def start_workers(
+        self,
+        input_dir: str,
+        progress: Any,
+        task_id: Any = None,
+        coordinator: Optional[PipelineProgressCoordinator] = None,
+    ) -> None:
         self.running = True
 
         active_stages: list[str] = []
@@ -261,14 +292,23 @@ class TrebekPipelineOrchestrator:
                     reset_to=reset_to,
                 )
 
+        # Initialize multi-task coordinator if present
+        if coordinator is not None:
+            active_stage_set = {s for s in ("transcribe", "extract", "augment", "verify") if self.is_stage_active(s)}
+            initial_total = await self._get_total_episodes()
+            coordinator.initialize_slots(active_stage_set, self.llm_concurrency, initial_total)
+
         # ── Transcription stage (ingestion + GPU) ────────────────────
         if self.is_stage_active("transcribe"):
             self.gpu_work_ready.set()
             await run_ingestion_pass(self, input_dir)
             total = await self._get_total_episodes()
-            progress.update(task_id, total=total)
+            if coordinator is not None:
+                coordinator.update_total_episodes(total)
+            elif task_id is not None:
+                progress.update(task_id, total=total)
             self.tasks.append(asyncio.create_task(ingestion_worker(self, input_dir)))
-            self.tasks.append(asyncio.create_task(extractor_worker(self, progress, task_id)))
+            self.tasks.append(asyncio.create_task(extractor_worker(self, progress, task_id, coordinator=coordinator)))
             active_stages.append("transcribe")
 
         # ── LLM extraction stage ────────────────────────────────────
@@ -277,23 +317,29 @@ class TrebekPipelineOrchestrator:
             # When running extract without transcribe, count episodes with work available
             if not self.is_stage_active("transcribe"):
                 total = await self._get_total_episodes()
-                progress.update(task_id, total=total)
+                if coordinator is not None:
+                    coordinator.update_total_episodes(total)
+                elif task_id is not None:
+                    progress.update(task_id, total=total)
             for i in range(self.llm_concurrency):
                 self.tasks.append(
                     asyncio.create_task(
-                        llm_worker(self, progress, task_id, worker_id=i + 1),
+                        llm_worker(self, progress, task_id, worker_id=i + 1, coordinator=coordinator),
                         name=f"llm_worker_{i + 1}",
                     )
                 )
             active_stages.append("extract")
 
-        # ── Multimodal augmentation stage ────────────────────────────
+        # ── Multimodal augmentation stage ────────────────────
         if self.is_stage_active("augment"):
             self.multimodal_work_ready.set()
             if not self.is_stage_active("transcribe") and not self.is_stage_active("extract"):
                 total = await self._get_total_episodes()
-                progress.update(task_id, total=total)
-            self.tasks.append(asyncio.create_task(multimodal_worker(self, progress, task_id)))
+                if coordinator is not None:
+                    coordinator.update_total_episodes(total)
+                elif task_id is not None:
+                    progress.update(task_id, total=total)
+            self.tasks.append(asyncio.create_task(multimodal_worker(self, progress, task_id, coordinator=coordinator)))
             active_stages.append("augment")
 
         # ── State machine verification stage ─────────────────────────
@@ -301,8 +347,13 @@ class TrebekPipelineOrchestrator:
             self.state_machine_work_ready.set()
             if len(active_stages) == 0:
                 total = await self._get_total_episodes()
-                progress.update(task_id, total=total)
-            self.tasks.append(asyncio.create_task(state_machine_worker(self, progress, task_id)))
+                if coordinator is not None:
+                    coordinator.update_total_episodes(total)
+                elif task_id is not None:
+                    progress.update(task_id, total=total)
+            self.tasks.append(
+                asyncio.create_task(state_machine_worker(self, progress, task_id, coordinator=coordinator))
+            )
             active_stages.append("verify")
 
         logger.info(
@@ -350,15 +401,17 @@ async def run_pipeline(
 
     await orchestrator.initialize(input_dir)
 
-    progress = create_pipeline_progress()
+    session_telemetry = SessionTelemetry()
+    register_gemini_usage_callback(session_telemetry.record_usage)
+
+    progress = create_pipeline_progress(session_telemetry=session_telemetry)
+    coordinator = PipelineProgressCoordinator(progress, session_telemetry)
     loop = asyncio.get_running_loop()
     installed_signals: list[signal.Signals] = []
 
     try:
         with progress:
-            task_id = progress.add_task("Processing episodes", total=None)
-
-            await orchestrator.start_workers(input_dir, progress, task_id)
+            await orchestrator.start_workers(input_dir, progress, None, coordinator)
 
             if mode == "daemon":
                 # Daemon mode — wait for signal
@@ -397,6 +450,7 @@ async def run_pipeline(
                 console.print()
                 await asyncio.gather(*orchestrator.tasks, return_exceptions=True)
     finally:
+        unregister_gemini_usage_callback(session_telemetry.record_usage)
         for sig in installed_signals:
             try:
                 loop.remove_signal_handler(sig)

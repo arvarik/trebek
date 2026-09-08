@@ -79,8 +79,12 @@ def render_main_help() -> None:
     cmd.add_column("Description", style="white", min_width=50, no_wrap=True)
     cmd.add_row("run", "Start the extraction pipeline (daemon or one-shot mode)")
     cmd.add_row("scan", "Preview discovered files with real-time pipeline status")
+    cmd.add_row("status", "Show real-time queue health, in-flight jobs, and errors")
+    cmd.add_row("inspect", "Inspect a single episode: metadata, clues, telemetry, errors")
     cmd.add_row("stats", "Live analytics dashboard — health, cost, timing, errors")
-    cmd.add_row("retry", "Reset all FAILED episodes back to PENDING for re-processing")
+    cmd.add_row("retry", "Reset failed or specific episode(s) back to PENDING")
+    cmd.add_row("clean", "Safely purge orphaned audio, tmp files, and obsolete transcripts")
+    cmd.add_row("export", "Export an episode to Markdown, JSON, or CSV")
     cmd.add_row("version", "Print version string and exit")
 
     console.print(
@@ -451,46 +455,151 @@ def render_stats_help() -> None:
 
 def render_retry_help() -> None:
     """Renders `trebek retry --help`."""
-    _subcommand_header("trebek retry", "Reset failed episodes for re-processing")
-    console.print(f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek retry[/{_C}]\n")
+    _subcommand_header("trebek retry", "Reset failed or specific episodes for re-processing")
+    console.print(
+        f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek retry[/{_C}] [{_V}]\\[episode_id][/{_V}] [{_F}][--force][/{_F}]\n"
+    )
 
-    # ── What it does ──
+    # ── Arguments & Options ──
+    opts = Table(box=None, show_header=False, padding=(0, 2))
+    opts.add_column("Argument", style=_F, width=22, no_wrap=True)
+    opts.add_column("Description", style="white")
+    opts.add_row("episode_id", "Optional specific episode ID to reset (default: all failed)")
+    opts.add_row("--force", "Reset the episode even if its status is not FAILED")
+    console.print(
+        Panel(opts, title="[bold]Arguments & Options[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1))
+    )
+
+    # ── Behavior ──
     what = Table(box=None, show_header=False, padding=(0, 2))
     what.add_column("Action", style=_A, width=22, no_wrap=True)
     what.add_column("Detail", style="white")
-    what.add_row("Status reset", "FAILED → PENDING for all failed episodes")
+    what.add_row("Status reset", "Reset back to PENDING")
     what.add_row("Retry count", "Reset to 0 (re-enables automatic retries)")
     what.add_row("Error log", "Cleared — last_error set to NULL")
-    what.add_row("Scope", "All episodes in FAILED state (no partial selection)")
 
     console.print(Panel(what, title="[bold]Behavior[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1)))
 
-    # ── When to use ──
-    console.print(f"  [{_A}]When to use:[/{_A}]")
-    console.print(f"    [{_D}]• An episode exhausted all 3 automatic retries[/{_D}]")
-    console.print(f"    [{_D}]• You fixed the root cause (API key, permissions, disk space)[/{_D}]")
-    console.print(f"    [{_D}]• You want to force a complete re-run of all failed work[/{_D}]")
-    console.print()
-
     # ── Workflow ──
-    console.print(f"  [{_A}]Typical workflow:[/{_A}]")
-    console.print(f"    [{_C}]trebek stats[/{_C}]              [{_D}]Check which episodes failed and why[/{_D}]")
-    console.print(f"    [{_D}](fix the root cause)[/{_D}]")
-    console.print(f"    [{_C}]trebek retry[/{_C}]              [{_D}]Reset all FAILED → PENDING[/{_D}]")
-    console.print(f"    [{_C}]trebek run --once[/{_C}]          [{_D}]Re-process them[/{_D}]")
-    console.print()
-
-    # ── Tip ──
+    console.print(f"  [{_A}]Examples:[/{_A}]")
+    console.print(f"    [{_C}]trebek retry[/{_C}]                     [{_D}]Reset all FAILED episodes[/{_D}]")
+    console.print(f"    [{_C}]trebek retry 2024-03-15_ep8942[/{_C}]   [{_D}]Reset a single failed episode[/{_D}]")
     console.print(
-        Panel(
-            f"[{_D}]Running [{_F}]trebek run --stage <stage> --once[/{_F}] auto-resets FAILED episodes\n"
-            f"for that specific stage — no need to call [{_C}]trebek retry[/{_C}] separately.[/{_D}]",
-            title="[bold]💡 Tip[/bold]",
-            border_style="dim green",
-            box=box.ROUNDED,
-            padding=(1, 2),
-        )
+        f"    [{_C}]trebek retry 2024-03-15 --force[/{_C}]  [{_D}]Force-reset an episode from any status[/{_D}]"
     )
+    console.print()
+    _footer()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  STATUS HELP — `trebek status --help`
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def render_status_help() -> None:
+    """Renders `trebek status --help`."""
+    _subcommand_header("trebek status", "Real-time queue health and worker status")
+    console.print(f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek status[/{_C}] [{_D}][options][/{_D}]\n")
+
+    opts = Table(box=None, show_header=False, padding=(0, 2))
+    opts.add_column("Option", style=_F, width=20, no_wrap=True)
+    opts.add_column("Description", style="white")
+    opts.add_row("--watch", "Watch queue health in real time with continuous refresh")
+    opts.add_row("--json", "Output machine-readable queue statistics as JSON")
+    opts.add_row("--refresh-interval", "Seconds between refreshes in watch mode (default: 2.0)")
+
+    console.print(Panel(opts, title="[bold]Options[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1)))
+    _footer()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  INSPECT HELP — `trebek inspect --help`
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def render_inspect_help() -> None:
+    """Renders `trebek inspect --help`."""
+    _subcommand_header("trebek inspect", "Detailed inspection of an episode")
+    console.print(
+        f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek inspect[/{_C}] [{_V}]<episode_id>[/{_V}] [{_D}][options][/{_D}]\n"
+    )
+
+    opts = Table(box=None, show_header=False, padding=(0, 2))
+    opts.add_column("Argument", style=_F, width=20, no_wrap=True)
+    opts.add_column("Description", style="white")
+    opts.add_row("episode_id", "Required episode ID to inspect")
+    opts.add_row("--json", "Dump complete episode inspection record as raw JSON")
+
+    console.print(
+        Panel(opts, title="[bold]Arguments & Options[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1))
+    )
+
+    console.print(f"  [{_A}]Details inspected:[/{_A}]")
+    console.print(f"    [{_D}]• Metadata: Air date, host, tournament format, pipeline status[/{_D}]")
+    console.print(f"    [{_D}]• Contestants: Podium, Coryat scores, final scores[/{_D}]")
+    console.print(f"    [{_D}]• Clue counts: Daily Doubles, Triple Stumpers, verification status[/{_D}]")
+    console.print(f"    [{_D}]• Telemetry: Gemini tokens, spend ($), GPU VRAM, stage latency[/{_D}]")
+    console.print(f"    [{_D}]• Quality warnings & last error stack trace[/{_D}]")
+    console.print()
+    _footer()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  CLEAN HELP — `trebek clean --help`
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def render_clean_help() -> None:
+    """Renders `trebek clean --help`."""
+    _subcommand_header("trebek clean", "Purge orphaned and obsolete files")
+    console.print(f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek clean[/{_C}] [{_F}][--apply][/{_F}]\n")
+
+    opts = Table(box=None, show_header=False, padding=(0, 2))
+    opts.add_column("Option", style=_F, width=20, no_wrap=True)
+    opts.add_column("Description", style="white")
+    opts.add_row("--apply", "Actually delete files (default runs safe dry-run preview)")
+
+    console.print(Panel(opts, title="[bold]Options[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1)))
+
+    console.print(f"  [{_A}]Purgeable file categories:[/{_A}]")
+    console.print(f"    [{_D}]• Orphaned audio chunks (.wav) from interrupted GPU workers[/{_D}]")
+    console.print(f"    [{_D}]• Transient temporary files (.tmp, .part)[/{_D}]")
+    console.print(f"    [{_D}]• Host interview slices (.mp3) from completed episodes[/{_D}]")
+    console.print(f"    [{_D}]• Obsolete transcripts (.json.gz) already committed to SQLite[/{_D}]")
+    console.print()
+    _footer()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  EXPORT HELP — `trebek export --help`
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def render_export_help() -> None:
+    """Renders `trebek export --help`."""
+    _subcommand_header("trebek export", "Export episode data to Markdown, JSON, or CSV")
+    console.print(
+        f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek export[/{_C}] [{_V}]<episode_id>[/{_V}] [{_D}][options][/{_D}]\n"
+    )
+
+    opts = Table(box=None, show_header=False, padding=(0, 2))
+    opts.add_column("Argument", style=_F, width=20, no_wrap=True)
+    opts.add_column("Description", style="white")
+    opts.add_row("episode_id", "Required episode ID to export")
+    opts.add_row("--format, -f", "Export format: 'md' (default), 'json', or 'csv'")
+    opts.add_row("--output, -o", "Output file path (prints to stdout if omitted)")
+
+    console.print(
+        Panel(opts, title="[bold]Arguments & Options[/bold]", border_style=_BORDER, box=box.ROUNDED, padding=(1, 1))
+    )
+
+    console.print(f"  [{_A}]Formats:[/{_A}]")
+    console.print(
+        f"    [{_C}]md[/{_C}]     [{_D}]Formatted dossier: header, contestants, J! & DJ! boards, Final J![/{_D}]"
+    )
+    console.print(f"    [{_C}]json[/{_C}]   [{_D}]Full structured JSON object with clues, buzzes, and telemetry[/{_D}]")
+    console.print(f"    [{_C}]csv[/{_C}]    [{_D}]Tabular clue list with buzzes, wagers, and responses[/{_D}]")
+    console.print()
     _footer()
 
 
@@ -502,8 +611,12 @@ _HELP_RENDERERS: dict[str, Callable[[], None]] = {
     "main": render_main_help,
     "run": render_run_help,
     "scan": render_scan_help,
+    "status": render_status_help,
+    "inspect": render_inspect_help,
     "stats": render_stats_help,
     "retry": render_retry_help,
+    "clean": render_clean_help,
+    "export": render_export_help,
 }
 
 

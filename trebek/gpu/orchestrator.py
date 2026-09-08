@@ -14,11 +14,19 @@ class GPUOrchestrator:
     strict cleanup on crashes via SIGKILL.
     """
 
-    def __init__(self, output_dir: str, batch_size: int = 8, compute_type: str = "float16", max_workers: int = 1):
+    def __init__(
+        self,
+        output_dir: str,
+        batch_size: int = 8,
+        compute_type: str = "float16",
+        max_workers: int = 1,
+        device: str = "cuda",
+    ):
         self.output_dir = output_dir
         self.batch_size = batch_size
         self.compute_type = compute_type
         self.max_workers = max_workers
+        self.device = device
         os.makedirs(output_dir, exist_ok=True)
         self._start_pool()
 
@@ -43,7 +51,9 @@ class GPUOrchestrator:
         import functools
         from trebek.gpu.worker import gpu_worker_task
 
-        fn = functools.partial(gpu_worker_task, video_filepath, self.output_dir, self.batch_size, self.compute_type)
+        fn = functools.partial(
+            gpu_worker_task, video_filepath, self.output_dir, self.batch_size, self.compute_type, self.device
+        )
         try:
             filepath, peak_vram, avg_util = await loop.run_in_executor(self.executor, fn)
             return filepath, peak_vram, avg_util
