@@ -10,9 +10,23 @@ across all log messages within an episode's processing scope.
 """
 
 import sys
-from typing import Any
+from typing import Any, TextIO, cast
 
 import structlog
+
+
+class _DynamicStderr:
+    """Proxy that dynamically resolves sys.stderr on each write/flush call,
+    preventing stale or closed file descriptor errors across test runs."""
+
+    def write(self, s: str) -> int:
+        return sys.stderr.write(s)
+
+    def flush(self) -> None:
+        sys.stderr.flush()
+
+
+_dynamic_stderr = _DynamicStderr()
 
 
 def configure_logging() -> None:
@@ -34,7 +48,10 @@ def configure_logging() -> None:
         renderer = structlog.processors.JSONRenderer()
 
     processors: list[Any] = [*shared_processors, renderer]
-    structlog.configure(processors=processors)
+    structlog.configure(
+        processors=processors,
+        logger_factory=structlog.PrintLoggerFactory(file=cast(TextIO, _dynamic_stderr)),
+    )
 
 
 def bind_episode_context(episode_id: str) -> None:

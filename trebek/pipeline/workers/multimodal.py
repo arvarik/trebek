@@ -6,6 +6,7 @@ import structlog
 from typing import Any, TYPE_CHECKING
 from trebek.ui import get_stage_display
 from trebek.schemas import Episode
+from trebek.config import settings
 from trebek.llm import execute_pass_3_multimodal_augmentation
 from trebek.status import PipelineStatus
 
@@ -53,12 +54,14 @@ async def multimodal_worker(
                     video_filepath = source_filename
 
                     start_multi_t = time.perf_counter()
+                    enable_sniping = getattr(settings, "enable_podium_sniping", False)
                     episode_data, multi_usage = await execute_pass_3_multimodal_augmentation(
                         episode_data,
                         video_filepath,
                         orchestrator.output_dir,
                         model=orchestrator.llm_model,
                         episode_id=episode_id,
+                        enable_podium_sniping=enable_sniping,
                     )
                     stage_multimodal_ms = (time.perf_counter() - start_multi_t) * 1000
 

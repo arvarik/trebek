@@ -54,7 +54,8 @@ class DatabaseWriter(PipelineQueryMixin):
             return
 
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='clues_fts'")
-        if not cursor.fetchone():
+        has_fts_table = bool(cursor.fetchone())
+        if not has_fts_table:
             self.conn.executescript(
                 """
                 CREATE VIRTUAL TABLE IF NOT EXISTS clues_fts USING fts5(
@@ -66,7 +67,20 @@ class DatabaseWriter(PipelineQueryMixin):
                     round,
                     tokenize = 'porter unicode61'
                 );
+                """
+            )
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO clues_fts(rowid, clue_id, episode_id, category, clue_text, correct_response, round)
+                SELECT rowid, clue_id, episode_id, category, clue_text, correct_response, round FROM clues
+                """
+            )
+            self.conn.commit()
 
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name='clues_ai'")
+        if not cursor.fetchone():
+            self.conn.executescript(
+                """
                 CREATE TRIGGER IF NOT EXISTS clues_ai AFTER INSERT ON clues BEGIN
                     DELETE FROM clues_fts WHERE clue_id = new.clue_id;
                     INSERT INTO clues_fts(clue_id, episode_id, category, clue_text, correct_response, round)
@@ -82,12 +96,6 @@ class DatabaseWriter(PipelineQueryMixin):
                     INSERT INTO clues_fts(clue_id, episode_id, category, clue_text, correct_response, round)
                     VALUES (new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
                 END;
-                """
-            )
-            cursor.execute(
-                """
-                INSERT OR IGNORE INTO clues_fts(clue_id, episode_id, category, clue_text, correct_response, round)
-                SELECT clue_id, episode_id, category, clue_text, correct_response, round FROM clues
                 """
             )
             self.conn.commit()

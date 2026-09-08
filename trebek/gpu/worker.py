@@ -1,3 +1,4 @@
+import contextlib
 import gzip
 import json
 import structlog
@@ -13,15 +14,31 @@ _whisperx_model: Any = None
 _whisperx_align_model: Any = None
 _whisperx_align_metadata: Any = None
 _whisperx_diarize_model: Any = None
+_cached_device: Any = None
+_cached_compute_type: Any = None
 
 
 def reset_gpu_models() -> None:
     """Reset cached GPU models (used on OOM recovery and in test suites)."""
     global _whisperx_model, _whisperx_align_model, _whisperx_align_metadata, _whisperx_diarize_model
+    global _cached_device, _cached_compute_type
     _whisperx_model = None
     _whisperx_align_model = None
     _whisperx_align_metadata = None
     _whisperx_diarize_model = None
+    _cached_device = None
+    _cached_compute_type = None
+
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
 
 
 def gpu_worker_task(
@@ -58,13 +75,17 @@ def gpu_worker_task(
     metrics = {"peak_vram": 0.0, "util_sum": 0.0, "util_count": 0}
 
     def monitor_gpu() -> None:
-        if device != "cuda":
+        if not device.startswith("cuda"):
             return
         try:
             import pynvml
 
             pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            device_idx = 0
+            if ":" in device:
+                with contextlib.suppress(ValueError):
+                    device_idx = int(device.split(":")[-1])
+            handle = pynvml.nvmlDeviceGetHandleByIndex(device_idx)
             while not stop_event.is_set():
                 try:
                     info = pynvml.nvmlDeviceGetMemoryInfo(handle)
@@ -85,9 +106,13 @@ def gpu_worker_task(
             try:
                 import torch
 
+                device_idx = 0
+                if ":" in device:
+                    with contextlib.suppress(ValueError):
+                        device_idx = int(device.split(":")[-1])
                 while not stop_event.is_set():
                     try:
-                        vram_mb = float(torch.cuda.max_memory_allocated(0)) / (1024 * 1024)
+                        vram_mb = float(torch.cuda.max_memory_allocated(device_idx)) / (1024 * 1024)
                         if vram_mb > metrics["peak_vram"]:
                             metrics["peak_vram"] = vram_mb
                         # Torch cannot easily provide utilization %
@@ -115,6 +140,12 @@ def gpu_worker_task(
 
     # 2. WhisperX Transcription — Warm Worker
     global _whisperx_model, _whisperx_align_model, _whisperx_align_metadata, _whisperx_diarize_model
+    global _cached_device, _cached_compute_type
+    if _cached_device != device or _cached_compute_type != compute_type:
+        reset_gpu_models()
+        _cached_device = device
+        _cached_compute_type = compute_type
+
     if _whisperx_model is None:
         logger.info("Loading WhisperX model (Cold Start)...", device=device)
         _whisperx_model = whisperx.load_model("large-v3", device=device, compute_type=compute_type, language="en")
@@ -196,6 +227,8 @@ def gpu_worker_task(
                     speaker_ids=sorted(speaker_set),
                 )
             except Exception as diarize_err:
+                if "OutOfMemoryError" in str(type(diarize_err).__name__) or "CUDA out of memory" in str(diarize_err):
+                    raise
                 logger.warning(
                     "WhisperX diarization failed, segments will lack speaker labels",
                     error=str(diarize_err)[:200],
@@ -210,7 +243,7 @@ def gpu_worker_task(
         # Explicit Memory Management
         del audio
         gc.collect()
-        if device == "cuda" and torch.cuda.is_available():
+        if device.startswith("cuda") and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
         processed_result = {

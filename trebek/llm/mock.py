@@ -67,19 +67,25 @@ MOCK_CONTESTANTS = [
 ]
 
 
-def _build_mock_clues(round_name: str, categories: list[str]) -> list[dict[str, Any]]:
-    """Builds a full 30-clue board for a given round."""
+def _build_mock_clues(
+    round_name: str,
+    categories: list[str],
+    contestants: Optional[list[str]] = None,
+    base_line_offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Builds mock clues for a given round with monotonically non-overlapping line ranges."""
     clues: list[dict[str, Any]] = []
-    contestants = ["Amy Schneider", "Matt Amodio", "Mattea Roach"]
+    active_contestants = contestants or ["Amy Schneider", "Matt Amodio", "Mattea Roach"]
 
     for col_idx, category in enumerate(categories, start=1):
         for row_idx in range(1, 6):
             is_dd = (round_name == "J!" and col_idx == 2 and row_idx == 3) or (
                 round_name == "Double J!" and ((col_idx == 1 and row_idx == 4) or (col_idx == 4 and row_idx == 3))
             )
-            speaker = contestants[(col_idx + row_idx) % 3]
-            line_start = f"L{(col_idx - 1) * 10 + row_idx * 2}"
-            line_end = f"L{(col_idx - 1) * 10 + row_idx * 2 + 1}"
+            speaker = active_contestants[(col_idx + row_idx) % len(active_contestants)]
+            line_base = base_line_offset + (col_idx - 1) * 10 + (row_idx - 1) * 2
+            line_start = f"L{line_base}"
+            line_end = f"L{line_base + 1}"
             buzz_line = line_end
 
             clue = {
@@ -184,23 +190,53 @@ def generate_mock_llm_response(
 
     # 4. Pass 2 Stage 3: Clue Extractions (PartialClues or DynamicPartialClues)
     elif "partialclues" in schema_name.lower() or "clue" in ctx:
+        import typing
+
         # Check round from prompt or context
         if "double" in ctx or "double" in prompt.lower():
             round_name = "Double J!"
-            cats = MOCK_DJ_CATEGORIES
+            default_cats = MOCK_DJ_CATEGORIES
+            base_offset = 60
         else:
             round_name = "J!"
-            cats = MOCK_JEP_CATEGORIES
+            default_cats = MOCK_JEP_CATEGORIES
+            base_offset = 0
 
-        # If categories are specified in prompt, extract or adapt them
-        filtered_cats: list[str] = []
-        for c in cats:
-            if c.lower() in prompt.lower():
-                filtered_cats.append(c)
+        target_cats = default_cats
+        target_contestants = ["Amy Schneider", "Matt Amodio", "Mattea Roach"]
+
+        # Introspect response_schema if dynamic
+        if response_schema and hasattr(response_schema, "model_fields"):
+            clue_field = response_schema.model_fields.get("clues")
+            if clue_field and typing.get_args(clue_field.annotation):
+                clue_type = typing.get_args(clue_field.annotation)[0]
+                if hasattr(clue_type, "model_fields"):
+                    cat_field = clue_type.model_fields.get("category")
+                    if cat_field:
+                        allowed = typing.get_args(cat_field.annotation)
+                        if allowed:
+                            target_cats = list(allowed)
+                    attempt_field = clue_type.model_fields.get("attempts")
+                    if attempt_field and typing.get_args(attempt_field.annotation):
+                        att_type = typing.get_args(attempt_field.annotation)[0]
+                        if hasattr(att_type, "model_fields"):
+                            spk_field = att_type.model_fields.get("speaker")
+                            if spk_field:
+                                allowed_spk = typing.get_args(spk_field.annotation)
+                                if allowed_spk:
+                                    target_contestants = list(allowed_spk)
+
+        # If categories are specified in prompt, filter them
+        filtered_cats: list[str] = [c for c in target_cats if c.lower() in prompt.lower()]
         if not filtered_cats:
-            filtered_cats = cats[:3]  # Chunk typically has 2-3 categories
+            filtered_cats = target_cats[: min(3, len(target_cats))]
 
-        clues = _build_mock_clues(round_name, filtered_cats)
+        clues = _build_mock_clues(
+            round_name,
+            filtered_cats,
+            contestants=target_contestants,
+            base_line_offset=base_offset,
+        )
         payload = {"clues": clues}
 
     # 5. Stage 3.5: Verification Results
@@ -208,7 +244,7 @@ def generate_mock_llm_response(
         payload = {
             "verifications": [
                 {
-                    "selection_order": i,
+                    "clue_index": i - 1,
                     "verified_clue_text": "Sample verified clue text.",
                     "verified_correct_response": "What is verified answer?",
                     "confidence": "verified",
@@ -220,7 +256,12 @@ def generate_mock_llm_response(
         }
 
     elif "fjverification" in schema_name.lower() or "final" in ctx:
-        payload = {"verified_correct_response": "What is the Statue of Liberty?"}
+        payload = {
+            "verified_correct_response": "What is the Statue of Liberty?",
+            "confidence": "verified",
+            "correction_type": "",
+            "correction_detail": "",
+        }
 
     # Default generic payload
     else:

@@ -442,6 +442,21 @@ async def verify_final_jeopardy(
         - The verified correct_response string (or None if verification fails)
         - Usage stats
     """
+    from trebek.config import settings
+
+    if getattr(settings, "mock_llm", False):
+        return (
+            fj_data.correct_response if fj_data and fj_data.correct_response else "What is the Statue of Liberty?"
+        ), {
+            "input_tokens": 0.0,
+            "output_tokens": 0.0,
+            "thinking_tokens": 0.0,
+            "cached_tokens": 0.0,
+            "total_tokens": 0.0,
+            "cost_usd": 0.0,
+            "latency_ms": 0.0,
+        }
+
     fj_context = _build_fj_context(segments)
 
     # Build contestant response summary

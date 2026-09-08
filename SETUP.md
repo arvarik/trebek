@@ -66,6 +66,10 @@ pip install whisperx pyannote.audio
 
 # Configure
 cp .env.example .env   # Edit with your API keys
+
+# Pre-flight environment check
+trebek doctor          # Validate Python, FFmpeg, GPU, VRAM, and SQLite
+trebek doctor --check-api  # Also ping Gemini and HuggingFace APIs
 ```
 
 ### Speaker Diarization Setup
@@ -98,7 +102,7 @@ Trebek uses [Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydant
 
 ```env
 # ─── Core Paths ───
-db_path=trebek.db
+db_path=data/trebek.db
 output_dir=gpu_outputs
 input_dir=input_videos
 
@@ -117,6 +121,7 @@ whisper_compute_type=float16 # float16 or float32
 
 | Setting | Constraint | Default |
 |---------|-----------|---------|
+| `db_path` | path string | `data/trebek.db` |
 | `gpu_vram_target_gb` | 4–24 | `16` |
 | `whisper_compute_type` | `float16` / `float32` | `float16` |
 | `whisper_batch_size` | > 0 | `8` |
@@ -131,9 +136,12 @@ whisper_compute_type=float16 # float16 or float32
 |---------|-------------|
 | `trebek run` | Start pipeline (daemon mode by default) |
 | `trebek run --once` | Process queue then exit |
+| `trebek run --mock-llm` | Offline execution with synthetic mock LLM (zero token cost) |
 | `trebek run --docker` | Delegate GPU work to Docker |
 | `trebek scan` | Preview discovered files + pipeline status |
+| `trebek search <query>` | FTS5 full-text search across clues and responses (`--json` for JSON output) |
 | `trebek stats` | Live analytics dashboard |
+| `trebek doctor` | Pre-flight environment diagnostics (`--check-api` to test API keys) |
 | `trebek retry` | Reset FAILED episodes → PENDING |
 | `trebek version` | Print version |
 

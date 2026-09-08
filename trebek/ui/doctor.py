@@ -277,9 +277,10 @@ def run_diagnostics(settings: Settings, check_api: bool = False) -> DoctorReport
         if check_api:
             try:
                 from google import genai
+                from trebek.config import MODEL_FLASH
 
                 client = genai.Client(api_key=api_key)
-                client.models.get(model="gemini-2.5-flash")
+                client.models.get(model=MODEL_FLASH)
                 checks.append(
                     DiagnosticCheck(
                         category="API & Authentication",
@@ -331,14 +332,53 @@ def run_diagnostics(settings: Settings, check_api: bool = False) -> DoctorReport
     hf_token = os.environ.get("HF_TOKEN", "") or getattr(settings, "hf_token", "")
     if hf_token:
         masked_hf = hf_token[:4] + "•" * 8 + hf_token[-4:] if len(hf_token) > 8 else "•" * len(hf_token)
-        checks.append(
-            DiagnosticCheck(
-                category="API & Authentication",
-                component="Hugging Face Token",
-                status="PASS",
-                detail=f"{masked_hf} (diarization enabled)",
+        if check_api:
+            try:
+                import urllib.request
+
+                req = urllib.request.Request(
+                    "https://huggingface.co/api/models/pyannote/speaker-diarization-3.1",
+                    headers={"Authorization": f"Bearer {hf_token}"},
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status == 200:
+                        checks.append(
+                            DiagnosticCheck(
+                                category="API & Authentication",
+                                component="Hugging Face Token",
+                                status="PASS",
+                                detail=f"{masked_hf} (pyannote access verified)",
+                            )
+                        )
+                    else:
+                        checks.append(
+                            DiagnosticCheck(
+                                category="API & Authentication",
+                                component="Hugging Face Token",
+                                status="WARN",
+                                detail=f"{masked_hf} (HTTP {resp.status})",
+                                remediation="Accept licenses at https://huggingface.co/pyannote/speaker-diarization-3.1",
+                            )
+                        )
+            except Exception as e:
+                checks.append(
+                    DiagnosticCheck(
+                        category="API & Authentication",
+                        component="Hugging Face Token",
+                        status="WARN",
+                        detail=f"{masked_hf} (gated access check failed: {e})",
+                        remediation="Accept licenses at https://huggingface.co/pyannote/speaker-diarization-3.1",
+                    )
+                )
+        else:
+            checks.append(
+                DiagnosticCheck(
+                    category="API & Authentication",
+                    component="Hugging Face Token",
+                    status="PASS",
+                    detail=f"{masked_hf} (configured)",
+                )
             )
-        )
     else:
         checks.append(
             DiagnosticCheck(
@@ -386,19 +426,30 @@ def run_diagnostics(settings: Settings, check_api: bool = False) -> DoctorReport
         )
     else:
         db_dir = os.path.dirname(os.path.abspath(db_path)) or "."
-        os.makedirs(db_dir, exist_ok=True)
-        wal_ok, wal_detail = _test_sqlite_wal_locks(db_dir)
-        checks.append(
-            DiagnosticCheck(
-                category="Storage & Database",
-                component="SQLite WAL Locks",
-                status="PASS" if wal_ok else "FAIL",
-                detail=wal_detail,
-                remediation=""
-                if wal_ok
-                else "Ensure database path is on a local filesystem (ext4, NTFS, APFS) supporting POSIX locks.",
+        try:
+            os.makedirs(db_dir, exist_ok=True)
+            wal_ok, wal_detail = _test_sqlite_wal_locks(db_dir)
+            checks.append(
+                DiagnosticCheck(
+                    category="Storage & Database",
+                    component="SQLite WAL Locks",
+                    status="PASS" if wal_ok else "FAIL",
+                    detail=wal_detail,
+                    remediation=""
+                    if wal_ok
+                    else "Ensure database path is on a local filesystem (ext4, NTFS, APFS) supporting POSIX locks.",
+                )
             )
-        )
+        except Exception as e:
+            checks.append(
+                DiagnosticCheck(
+                    category="Storage & Database",
+                    component="SQLite WAL Locks",
+                    status="FAIL",
+                    detail=f"Cannot create or access database directory '{db_dir}': {e}",
+                    remediation=f"Ensure write permissions for database directory: {db_dir}",
+                )
+            )
 
         try:
             usage = shutil.disk_usage(db_dir)

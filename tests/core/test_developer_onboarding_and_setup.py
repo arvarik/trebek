@@ -23,7 +23,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -37,8 +37,9 @@ from trebek.llm.schemas import (
     EpisodeSkeleton,
     PartialClues,
     PartialEpisodeMeta,
+    create_dynamic_clue_schema,
 )
-from trebek.llm.verify import verify_and_correct_clues
+from trebek.llm.verify import verify_and_correct_clues, verify_final_jeopardy
 from trebek.schemas import Clue, Episode, FinalJep
 from trebek.ui.doctor import (
     DiagnosticCheck,
@@ -227,6 +228,39 @@ class TestDoctorCommand:
         assert args_run_mock.command == "run"
         assert args_run_mock.mock_llm is True
 
+    def test_doctor_directory_permission_error(self, tmp_path: Path) -> None:
+        s = Settings(db_path=str(tmp_path / "sub" / "trebek.db"), mock_llm=True)
+        with patch("os.makedirs", side_effect=PermissionError("Read-only file system")):
+            report = run_diagnostics(s, check_api=False)
+            db_check = next(c for c in report.checks if c.component == "SQLite WAL Locks")
+            assert db_check.status == "FAIL"
+            assert "Read-only file system" in db_check.detail
+            assert report.success is False
+
+    def test_doctor_check_api_huggingface(self, tmp_path: Path) -> None:
+        s = Settings(db_path=str(tmp_path / "trebek.db"), mock_llm=True, hf_token="hf_mock_token_12345")
+
+        # 1. Success case (200 OK)
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            report = run_diagnostics(s, check_api=True)
+            hf_check = next(c for c in report.checks if c.component == "Hugging Face Token")
+            assert hf_check.status == "PASS"
+            assert "pyannote access verified" in hf_check.detail
+
+        # 2. Failure case (403 Forbidden - license not accepted)
+        import urllib.error
+
+        http_err = urllib.error.HTTPError("https://huggingface.co", 403, "Forbidden", {}, None)
+        with patch("urllib.request.urlopen", side_effect=http_err):
+            report_fail = run_diagnostics(s, check_api=True)
+            hf_check_fail = next(c for c in report_fail.checks if c.component == "Hugging Face Token")
+            assert hf_check_fail.status == "WARN"
+            assert "403" in hf_check_fail.detail or "gated access check failed" in hf_check_fail.detail
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 3. Zero-Cost Offline Mock LLM Mode Tests
@@ -385,4 +419,38 @@ class TestOfflineMockLLMMode:
             )
             assert corrections == []
             assert test_clue.is_verified is True
+            assert usage["cost_usd"] == 0.0
+
+    def test_mock_llm_dynamic_schema_reflection(self) -> None:
+        dynamic_categories = ["ANCIENT ROME", "WORLD FLAGS"]
+        dynamic_contestants = ["Mattea", "Amy", "Andrew"]
+        dynamic_schema = create_dynamic_clue_schema(dynamic_categories, dynamic_contestants)
+
+        resp, usage = generate_mock_llm_response(
+            model="gemini-3.1-pro-preview",
+            prompt="Extract clues for ANCIENT ROME",
+            response_schema=dynamic_schema,
+            invocation_context="Pass 2 Dynamic Chunk",
+        )
+        parsed = dynamic_schema.model_validate_json(resp.text)
+        assert hasattr(parsed, "clues")
+        assert len(parsed.clues) > 0
+        for clue in parsed.clues:
+            assert clue.category in dynamic_categories
+            for att in clue.attempts:
+                assert att.speaker in dynamic_contestants
+
+    @pytest.mark.asyncio
+    async def test_mock_llm_verify_final_jeopardy(self) -> None:
+        final_jep = FinalJep(
+            category="AUTHORS",
+            clue_text="He wrote 1984.",
+            correct_response="George Orwell",
+            wagers_and_responses=[],
+        )
+        with patch.object(settings, "mock_llm", True):
+            verified_resp, usage = await verify_final_jeopardy(
+                final_jep, segments=[], contestant_names=["Alice", "Bob", "Charlie"]
+            )
+            assert verified_resp == "George Orwell"
             assert usage["cost_usd"] == 0.0

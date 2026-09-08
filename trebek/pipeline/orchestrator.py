@@ -129,6 +129,10 @@ class TrebekPipelineOrchestrator:
                     conn.execute(
                         "CREATE INDEX IF NOT EXISTS idx_pipeline_state_fingerprint ON pipeline_state(fingerprint)"
                     )
+                conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_state_unique_fingerprint "
+                    "ON pipeline_state(fingerprint) WHERE fingerprint IS NOT NULL AND fingerprint != ''"
+                )
             except Exception:
                 pass
 

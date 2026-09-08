@@ -100,23 +100,31 @@ class GeminiClient:
         batch_size = 100
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
-            try:
-                response = await self.client.aio.models.embed_content(
-                    model=model,
-                    contents=batch,
-                )
-                if response and response.embeddings:
-                    for emb in response.embeddings:
-                        vals = getattr(emb, "values", None) or []
-                        embeddings.append([float(v) for v in vals])
-            except Exception as e:
-                logger.warning(
-                    "Gemini embed_content failed, falling back to zero vectors",
-                    batch_len=len(batch),
-                    error=str(e)[:200],
-                )
+            batch_success = False
+            for attempt in range(3):
+                try:
+                    response = await self.client.aio.models.embed_content(
+                        model=model,
+                        contents=batch,
+                    )
+                    if response and response.embeddings:
+                        for emb in response.embeddings:
+                            vals = getattr(emb, "values", None) or []
+                            embeddings.append([float(v) for v in vals])
+                        batch_success = True
+                        break
+                except Exception as e:
+                    if attempt < 2:
+                        await asyncio.sleep(1.0 * (2**attempt))
+                    else:
+                        logger.warning(
+                            "Gemini embed_content failed after retries",
+                            batch_len=len(batch),
+                            error=str(e)[:200],
+                        )
+            if not batch_success:
                 for _ in batch:
-                    embeddings.append([0.0] * 768)
+                    embeddings.append([])
 
         return embeddings
 
