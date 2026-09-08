@@ -24,7 +24,6 @@ def reset_gpu_models() -> None:
     _whisperx_diarize_model = None
 
 
-
 def gpu_worker_task(
     video_filepath: str,
     output_dir: str,

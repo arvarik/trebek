@@ -13,8 +13,6 @@ async def test_state_machine_worker_exception_recovery(memory_db_path: str) -> N
     await writer.start()
 
     try:
-
-
         await writer.execute(
             "INSERT INTO pipeline_state (episode_id, status) VALUES (?, ?)", ("ep_zombie", "MULTIMODAL_DONE")
         )

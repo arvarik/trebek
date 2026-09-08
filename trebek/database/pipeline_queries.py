@@ -340,4 +340,3 @@ class PipelineQueryMixin:
                     }
                 )
         return results
-

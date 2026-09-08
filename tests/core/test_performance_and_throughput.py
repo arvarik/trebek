@@ -105,9 +105,27 @@ class TestMultimodalTemporalSniping:
             host_name="Ken Jennings",
             is_tournament=False,
             contestants=[
-                Contestant(name="Alice", podium_position=1, occupational_category="Teacher", is_returning_champion=False, description="Contestant 1"),
-                Contestant(name="Bob", podium_position=2, occupational_category="Engineer", is_returning_champion=True, description="Contestant 2"),
-                Contestant(name="Carol", podium_position=3, occupational_category="Writer", is_returning_champion=False, description="Contestant 3"),
+                Contestant(
+                    name="Alice",
+                    podium_position=1,
+                    occupational_category="Teacher",
+                    is_returning_champion=False,
+                    description="Contestant 1",
+                ),
+                Contestant(
+                    name="Bob",
+                    podium_position=2,
+                    occupational_category="Engineer",
+                    is_returning_champion=True,
+                    description="Contestant 2",
+                ),
+                Contestant(
+                    name="Carol",
+                    podium_position=3,
+                    occupational_category="Writer",
+                    is_returning_champion=False,
+                    description="Contestant 3",
+                ),
             ],
             clues=[
                 Clue(
@@ -220,7 +238,9 @@ class TestMultimodalTemporalSniping:
 class TestCLISearchSubcommand:
     """CLI search command output."""
 
-    def test_cli_search_json_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    def test_cli_search_json_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
         db_path = str(tmp_path / "search_cli.db")
         schema_path = Path(__file__).resolve().parents[2] / "trebek" / "schema.sql"
 
@@ -250,6 +270,7 @@ class TestCLISearchSubcommand:
             conn.commit()
 
         from trebek.config import settings
+
         monkeypatch.setattr(settings, "db_path", db_path)
 
         # Run CLI with search subcommand and --json
@@ -266,7 +287,9 @@ class TestCLISearchSubcommand:
         assert data[0]["clue_id"] == "c101"
         assert data[0]["correct_response"] == "Mars"
 
-    def test_cli_search_table_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    def test_cli_search_table_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
         db_path = str(tmp_path / "search_cli2.db")
         schema_path = Path(__file__).resolve().parents[2] / "trebek" / "schema.sql"
 
@@ -296,6 +319,7 @@ class TestCLISearchSubcommand:
             conn.commit()
 
         from trebek.config import settings
+
         monkeypatch.setattr(settings, "db_path", db_path)
 
         monkeypatch.setattr(sys, "argv", ["trebek", "search", "Raven"])
@@ -305,6 +329,6 @@ class TestCLISearchSubcommand:
         captured = capsys.readouterr()
         # Table is rendered to stderr via Rich console
         combined_output = captured.out + captured.err
-        assert "Search Results for \"Raven\"" in combined_output
+        assert 'Search Results for "Raven"' in combined_output
         assert "Edgar Allan" in combined_output
         assert "Poe" in combined_output

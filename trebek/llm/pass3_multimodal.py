@@ -46,9 +46,7 @@ async def execute_pass_3_multimodal_augmentation(
                 return {}
 
             clip_token = uuid.uuid4().hex[:8]
-            clip_path = os.path.join(
-                output_dir, f"podium_{ep_id}_{clue.selection_order}_{clip_token}.mp4"
-            )
+            clip_path = os.path.join(output_dir, f"podium_{ep_id}_{clue.selection_order}_{clip_token}.mp4")
             start_time = clue.host_finish_timestamp_ms / 1000.0
 
             logger.info(
@@ -102,9 +100,7 @@ async def execute_pass_3_multimodal_augmentation(
                             raise RuntimeError(f"File processing failed: {uploaded_file.name}")
                         await asyncio.sleep(1)
                     else:
-                        logger.warning(
-                            "File never became ACTIVE, skipping", file=uploaded_file.name, polls=poll_i + 1
-                        )
+                        logger.warning("File never became ACTIVE, skipping", file=uploaded_file.name, polls=poll_i + 1)
                         return {}
 
                     prompt = [

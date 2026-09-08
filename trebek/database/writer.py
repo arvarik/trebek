@@ -92,7 +92,6 @@ class DatabaseWriter(PipelineQueryMixin):
             )
             self.conn.commit()
 
-
     async def stop(self) -> None:
         if self.vacuum_task:
             self.vacuum_task.cancel()

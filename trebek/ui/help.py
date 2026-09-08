@@ -612,9 +612,7 @@ def render_export_help() -> None:
 def render_search_help() -> None:
     """Renders `trebek search --help`."""
     _subcommand_header("trebek search", "Full-text search across extracted clues, categories, and answers")
-    console.print(
-        f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek search[/{_C}] [{_V}]<query>[/{_V}] [{_D}][options][/{_D}]\n"
-    )
+    console.print(f"  [{_A}]USAGE[/{_A}]    [{_C}]trebek search[/{_C}] [{_V}]<query>[/{_V}] [{_D}][options][/{_D}]\n")
 
     opts = Table(box=None, show_header=False, padding=(0, 2))
     opts.add_column("Argument / Option", style=_F, width=22, no_wrap=True)
@@ -629,9 +627,9 @@ def render_search_help() -> None:
     )
 
     console.print(f"  [{_A}]Examples:[/{_A}]")
-    console.print(f"    [{_C}]trebek search \"Mount Everest\"[/{_C}]")
-    console.print(f"    [{_C}]trebek search Shakespeare --round \"Double J!\"[/{_C}]")
-    console.print(f"    [{_C}]trebek search \"civil war\" --limit 10 --json[/{_C}]")
+    console.print(f'    [{_C}]trebek search "Mount Everest"[/{_C}]')
+    console.print(f'    [{_C}]trebek search Shakespeare --round "Double J!"[/{_C}]')
+    console.print(f'    [{_C}]trebek search "civil war" --limit 10 --json[/{_C}]')
     console.print()
     _footer()
 
@@ -658,4 +656,3 @@ def render_help(command: str = "main") -> None:
     """Dispatch to the appropriate help renderer."""
     renderer = _HELP_RENDERERS.get(command, render_main_help)
     renderer()
-
