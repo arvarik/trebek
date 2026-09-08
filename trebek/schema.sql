@@ -152,3 +152,34 @@ CREATE TABLE IF NOT EXISTS schema_version (
     name TEXT NOT NULL,
     applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Full-Text Search (FTS5) for Clues, Categories, and Responses
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE VIRTUAL TABLE IF NOT EXISTS clues_fts USING fts5(
+    clue_id UNINDEXED,
+    episode_id UNINDEXED,
+    category,
+    clue_text,
+    correct_response,
+    round,
+    tokenize = 'porter unicode61'
+);
+
+-- Triggers to maintain FTS5 synchronization with clues table
+CREATE TRIGGER IF NOT EXISTS clues_ai AFTER INSERT ON clues BEGIN
+    DELETE FROM clues_fts WHERE clue_id = new.clue_id;
+    INSERT INTO clues_fts(clue_id, episode_id, category, clue_text, correct_response, round)
+    VALUES (new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
+END;
+
+CREATE TRIGGER IF NOT EXISTS clues_ad AFTER DELETE ON clues BEGIN
+    DELETE FROM clues_fts WHERE clue_id = old.clue_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS clues_au AFTER UPDATE ON clues BEGIN
+    DELETE FROM clues_fts WHERE clue_id = old.clue_id;
+    INSERT INTO clues_fts(clue_id, episode_id, category, clue_text, correct_response, round)
+    VALUES (new.clue_id, new.episode_id, new.category, new.clue_text, new.correct_response, new.round);
+END;
+
