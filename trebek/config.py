@@ -26,6 +26,17 @@ SUPPORTED_VIDEO_EXTENSIONS: Tuple[str, ...] = (
     ".vob",
 )
 
+# Incomplete, temporary, or active download extensions to ignore during scanning
+IGNORED_EXTENSIONS: Tuple[str, ...] = (
+    ".part",
+    ".crdownload",
+    ".tmp",
+    ".temp",
+    ".partial",
+    ".aria2",
+    ".ytdl",
+)
+
 
 # ── Model Constants ──────────────────────────────────────────────
 MODEL_FLASH = "gemini-3.1-flash-lite-preview"
