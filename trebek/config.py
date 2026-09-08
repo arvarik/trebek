@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", description="Logging level")
 
     mock_llm: bool = Field(default=False, description="Enable zero-cost offline mock mode using synthetic LLM fixtures")
+    enable_podium_sniping: bool = Field(default=False, description="Enable Pass 3 multimodal podium lockout sniping")
 
     def require_gemini_api_key(self) -> str:
         """Validates that GEMINI_API_KEY is set. Call this at pipeline startup,

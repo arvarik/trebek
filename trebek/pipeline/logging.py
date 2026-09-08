@@ -15,6 +15,20 @@ from typing import Any
 import structlog
 
 
+class _DynamicStderr:
+    """Proxy that dynamically resolves sys.stderr on each write/flush call,
+    preventing stale or closed file descriptor errors across test runs."""
+
+    def write(self, s: str) -> int:
+        return sys.stderr.write(s)
+
+    def flush(self) -> None:
+        return sys.stderr.flush()
+
+
+_dynamic_stderr = _DynamicStderr()
+
+
 def configure_logging() -> None:
     """Configures structlog with Rich ConsoleRenderer for TTY, JSONRenderer for piped output."""
     shared_processors: list[Any] = [
@@ -34,7 +48,10 @@ def configure_logging() -> None:
         renderer = structlog.processors.JSONRenderer()
 
     processors: list[Any] = [*shared_processors, renderer]
-    structlog.configure(processors=processors)
+    structlog.configure(
+        processors=processors,
+        logger_factory=structlog.PrintLoggerFactory(file=_dynamic_stderr),
+    )
 
 
 def bind_episode_context(episode_id: str) -> None:

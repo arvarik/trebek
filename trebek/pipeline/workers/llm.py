@@ -6,6 +6,7 @@ import gzip
 import json
 import structlog
 from typing import Any, TYPE_CHECKING
+from trebek.config import settings
 from trebek.ui import get_stage_display
 from trebek.llm import execute_pass_1_speaker_anchoring, execute_pass_2_data_extraction
 from trebek.status import PipelineStatus
@@ -70,29 +71,34 @@ async def llm_worker(
                         source_filename = rows_src[0][0] if rows_src and rows_src[0][0] else f"{episode_id}.mp4"
                         video_filepath = source_filename
 
+                        is_mock = getattr(orchestrator, "mock_llm", False) or getattr(settings, "mock_llm", False)
                         audio_slice_path = os.path.join(orchestrator.output_dir, f"{episode_id}_interview_slice.mp3")
                         if not os.path.exists(audio_slice_path):
-                            logger.info("Extracting host interview audio slice", episode_id=episode_id)
-                            proc = await asyncio.create_subprocess_exec(
-                                "ffmpeg",
-                                "-y",
-                                "-ss",
-                                "00:06:00",
-                                "-t",
-                                "00:05:00",
-                                "-i",
-                                video_filepath,
-                                "-vn",
-                                "-acodec",
-                                "libmp3lame",
-                                audio_slice_path,
-                                stdout=asyncio.subprocess.DEVNULL,
-                                stderr=asyncio.subprocess.DEVNULL,
-                            )
-                            await proc.wait()
-                            if proc.returncode != 0:
-                                logger.error("Failed to extract audio slice with ffmpeg")
-                                raise RuntimeError("ffmpeg audio extraction failed")
+                            if is_mock:
+                                with open(audio_slice_path, "wb") as f:
+                                    f.write(b"")
+                            else:
+                                logger.info("Extracting host interview audio slice", episode_id=episode_id)
+                                proc = await asyncio.create_subprocess_exec(
+                                    "ffmpeg",
+                                    "-y",
+                                    "-ss",
+                                    "00:06:00",
+                                    "-t",
+                                    "00:05:00",
+                                    "-i",
+                                    video_filepath,
+                                    "-vn",
+                                    "-acodec",
+                                    "libmp3lame",
+                                    audio_slice_path,
+                                    stdout=asyncio.subprocess.DEVNULL,
+                                    stderr=asyncio.subprocess.DEVNULL,
+                                )
+                                await proc.wait()
+                                if proc.returncode != 0:
+                                    logger.error("Failed to extract audio slice with ffmpeg")
+                                    raise RuntimeError("ffmpeg audio extraction failed")
 
                         start_llm_t = time.perf_counter()
                         try:

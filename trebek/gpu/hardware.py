@@ -65,7 +65,7 @@ def detect_hardware() -> HardwareInfo:
                 whisper_device="cpu",
                 recommended_compute="int8",
             )
-    except ImportError:
+    except (ImportError, OSError, RuntimeError):
         return HardwareInfo(
             device="cpu",
             device_name="CPU (PyTorch not installed)",

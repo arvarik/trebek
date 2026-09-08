@@ -334,6 +334,10 @@ def build_parser() -> TrebekArgumentParser:
 
 
 def main() -> None:
+    from trebek.pipeline.logging import configure_logging
+
+    configure_logging()
+
     parser = build_parser()
     args = parser.parse_args()
 
@@ -467,6 +471,7 @@ def main() -> None:
         async def _search() -> None:
             writer = DatabaseWriter(settings.db_path)
             await writer.start()
+            results = []
             try:
                 query = args.query
                 round_filter = getattr(args, "round", None)
@@ -474,44 +479,52 @@ def main() -> None:
                 as_json = getattr(args, "json", False)
 
                 results = await writer.search_clues(query, limit=limit, round_filter=round_filter)
-
-                if as_json:
+            except Exception as e:
+                if getattr(args, "json", False):
                     import json
 
-                    print(json.dumps(results, indent=2))
+                    print(json.dumps([]))
                     return
-
-                if not results:
-                    console.print(f"\n  [yellow]No clues found matching:[/yellow] [bold]{query}[/bold]\n")
-                    return
-
-                from rich.table import Table
-
-                table = Table(
-                    title=f'Search Results for "{query}" ({len(results)} match{"es" if len(results) != 1 else ""})',
-                    border_style="cyan",
-                    header_style="bold cyan",
-                )
-                table.add_column("Episode", style="dim", width=18)
-                table.add_column("Round", width=12)
-                table.add_column("Category", style="bold yellow", width=22)
-                table.add_column("Clue Text", width=40)
-                table.add_column("Correct Response", style="bold green", width=22)
-
-                for r in results:
-                    table.add_row(
-                        str(r.get("episode_id", "")),
-                        str(r.get("round", "")),
-                        str(r.get("category", "")),
-                        str(r.get("clue_text", "")),
-                        str(r.get("correct_response", "")),
-                    )
-
-                console.print()
-                console.print(table)
-                console.print()
+                console.print(f"\n  [bold red]Search failed:[/bold red] {e}\n")
+                return
             finally:
                 await writer.stop()
+
+            if as_json:
+                import json
+
+                print(json.dumps(results, indent=2))
+                return
+
+            if not results:
+                console.print(f"\n  [yellow]No clues found matching:[/yellow] [bold]{query}[/bold]\n")
+                return
+
+            from rich.table import Table
+
+            table = Table(
+                title=f'Search Results for "{query}" ({len(results)} match{"es" if len(results) != 1 else ""})',
+                border_style="cyan",
+                header_style="bold cyan",
+            )
+            table.add_column("Episode", style="dim", width=18)
+            table.add_column("Round", width=12)
+            table.add_column("Category", style="bold yellow", width=22)
+            table.add_column("Clue Text", width=40)
+            table.add_column("Correct Response", style="bold green", width=22)
+
+            for r in results:
+                table.add_row(
+                    str(r.get("episode_id", "")),
+                    str(r.get("round", "")),
+                    str(r.get("category", "")),
+                    str(r.get("clue_text", "")),
+                    str(r.get("correct_response", "")),
+                )
+
+            console.print()
+            console.print(table)
+            console.print()
 
         asyncio.run(_search())
         return

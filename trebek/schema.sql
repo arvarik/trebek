@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS job_telemetry (
 -- Performance indexes for pipeline polling and analytical queries
 CREATE INDEX IF NOT EXISTS idx_pipeline_state_status ON pipeline_state(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_pipeline_state_fingerprint ON pipeline_state(fingerprint);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_state_unique_fingerprint ON pipeline_state(fingerprint) WHERE fingerprint IS NOT NULL AND fingerprint != '';
 CREATE INDEX IF NOT EXISTS idx_clues_episode_id ON clues(episode_id);
 CREATE INDEX IF NOT EXISTS idx_buzz_attempts_clue_id ON buzz_attempts(clue_id);
 CREATE INDEX IF NOT EXISTS idx_buzz_attempts_contestant_id ON buzz_attempts(contestant_id);

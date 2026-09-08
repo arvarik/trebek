@@ -78,18 +78,27 @@ async def enrich_clues_with_embeddings(clues: List["Clue"], client: Any = None) 
         resp_embs = embeddings[n:]
 
         for i, clue in enumerate(clues):
-            c_emb = clue_embs[i]
-            r_emb = resp_embs[i]
-            clue.clue_embedding = c_emb
-            clue.response_embedding = r_emb
-            try:
-                clue.semantic_lateral_distance = process_semantic_lateral_distance(c_emb, r_emb)
-            except Exception as dist_err:
-                logger.debug(
-                    "Failed to calculate semantic lateral distance",
-                    clue=clue.clue_text[:30],
-                    error=str(dist_err),
-                )
+            c_emb = clue_embs[i] if i < len(clue_embs) else None
+            r_emb = resp_embs[i] if i < len(resp_embs) else None
+
+            is_valid_c = bool(c_emb) and any(v != 0.0 for v in c_emb)
+            is_valid_r = bool(r_emb) and any(v != 0.0 for v in r_emb)
+
+            if is_valid_c and is_valid_r and c_emb is not None and r_emb is not None:
+                clue.clue_embedding = c_emb
+                clue.response_embedding = r_emb
+                try:
+                    clue.semantic_lateral_distance = process_semantic_lateral_distance(c_emb, r_emb)
+                except Exception as dist_err:
+                    logger.debug(
+                        "Failed to calculate semantic lateral distance",
+                        clue=clue.clue_text[:30],
+                        error=str(dist_err),
+                    )
+                    clue.semantic_lateral_distance = None
+            else:
+                clue.clue_embedding = c_emb if is_valid_c else None
+                clue.response_embedding = r_emb if is_valid_r else None
                 clue.semantic_lateral_distance = None
     except Exception as e:
         logger.warning("Failed to generate embeddings for clues", count=len(clues), error=str(e)[:200])

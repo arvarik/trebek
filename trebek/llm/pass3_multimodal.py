@@ -156,8 +156,8 @@ async def extract_visual_clue_context(
                 return {}
             finally:
                 if uploaded_file is not None:
-                    with contextlib.suppress(Exception):
-                        await getattr(client, "delete_file")(uploaded_file.name)
+                    with contextlib.suppress(BaseException):
+                        await asyncio.shield(getattr(client, "delete_file")(uploaded_file.name))
         finally:
             if os.path.exists(clip_path):
                 with contextlib.suppress(OSError):
@@ -218,9 +218,9 @@ async def extract_podium_lockout_sniping(
                 )
 
                 result_text = str(response.text).strip() if response.text else "-1.0"
-                match = re.search(r"[-+]?\d*\.?\d+", result_text)
-                if match:
-                    offset_s = float(match.group())
+                matches = re.findall(r"[-+]?\d*\.?\d+", result_text)
+                if matches:
+                    offset_s = float(matches[-1])
                     if offset_s >= 0.0:
                         podium_ms = (start_time + offset_s) * 1000.0
                         clue.attempts[0].podium_light_timestamp_ms = podium_ms
@@ -238,8 +238,8 @@ async def extract_podium_lockout_sniping(
                 return {}
             finally:
                 if uploaded_file is not None:
-                    with contextlib.suppress(Exception):
-                        await getattr(client, "delete_file")(uploaded_file.name)
+                    with contextlib.suppress(BaseException):
+                        await asyncio.shield(getattr(client, "delete_file")(uploaded_file.name))
         finally:
             if os.path.exists(clip_path):
                 with contextlib.suppress(OSError):

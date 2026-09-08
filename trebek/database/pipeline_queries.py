@@ -242,6 +242,13 @@ class PipelineQueryMixin:
         if not cleaned_query:
             return []
 
+        # Check if clues table exists
+        has_clues_res = await self.execute(  # type: ignore[attr-defined]
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='clues'"
+        )
+        if not (has_clues_res and isinstance(has_clues_res, list) and len(has_clues_res) > 0):
+            return []
+
         # If user did not specify exact quotes or operators, tokenize with prefix matching
         words = cleaned_query.split()
         safe_fts_query = " ".join(f'"{w.replace(chr(34), "")}"*' for w in words if w)

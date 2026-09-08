@@ -12,6 +12,7 @@ import json
 import sqlite3
 import pytest
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch, AsyncMock
 
 from trebek.gpu.worker import (
@@ -332,3 +333,86 @@ class TestCLISearchSubcommand:
         assert 'Search Results for "Raven"' in combined_output
         assert "Edgar Allan" in combined_output
         assert "Poe" in combined_output
+
+    @pytest.mark.asyncio
+    async def test_search_on_uninitialized_database(self, tmp_path: Path) -> None:
+        """Searching before database or clues table exists returns empty list without error."""
+        from trebek.database.writer import DatabaseWriter
+
+        db_path = str(tmp_path / "empty.db")
+        writer = DatabaseWriter(db_path)
+        await writer.start()
+        try:
+            results = await writer.search_clues("query")
+            assert results == []
+        finally:
+            await writer.stop()
+
+
+class TestGpuWorkerResilience:
+    """Tests for GPU model caching, device tracking, and OOM exception handling."""
+
+    def test_clear_gpu_cache_and_device_tracking(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from trebek.gpu import clear_gpu_cache, reset_gpu_models
+        import trebek.gpu.worker as worker
+
+        worker._whisperx_model = "fake_model"
+        worker._cached_device = "cuda"
+        worker._cached_compute_type = "float16"
+
+        clear_gpu_cache()
+        assert worker._whisperx_model is None
+        assert worker._cached_device is None
+        assert worker._cached_compute_type is None
+
+        worker._whisperx_model = "fake_model_2"
+        reset_gpu_models()
+        assert worker._whisperx_model is None
+
+    def test_gpu_diarization_oom_reraised(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Verify that an OutOfMemoryError in pyannote diarization is reraised to trigger pool restart."""
+        import trebek.gpu.worker as worker
+
+        monkeypatch.setenv("HF_TOKEN", "fake-token")
+
+        class FakeCUDAError(RuntimeError):
+            pass
+
+        FakeCUDAError.__name__ = "OutOfMemoryError"
+
+        def fake_diarize(*args: Any, **kwargs: Any) -> Any:
+            raise FakeCUDAError("CUDA out of memory in diarization")
+
+        class FakeWhisperXModel:
+            def transcribe(self, *args: Any, **kwargs: Any) -> Any:
+                return {"segments": [{"text": "Sample"}]}
+
+        monkeypatch.setattr(worker, "reset_gpu_models", lambda: None)
+        worker._whisperx_model = FakeWhisperXModel()
+
+        # Mock subprocess run for ffmpeg
+        class FakeProc:
+            returncode = 0
+            stderr = ""
+
+        import subprocess
+
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: FakeProc())
+
+        import sys
+
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = True
+        monkeypatch.setitem(sys.modules, "torch", mock_torch)
+
+        fake_whisperx = MagicMock()
+        fake_whisperx.load_audio.return_value = []
+        fake_whisperx.load_align_model.return_value = (MagicMock(), {})
+        fake_whisperx.align.return_value = {"segments": [{"text": "Sample"}]}
+        fake_whisperx.diarize.DiarizationPipeline.side_effect = fake_diarize
+
+        monkeypatch.setitem(sys.modules, "whisperx", fake_whisperx)
+        monkeypatch.setitem(sys.modules, "whisperx.diarize", fake_whisperx.diarize)
+
+        with pytest.raises(MemoryError, match="CUDA OOM"):
+            worker.gpu_worker_task("fake.mp4", str(tmp_path), device="cuda")

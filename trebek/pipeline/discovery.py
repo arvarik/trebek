@@ -32,6 +32,8 @@ def compute_file_fingerprint(filepath: str, sample_size: int = 65536) -> str:
     hasher = hashlib.sha256()
     try:
         size = os.path.getsize(filepath)
+        if size <= 0:
+            return ""
     except OSError:
         return ""
 
@@ -249,13 +251,22 @@ def discover_video_files(input_dir: str, stage_filter: str | None = None) -> lis
 
     # Fetch full pipeline state for each episode
     episode_states: dict[str, tuple[str, int, str | None]] = {}  # episode_id → (status, retry_count, last_error)
+    fingerprint_states: dict[str, tuple[str, int, str | None]] = {}  # fingerprint → (status, retry_count, last_error)
     db_path = settings.db_path
     if os.path.exists(db_path):
         try:
             with sqlite3.connect(db_path) as conn:
-                rows = conn.execute("SELECT episode_id, status, retry_count, last_error FROM pipeline_state").fetchall()
+                cols = {c[1] for c in conn.execute("PRAGMA table_info(pipeline_state)").fetchall()}
+                query = "SELECT episode_id, status, retry_count, last_error"
+                if "fingerprint" in cols:
+                    query += ", fingerprint"
+                query += " FROM pipeline_state"
+                rows = conn.execute(query).fetchall()
                 for row in rows:
-                    episode_states[row[0]] = (row[1], row[2] or 0, row[3])
+                    state_info = (row[1], row[2] or 0, row[3])
+                    episode_states[row[0]] = state_info
+                    if len(row) > 4 and row[4]:
+                        fingerprint_states[row[4]] = state_info
         except sqlite3.OperationalError:
             pass  # DB may not have the table yet
 
@@ -264,8 +275,12 @@ def discover_video_files(input_dir: str, stage_filter: str | None = None) -> lis
     files: list[dict[str, Any]] = []
     for f in scanned:
         ep_id = f["episode_id"]
+        fp = f.get("fingerprint") or ""
         if ep_id in episode_states:
             ep_status, retry_count, last_error = episode_states[ep_id]
+            pipeline_status = ep_status
+        elif fp and fp in fingerprint_states:
+            ep_status, retry_count, last_error = fingerprint_states[fp]
             pipeline_status = ep_status
         else:
             pipeline_status = "New"

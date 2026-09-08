@@ -112,6 +112,40 @@ class TestFileFingerprintingAndDeduplication:
     def test_nonexistent_file_returns_empty_fingerprint(self) -> None:
         assert compute_file_fingerprint("/nonexistent/path/to/video.mp4") == ""
 
+    def test_zero_byte_file_fingerprint_empty_string(self, tmp_path: Path) -> None:
+        zero_file = tmp_path / "empty.mp4"
+        zero_file.touch()
+        assert compute_file_fingerprint(str(zero_file)) == ""
+
+    def test_discover_video_files_maps_renamed_file_to_pipeline_state_status(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = str(tmp_path / "test_discovery.db")
+        schema_path = Path(__file__).parent.parent.parent / "trebek" / "schema.sql"
+        with sqlite3.connect(db_path) as conn:
+            conn.executescript(schema_path.read_text(encoding="utf-8"))
+
+        input_dir = tmp_path / "inputs"
+        input_dir.mkdir()
+        video_file = input_dir / "unrelated_download_name_123.mp4"
+        content = b"Jeopardy episode content" * 100
+        video_file.write_bytes(content)
+        fp = compute_file_fingerprint(str(video_file))
+
+        # Record this fingerprint under an episode ID in pipeline_state
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "INSERT INTO pipeline_state (episode_id, status, source_filename, fingerprint) VALUES (?, ?, ?, ?)",
+                ("S41E50", "Transcribed", "original_S41E50.mp4", fp),
+            )
+
+        monkeypatch.setattr(settings, "db_path", db_path)
+        discovered = discover_video_files(str(input_dir))
+        assert len(discovered) == 1
+        assert discovered[0]["fingerprint"] == fp
+        assert discovered[0]["status"] == "Transcribed"
+        assert discovered[0]["episode_id"] == "unrelated_download_name_123"
+
     def test_scan_and_discover_include_fingerprint(self, tmp_path: Path) -> None:
         """scan_video_files and discover_video_files should include fingerprint in results."""
         vfile = tmp_path / "S40E01.mp4"
@@ -335,6 +369,42 @@ class TestEmbeddingsAndSemanticLateralDistance:
         assert clues[0].response_embedding == [0.8, 0.6, 0.0]
         assert clues[0].semantic_lateral_distance is not None
         assert 0.0 <= clues[0].semantic_lateral_distance <= 1.0
+
+    @pytest.mark.asyncio
+    async def test_enrich_clues_with_embeddings_handles_empty_or_zero_vectors(self) -> None:
+        """When embeddings fail or are zero-norm, clues should have None embeddings and None distance."""
+        clues = [
+            Clue(
+                round="J!",
+                category="GEOGRAPHY",
+                board_row=1,
+                board_col=1,
+                selection_order=1,
+                is_daily_double=False,
+                requires_visual_context=False,
+                host_start_timestamp_ms=1000.0,
+                host_finish_timestamp_ms=3000.0,
+                clue_syllable_count=5,
+                clue_text="Capital of France.",
+                correct_response="Paris",
+            )
+        ]
+
+        # Case 1: embed_content returns empty list (transient failure after retries)
+        mock_client = MagicMock()
+        mock_client.embed_content = AsyncMock(return_value=[])
+
+        await enrich_clues_with_embeddings(clues, client=mock_client)
+        assert clues[0].clue_embedding is None
+        assert clues[0].response_embedding is None
+        assert clues[0].semantic_lateral_distance is None
+
+        # Case 2: embed_content returns all zeros
+        mock_client.embed_content = AsyncMock(return_value=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+        await enrich_clues_with_embeddings(clues, client=mock_client)
+        assert clues[0].clue_embedding is None
+        assert clues[0].response_embedding is None
+        assert clues[0].semantic_lateral_distance is None
 
     @pytest.mark.asyncio
     async def test_relational_commit_persists_embeddings_and_distance(self, tmp_path: Path) -> None:
